@@ -3,48 +3,59 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = path.join(__dirname, 'data');
 
+// Supabase client (service role — server-side only)
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY
+);
+
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// --- Data helpers ---
+// --- Data helpers (Supabase) ---
 
-function loadBrands() {
-  return JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'brands.json'), 'utf8'));
+async function loadBrands() {
+  const { data, error } = await supabase
+    .from('brands')
+    .select('data')
+    .eq('id', 'main')
+    .single();
+  if (error || !data?.data?.brands) return { brands: [] };
+  return data.data;
 }
 
-function saveBrands(data) {
-  fs.writeFileSync(path.join(DATA_DIR, 'brands.json'), JSON.stringify(data, null, 2));
+async function saveBrands(payload) {
+  await supabase
+    .from('brands')
+    .update({ data: payload, updated_at: new Date().toISOString() })
+    .eq('id', 'main');
 }
 
-function loadMetrics() {
-  try {
-    return JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'metrics.json'), 'utf8'));
-  } catch {
-    return { syncStatus: 'pending', lastSync: null, brands: {} };
-  }
+async function loadPresetMetrics() {
+  const { data, error } = await supabase
+    .from('preset_metrics')
+    .select('data')
+    .eq('id', 'main')
+    .single();
+  if (error || !data?.data) return { lastSync: null, presets: {} };
+  return data.data;
 }
 
-function saveMetrics(data) {
-  fs.writeFileSync(path.join(DATA_DIR, 'metrics.json'), JSON.stringify(data, null, 2));
+async function savePresetMetrics(payload) {
+  await supabase
+    .from('preset_metrics')
+    .update({ data: payload, updated_at: new Date().toISOString() })
+    .eq('id', 'main');
 }
 
-function loadPresetMetrics() {
-  try {
-    return JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'preset-metrics.json'), 'utf8'));
-  } catch {
-    return { lastSync: null, presets: {} };
-  }
-}
-
-function savePresetMetrics(data) {
-  fs.writeFileSync(path.join(DATA_DIR, 'preset-metrics.json'), JSON.stringify(data, null, 2));
-}
+// --- FX (still file-cached locally — avoids hammering external API) ---
 
 function loadFx() {
   try {
@@ -55,7 +66,7 @@ function loadFx() {
 }
 
 function saveFx(data) {
-  fs.writeFileSync(path.join(DATA_DIR, 'fx.json'), JSON.stringify(data, null, 2));
+  try { fs.writeFileSync(path.join(DATA_DIR, 'fx.json'), JSON.stringify(data, null, 2)); } catch {}
 }
 
 async function fetchFxRate() {
@@ -91,26 +102,21 @@ const BRAND_COLORS = [
 
 // --- Brand Routes ---
 
-// GET all brands with metrics merged in
-app.get('/api/brands', (req, res) => {
-  const { brands } = loadBrands();
-  const pm = loadPresetMetrics();
+app.get('/api/brands', async (req, res) => {
+  const { brands } = await loadBrands();
+  const pm = await loadPresetMetrics();
   const presetKey = req.query.preset || 'last7d';
   const presetData = pm.presets?.[presetKey]?.brands || {};
-  const result = brands.map(b => ({
-    ...b,
-    metrics: presetData[b.id] || null
-  }));
+  const result = brands.map(b => ({ ...b, metrics: presetData[b.id] || null }));
   const presetMeta = Object.fromEntries(
     Object.entries(pm.presets || {}).map(([k, v]) => [k, { label: v.label, startDate: v.startDate, endDate: v.endDate }])
   );
   res.json({ brands: result, lastSync: pm.lastSync, presets: presetMeta });
 });
 
-// GET single brand with metrics
-app.get('/api/brands/:id', (req, res) => {
-  const { brands } = loadBrands();
-  const pm = loadPresetMetrics();
+app.get('/api/brands/:id', async (req, res) => {
+  const { brands } = await loadBrands();
+  const pm = await loadPresetMetrics();
   const presetKey = req.query.preset || 'last7d';
   const presetData = pm.presets?.[presetKey]?.brands || {};
   const brand = brands.find(b => b.id === req.params.id);
@@ -121,12 +127,11 @@ app.get('/api/brands/:id', (req, res) => {
   res.json({ ...brand, metrics: presetData[brand.id] || null, lastSync: pm.lastSync, presets: presetMeta });
 });
 
-// POST create brand
-app.post('/api/brands', (req, res) => {
+app.post('/api/brands', async (req, res) => {
   const { name, marketplace } = req.body;
   if (!name) return res.status(400).json({ error: 'Brand name is required' });
 
-  const data = loadBrands();
+  const data = await loadBrands();
   const id = slugify(name);
 
   if (data.brands.find(b => b.id === id)) {
@@ -135,22 +140,19 @@ app.post('/api/brands', (req, res) => {
 
   const color = BRAND_COLORS[data.brands.length % BRAND_COLORS.length];
   const newBrand = {
-    id,
-    name,
+    id, name,
     marketplace: marketplace || 'CA',
-    color,
-    asins: [],
+    color, asins: [],
     createdAt: new Date().toISOString().split('T')[0]
   };
 
   data.brands.push(newBrand);
-  saveBrands(data);
+  await saveBrands(data);
   res.json(newBrand);
 });
 
-// PUT update brand
-app.put('/api/brands/:id', (req, res) => {
-  const data = loadBrands();
+app.put('/api/brands/:id', async (req, res) => {
+  const data = await loadBrands();
   const idx = data.brands.findIndex(b => b.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Brand not found' });
 
@@ -159,32 +161,28 @@ app.put('/api/brands/:id', (req, res) => {
   if (marketplace) data.brands[idx].marketplace = marketplace;
   if (color) data.brands[idx].color = color;
 
-  saveBrands(data);
+  await saveBrands(data);
   res.json(data.brands[idx]);
 });
 
-// DELETE brand
-app.delete('/api/brands/:id', (req, res) => {
-  const data = loadBrands();
+app.delete('/api/brands/:id', async (req, res) => {
+  const data = await loadBrands();
   data.brands = data.brands.filter(b => b.id !== req.params.id);
-  saveBrands(data);
+  await saveBrands(data);
   res.json({ success: true });
 });
 
-// POST add ASIN to brand
-app.post('/api/brands/:id/asins', (req, res) => {
+app.post('/api/brands/:id/asins', async (req, res) => {
   const { asin } = req.body;
   if (!asin || !/^[A-Z0-9]{10}$/.test(asin.trim().toUpperCase())) {
     return res.status(400).json({ error: 'Invalid ASIN format (must be 10 alphanumeric characters)' });
   }
 
-  const data = loadBrands();
+  const data = await loadBrands();
   const brand = data.brands.find(b => b.id === req.params.id);
   if (!brand) return res.status(404).json({ error: 'Brand not found' });
 
   const normalized = asin.trim().toUpperCase();
-
-  // Check if ASIN already assigned to another brand
   const conflict = data.brands.find(b => b.id !== req.params.id && b.asins.includes(normalized));
   if (conflict) {
     return res.status(409).json({ error: `ASIN already assigned to "${conflict.name}"` });
@@ -192,18 +190,17 @@ app.post('/api/brands/:id/asins', (req, res) => {
 
   if (!brand.asins.includes(normalized)) {
     brand.asins.push(normalized);
-    saveBrands(data);
+    await saveBrands(data);
   }
 
   res.json(brand);
 });
 
-// PUT move ASIN from one brand to another
-app.put('/api/brands/:id/asins/:asin/move', (req, res) => {
+app.put('/api/brands/:id/asins/:asin/move', async (req, res) => {
   const { toBrandId } = req.body;
   if (!toBrandId) return res.status(400).json({ error: 'toBrandId required' });
 
-  const data = loadBrands();
+  const data = await loadBrands();
   const fromBrand = data.brands.find(b => b.id === req.params.id);
   const toBrand = data.brands.find(b => b.id === toBrandId);
 
@@ -214,16 +211,15 @@ app.put('/api/brands/:id/asins/:asin/move', (req, res) => {
   fromBrand.asins = fromBrand.asins.filter(a => a !== asin);
   if (!toBrand.asins.includes(asin)) toBrand.asins.push(asin);
 
-  saveBrands(data);
+  await saveBrands(data);
   res.json({ success: true, from: fromBrand, to: toBrand });
 });
 
-// POST bulk move ASINs from one brand to another
-app.post('/api/brands/:id/asins/bulk-move', (req, res) => {
+app.post('/api/brands/:id/asins/bulk-move', async (req, res) => {
   const { asins, toBrandId } = req.body;
   if (!Array.isArray(asins) || !toBrandId) return res.status(400).json({ error: 'Invalid payload' });
 
-  const data = loadBrands();
+  const data = await loadBrands();
   const fromBrand = data.brands.find(b => b.id === req.params.id);
   const toBrand = data.brands.find(b => b.id === toBrandId);
 
@@ -241,24 +237,22 @@ app.post('/api/brands/:id/asins/bulk-move', (req, res) => {
     }
   }
 
-  saveBrands(data);
+  await saveBrands(data);
   res.json({ success: true, from: fromBrand, to: toBrand });
 });
 
-// DELETE ASIN from brand
-app.delete('/api/brands/:id/asins/:asin', (req, res) => {
-  const data = loadBrands();
+app.delete('/api/brands/:id/asins/:asin', async (req, res) => {
+  const data = await loadBrands();
   const brand = data.brands.find(b => b.id === req.params.id);
   if (!brand) return res.status(404).json({ error: 'Brand not found' });
 
   brand.asins = brand.asins.filter(a => a !== req.params.asin.toUpperCase());
-  saveBrands(data);
+  await saveBrands(data);
   res.json(brand);
 });
 
 // --- Import Routes ---
 
-// GET preview — pulls brands+ASINs from Amazon, returns grouped result for review
 app.get('/api/import/preview', async (req, res) => {
   try {
     const { importBrandsFromAmazon } = require('./sync/amazon');
@@ -269,24 +263,20 @@ app.get('/api/import/preview', async (req, res) => {
   }
 });
 
-// POST import/all — pulls everything from Amazon and saves directly, no preview
 app.post('/api/import/all', async (req, res) => {
   try {
     const { importBrandsFromAmazon } = require('./sync/amazon');
     const grouped = await importBrandsFromAmazon();
-    const data = loadBrands();
+    const data = await loadBrands();
 
-    // Never move ASINs already assigned — only process new ones
     const alreadyAssigned = new Set(data.brands.flatMap(b => b.asins));
 
     for (const [brandName, info] of Object.entries(grouped)) {
       const id = brandName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-
       const newAsins = info.asins.filter(a => !alreadyAssigned.has(a));
       if (newAsins.length === 0) continue;
 
       const newTitles = Object.fromEntries(newAsins.filter(a => info.titles?.[a]).map(a => [a, info.titles[a]]));
-
       const existing = data.brands.find(b => b.id === id);
       if (existing) {
         existing.asins = [...new Set([...existing.asins, ...newAsins])];
@@ -295,57 +285,48 @@ app.post('/api/import/all', async (req, res) => {
         const color = BRAND_COLORS[data.brands.length % BRAND_COLORS.length];
         data.brands.push({
           id, name: brandName, marketplace: 'CA', color,
-          asins: newAsins,
-          asinTitles: newTitles,
+          asins: newAsins, asinTitles: newTitles,
           createdAt: new Date().toISOString().split('T')[0]
         });
       }
     }
 
-    saveBrands(data);
+    await saveBrands(data);
     res.json({ success: true, brands: data.brands, imported: Object.keys(grouped).length });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// POST confirm — merges approved import into brands.json with any manual renames
-// Body: { brands: [{ name, marketplace, asins }] }
-app.post('/api/import/confirm', (req, res) => {
+app.post('/api/import/confirm', async (req, res) => {
   const { brands: incoming } = req.body;
   if (!Array.isArray(incoming)) return res.status(400).json({ error: 'Invalid payload' });
 
-  const data = loadBrands();
+  const data = await loadBrands();
 
   for (const item of incoming) {
     const id = item.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     const existing = data.brands.find(b => b.id === id);
 
     if (existing) {
-      // Merge ASINs into existing brand
-      const merged = new Set([...existing.asins, ...item.asins]);
-      existing.asins = [...merged];
+      existing.asins = [...new Set([...existing.asins, ...item.asins])];
     } else {
-      // Add new brand
       const color = BRAND_COLORS[data.brands.length % BRAND_COLORS.length];
       data.brands.push({
-        id,
-        name: item.name,
+        id, name: item.name,
         marketplace: item.marketplace || 'CA',
-        color,
-        asins: item.asins,
+        color, asins: item.asins,
         createdAt: new Date().toISOString().split('T')[0]
       });
     }
   }
 
-  saveBrands(data);
+  await saveBrands(data);
   res.json({ success: true, brands: data.brands });
 });
 
 // --- Sync Routes ---
 
-// POST trigger sync
 app.post('/api/sync', async (req, res) => {
   const hasCredentials =
     process.env.SP_API_CLIENT_ID &&
@@ -353,37 +334,26 @@ app.post('/api/sync', async (req, res) => {
     process.env.SP_API_REFRESH_TOKEN;
 
   if (!hasCredentials) {
-    return res.status(503).json({
-      success: false,
-      message: 'SP-API credentials not configured.'
-    });
+    return res.status(503).json({ success: false, message: 'SP-API credentials not configured.' });
   }
 
   try {
     const { syncBrandMetrics } = require('./sync/amazon');
-    const data = loadBrands();
+    const data = await loadBrands();
     const { presets, updatedBrands } = await syncBrandMetrics(data.brands);
     data.brands = updatedBrands;
-    saveBrands(data);
-    savePresetMetrics({ lastSync: new Date().toISOString(), presets });
+    await saveBrands(data);
+    await savePresetMetrics({ lastSync: new Date().toISOString(), presets });
     res.json({ success: true, lastSync: new Date().toISOString() });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// GET sync status
-app.get('/api/sync/status', (req, res) => {
-  const metrics = loadMetrics();
-  res.json({ syncStatus: metrics.syncStatus, lastSync: metrics.lastSync });
-});
-
-// GET FX rate (cached 24h)
 app.get('/api/fx', async (req, res) => res.json(await fetchFxRate()));
 
-// GET preset metrics
-app.get('/api/preset-metrics', (req, res) => {
-  res.json(loadPresetMetrics());
+app.get('/api/preset-metrics', async (req, res) => {
+  res.json(await loadPresetMetrics());
 });
 
 app.listen(PORT, () => {
