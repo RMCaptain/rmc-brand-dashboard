@@ -343,7 +343,16 @@ async function getInventory(marketplaceId, token) {
 
     const { inventorySummaries, pagination } = res.body.payload || {};
     for (const item of (inventorySummaries || [])) {
-      if (item.asin) inventory[item.asin] = (inventory[item.asin] || 0) + (item.fulfillableQuantity || 0);
+      if (!item.asin) continue;
+      const d = item.inventoryDetails || {};
+      const existing = inventory[item.asin] || { onHand: 0, inbound: 0, reserved: 0, researching: 0, unfulfillable: 0 };
+      inventory[item.asin] = {
+        onHand:        existing.onHand        + (d.fulfillableQuantity || 0),
+        inbound:       existing.inbound       + (d.inboundWorkingQuantity || 0) + (d.inboundShippedQuantity || 0) + (d.inboundReceivingQuantity || 0),
+        reserved:      existing.reserved      + (d.reservedQuantity?.totalReservedQuantity || 0),
+        researching:   existing.researching   + (d.researchingQuantity?.totalResearchingQuantity || 0),
+        unfulfillable: existing.unfulfillable + (d.unfulfillableQuantity?.totalUnfulfillableQuantity || 0)
+      };
     }
 
     nextToken = pagination?.nextToken || null;
@@ -435,7 +444,7 @@ function buildPresetMetrics(brands, stDatasets, marketplaceIds, listingsData, in
         sessions: st.sessions || 0,
         buyBox: st.buyBox ?? null,
         cvr: st.cvr ?? null,
-        inventory: inventory[asin] || 0
+        inventory: inventory[asin] || { onHand: 0, inbound: 0, reserved: 0, researching: 0, unfulfillable: 0 }
       };
     });
 

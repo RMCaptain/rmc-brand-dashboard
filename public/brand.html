@@ -90,7 +90,10 @@
               <th class="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Sessions</th>
               <th class="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Buy Box</th>
               <th class="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">CVR</th>
-              <th class="text-right px-5 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Inventory</th>
+              <th class="text-right px-5 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">On-Hand</th>
+              <th class="text-right px-5 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Inbound</th>
+              <th class="text-right px-5 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Reserved</th>
+              <th class="text-right px-5 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Unfulfillable</th>
             </tr>
           </thead>
           <tbody id="skuTable">
@@ -293,7 +296,10 @@
             <td class="px-4 py-3 text-right text-slate-700">${(s.sessions || 0).toLocaleString()}</td>
             <td class="px-4 py-3 text-right font-medium ${bbColor}">${s.buyBox != null ? s.buyBox.toFixed(1) + '%' : '—'}</td>
             <td class="px-4 py-3 text-right text-slate-700">${s.cvr != null ? s.cvr.toFixed(2) + '%' : '—'}</td>
-            <td class="px-5 py-3 text-right text-slate-700">${s.inventory.toLocaleString()}</td>
+            <td class="px-5 py-3 text-right text-slate-700 font-medium">${(s.inventory?.onHand ?? 0).toLocaleString()}</td>
+            <td class="px-5 py-3 text-right text-slate-700">${(s.inventory?.inbound ?? 0).toLocaleString()}</td>
+            <td class="px-5 py-3 text-right text-slate-700">${(s.inventory?.reserved ?? 0).toLocaleString()}</td>
+            <td class="px-5 py-3 text-right ${(s.inventory?.unfulfillable ?? 0) > 0 ? 'text-red-500 font-medium' : 'text-slate-700'}">${(s.inventory?.unfulfillable ?? 0).toLocaleString()}</td>
           </tr>`;
       }).join('');
     }
