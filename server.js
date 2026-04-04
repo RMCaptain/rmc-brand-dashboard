@@ -15,6 +15,9 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_KEY
 );
 
+// In-memory sync state (resets on redeploy, which is fine)
+let syncState = { status: 'idle', lastSync: null, error: null };
+
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -327,7 +330,7 @@ app.post('/api/import/confirm', async (req, res) => {
 
 // --- Sync Routes ---
 
-app.post('/api/sync', async (req, res) => {
+app.post('/api/sync', (req, res) => {
   const hasCredentials =
     process.env.SP_API_CLIENT_ID &&
     process.env.SP_API_CLIENT_SECRET &&
@@ -337,17 +340,32 @@ app.post('/api/sync', async (req, res) => {
     return res.status(503).json({ success: false, message: 'SP-API credentials not configured.' });
   }
 
-  try {
-    const { syncBrandMetrics } = require('./sync/amazon');
-    const data = await loadBrands();
-    const { presets, updatedBrands } = await syncBrandMetrics(data.brands);
-    data.brands = updatedBrands;
-    await saveBrands(data);
-    await savePresetMetrics({ lastSync: new Date().toISOString(), presets });
-    res.json({ success: true, lastSync: new Date().toISOString() });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+  if (syncState.status === 'syncing') {
+    return res.json({ success: true, status: 'syncing', message: 'Sync already in progress' });
   }
+
+  // Return immediately — sync runs in background
+  syncState = { status: 'syncing', lastSync: null, error: null };
+  res.json({ success: true, status: 'started' });
+
+  (async () => {
+    try {
+      const { syncBrandMetrics } = require('./sync/amazon');
+      const data = await loadBrands();
+      const { presets, updatedBrands } = await syncBrandMetrics(data.brands);
+      data.brands = updatedBrands;
+      await saveBrands(data);
+      const lastSync = new Date().toISOString();
+      await savePresetMetrics({ lastSync, presets });
+      syncState = { status: 'done', lastSync, error: null };
+    } catch (err) {
+      syncState = { status: 'error', lastSync: null, error: err.message };
+    }
+  })();
+});
+
+app.get('/api/sync/status', (req, res) => {
+  res.json(syncState);
 });
 
 app.get('/api/fx', async (req, res) => res.json(await fetchFxRate()));

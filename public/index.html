@@ -295,20 +295,45 @@
       const btn = document.getElementById('syncBtn');
       btn.disabled = true;
       btn.textContent = 'Syncing...';
+
       try {
         const res = await fetch('/api/sync', { method: 'POST' });
         const data = await res.json();
-        if (data.success) {
-          await loadDashboard();
-        } else {
+        if (!data.success) {
           alert(data.message);
+          btn.disabled = false;
+          btn.textContent = 'Sync Data';
+          return;
         }
       } catch (e) {
         alert('Sync failed: ' + e.message);
-      } finally {
         btn.disabled = false;
         btn.textContent = 'Sync Data';
+        return;
       }
+
+      // Poll until done
+      const poll = setInterval(async () => {
+        try {
+          const s = await fetch('/api/sync/status').then(r => r.json());
+          if (s.status === 'done') {
+            clearInterval(poll);
+            await loadDashboard();
+            btn.disabled = false;
+            btn.textContent = 'Sync Data';
+          } else if (s.status === 'error') {
+            clearInterval(poll);
+            alert('Sync error: ' + s.error);
+            btn.disabled = false;
+            btn.textContent = 'Sync Data';
+          }
+          // still 'syncing' — keep polling
+        } catch (e) {
+          clearInterval(poll);
+          btn.disabled = false;
+          btn.textContent = 'Sync Data';
+        }
+      }, 5000);
     }
 
     loadDashboard();
