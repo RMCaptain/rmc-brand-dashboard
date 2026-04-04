@@ -254,6 +254,21 @@ app.delete('/api/brands/:id/asins/:asin', async (req, res) => {
   res.json(brand);
 });
 
+// PUT set lead time for an ASIN
+app.put('/api/brands/:id/asins/:asin/leadtime', async (req, res) => {
+  const { days } = req.body;
+  if (days == null || isNaN(days) || days < 0) return res.status(400).json({ error: 'Invalid days value' });
+
+  const data = await loadBrands();
+  const brand = data.brands.find(b => b.id === req.params.id);
+  if (!brand) return res.status(404).json({ error: 'Brand not found' });
+
+  brand.leadTimes = brand.leadTimes || {};
+  brand.leadTimes[req.params.asin.toUpperCase()] = Number(days);
+  await saveBrands(data);
+  res.json({ success: true });
+});
+
 // --- Import Routes ---
 
 app.get('/api/import/preview', async (req, res) => {

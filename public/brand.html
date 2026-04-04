@@ -98,6 +98,9 @@
               <th class="text-right px-5 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Inbound</th>
               <th class="text-right px-5 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Reserved</th>
               <th class="text-right px-5 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Unfulfillable</th>
+              <th class="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Velocity</th>
+              <th class="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Days Left</th>
+              <th class="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Lead Time</th>
             </tr>
           </thead>
           <tbody id="skuTable">
@@ -134,6 +137,37 @@
       } else {
         const total = (usd || 0) + (cad || 0) * fxRate.cadToUsd;
         return 'US$' + total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      }
+    }
+
+    function calcVelocity(asin, brandId) {
+      // Prefer last30d (30 days), then thisMonth, then lastMonth
+      const candidates = [
+        { key: 'last30d', days: 30 },
+        { key: 'thisMonth', days: null },
+        { key: 'lastMonth', days: null }
+      ];
+      for (const { key, days } of candidates) {
+        const preset = presetMetrics.presets?.[key];
+        if (!preset) continue;
+        const sku = preset.brands?.[brandId]?.skus?.find(s => s.asin === asin);
+        if (!sku || !sku.units) continue;
+        const d = days || (Math.round((new Date(preset.endDate) - new Date(preset.startDate)) / 86400000) + 1);
+        return sku.units / d;
+      }
+      return null;
+    }
+
+    async function saveLeadTime(brandId, asin, days) {
+      await fetch(`/api/brands/${brandId}/asins/${asin}/leadtime`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ days: Number(days) })
+      });
+      // Update local cache
+      if (brandCache) {
+        brandCache.leadTimes = brandCache.leadTimes || {};
+        brandCache.leadTimes[asin] = Number(days);
       }
     }
 
@@ -306,6 +340,29 @@
             <td class="px-5 py-3 text-right text-slate-700">${(s.inventory?.inbound ?? 0).toLocaleString()}</td>
             <td class="px-5 py-3 text-right text-slate-700">${(s.inventory?.reserved ?? 0).toLocaleString()}</td>
             <td class="px-5 py-3 text-right ${(s.inventory?.unfulfillable ?? 0) > 0 ? 'text-red-500 font-medium' : 'text-slate-700'}">${(s.inventory?.unfulfillable ?? 0).toLocaleString()}</td>
+            ${(() => {
+              const velocity = calcVelocity(s.asin, brand.id);
+              const leadTime = brand.leadTimes?.[s.asin] ?? null;
+              const available = (s.inventory?.onHand ?? 0) + (s.inventory?.inbound ?? 0);
+              const daysLeft = velocity > 0 ? Math.round(available / velocity) : null;
+              const velDisplay = velocity != null ? velocity.toFixed(1) : '—';
+              const daysDisplay = daysLeft != null ? daysLeft : '—';
+              let daysColor = 'text-slate-700';
+              if (daysLeft != null && leadTime != null) {
+                if (daysLeft < leadTime) daysColor = 'text-red-600 font-semibold';
+                else if (daysLeft < leadTime * 1.5) daysColor = 'text-amber-600 font-semibold';
+                else daysColor = 'text-emerald-600';
+              }
+              return `
+            <td class="px-4 py-3 text-right text-slate-500 text-xs">${velDisplay} u/d</td>
+            <td class="px-4 py-3 text-right ${daysColor}">${daysDisplay !== '—' ? daysDisplay + 'd' : '—'}</td>
+            <td class="px-4 py-3 text-right">
+              <input type="number" min="0" value="${leadTime ?? ''}" placeholder="—"
+                class="w-14 text-right text-xs border border-slate-200 rounded px-1.5 py-0.5 focus:outline-none focus:border-indigo-400"
+                onchange="saveLeadTime('${brand.id}', '${s.asin}', this.value)"
+                title="Lead time in days" />
+            </td>`;
+            })()}
           </tr>`;
       }).join('');
     }
