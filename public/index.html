@@ -190,6 +190,12 @@
           document.getElementById('lastSyncText').textContent = 'Synced ' + new Date(lastSync).toLocaleString();
         }
 
+        // Fall back to first available preset if stored one no longer exists
+        const availablePresets = Object.keys(presetMetrics.presets || {});
+        if (!availablePresets.includes(activePreset) && availablePresets.length > 0) {
+          activePreset = availablePresets[0];
+        }
+
         setPreset(activePreset);
       } catch (err) {
         console.error('Failed to load dashboard:', err);
