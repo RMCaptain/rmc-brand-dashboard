@@ -94,10 +94,7 @@
               <th class="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Sessions</th>
               <th class="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Buy Box</th>
               <th class="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">CVR</th>
-              <th class="text-right px-5 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">On-Hand</th>
-              <th class="text-right px-5 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Inbound</th>
-              <th class="text-right px-5 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Reserved</th>
-              <th class="text-right px-5 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Unfulfillable</th>
+              <th class="text-right px-5 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Inventory</th>
               <th class="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Velocity</th>
               <th class="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Days Left</th>
               <th class="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Lead Time</th>
@@ -336,10 +333,11 @@
             <td class="px-4 py-3 text-right text-slate-700">${(s.sessions || 0).toLocaleString()}</td>
             <td class="px-4 py-3 text-right font-medium ${bbColor}">${s.buyBox != null ? s.buyBox.toFixed(1) + '%' : '—'}</td>
             <td class="px-4 py-3 text-right text-slate-700">${s.cvr != null ? s.cvr.toFixed(2) + '%' : '—'}</td>
-            <td class="px-5 py-3 text-right text-slate-700 font-medium">${((s.inventory?.onHand ?? 0) + (s.inventory?.researching ?? 0)).toLocaleString()}</td>
-            <td class="px-5 py-3 text-right text-slate-700">${(s.inventory?.inbound ?? 0).toLocaleString()}</td>
-            <td class="px-5 py-3 text-right text-slate-700">${(s.inventory?.reserved ?? 0).toLocaleString()}</td>
-            <td class="px-5 py-3 text-right ${(s.inventory?.unfulfillable ?? 0) > 0 ? 'text-red-500 font-medium' : 'text-slate-700'}">${(s.inventory?.unfulfillable ?? 0).toLocaleString()}</td>
+            <td class="px-5 py-3 text-right text-slate-700 font-medium cursor-pointer underline decoration-dotted decoration-slate-400"
+                onmouseenter="showInventoryPopup(event, '${s.asin}', ${JSON.stringify(s.inventory ?? {}).replace(/"/g, '&quot;')})"
+                onmouseleave="hideInventoryPopup()">
+              ${((s.inventory?.onHand ?? 0) + (s.inventory?.researching ?? 0)).toLocaleString()}
+            </td>
             ${(() => {
               const velocity = calcVelocity(s.asin, brand.id);
               const leadTime = brand.leadTimes?.[s.asin] ?? null;
@@ -365,6 +363,38 @@
             })()}
           </tr>`;
       }).join('');
+    }
+
+    // ── Inventory popup ────────────────────────────────────────────────────────
+
+    function showInventoryPopup(e, asin, inv) {
+      const popup = document.getElementById('inventoryPopup');
+      const rows = [
+        { label: 'On-Hand',       value: (inv.onHand ?? 0) + (inv.researching ?? 0), alert: false },
+        { label: 'Inbound',       value: inv.inbound ?? 0,       alert: false },
+        { label: 'Reserved',      value: inv.reserved ?? 0,      alert: false },
+        { label: 'Unfulfillable', value: inv.unfulfillable ?? 0, alert: (inv.unfulfillable ?? 0) > 0 }
+      ];
+      popup.innerHTML = `
+        <div class="text-xs font-semibold text-slate-700 mb-2">Inventory Breakdown</div>
+        <table class="w-full text-xs">
+          <tbody>
+            ${rows.map(r => `
+              <tr class="border-b border-slate-50 last:border-0">
+                <td class="py-1.5 text-slate-500">${r.label}</td>
+                <td class="py-1.5 text-right font-medium pl-6 ${r.alert ? 'text-red-500' : 'text-slate-900'}">${r.value.toLocaleString()}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>`;
+      popup.style.display = 'block';
+      popup.style.opacity = '1';
+      positionPopup(e, popup);
+    }
+
+    function hideInventoryPopup() {
+      const popup = document.getElementById('inventoryPopup');
+      popup.style.opacity = '0';
+      setTimeout(() => { popup.style.display = 'none'; }, 100);
     }
 
     // ── Sales popup ────────────────────────────────────────────────────────────
@@ -442,6 +472,10 @@
 
   <!-- Sales popup -->
   <div id="salesPopup" class="hidden fixed z-50 bg-white border border-slate-200 rounded-xl shadow-lg px-4 py-3 w-64"
+       style="opacity:0; display:none;"></div>
+
+  <!-- Inventory popup -->
+  <div id="inventoryPopup" class="hidden fixed z-50 bg-white border border-slate-200 rounded-xl shadow-lg px-4 py-3 w-48"
        style="opacity:0; display:none;"></div>
 
 </body>
