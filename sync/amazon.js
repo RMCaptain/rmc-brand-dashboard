@@ -118,7 +118,7 @@ async function createReport(reportType, marketplaceIds, reportOptions, dataRange
   return res.body.reportId;
 }
 
-async function waitForReport(reportId, token, maxWaitMs = 600000) {
+async function waitForReport(reportId, token, maxWaitMs = 900000) {
   const start = Date.now();
   while (Date.now() - start < maxWaitMs) {
     const res = await spRequest('GET', `/reports/2021-06-30/reports/${reportId}`, token);
@@ -522,22 +522,27 @@ async function syncBrandMetrics(brands) {
   );
 
   // Wait for all reports (all running in parallel on Amazon's side)
+  // Use allSettled so a single stuck/failed report doesn't kill the whole sync
   console.log('[Sync] Waiting for all S&T reports...');
   const stDocMap = {};
-  await Promise.all(
-    Object.entries(stReportMap).map(async ([key, reportId]) => {
-      stDocMap[key] = await waitForReport(reportId, token);
-    })
+  const waitResults = await Promise.allSettled(
+    Object.entries(stReportMap).map(async ([key, reportId]) => ({ key, docId: await waitForReport(reportId, token) }))
   );
+  for (const r of waitResults) {
+    if (r.status === 'fulfilled') stDocMap[r.value.key] = r.value.docId;
+    else console.warn(`[Sync] Report skipped: ${r.reason?.message}`);
+  }
 
-  // Download + parse all
+  // Download + parse all (skip any that failed above)
   console.log('[Sync] Downloading and parsing S&T reports...');
   const stParsedMap = {};
-  await Promise.all(
-    Object.entries(stDocMap).map(async ([key, docId]) => {
-      stParsedMap[key] = await downloadReport(docId, token).then(parseSalesTrafficReport);
-    })
+  const downloadResults = await Promise.allSettled(
+    Object.entries(stDocMap).map(async ([key, docId]) => ({ key, data: await downloadReport(docId, token).then(parseSalesTrafficReport) }))
   );
+  for (const r of downloadResults) {
+    if (r.status === 'fulfilled') stParsedMap[r.value.key] = r.value.data;
+    else console.warn(`[Sync] Download skipped: ${r.reason?.message}`);
+  }
 
   // ── Add unassigned S&T ASINs to Unknown Brand ───────────────────────────────
   const allStAsins = new Set(Object.values(stParsedMap).flatMap(d => Object.keys(d)));
