@@ -389,9 +389,6 @@ function getPresetRanges() {
 
   return {
     yesterday: r(y,              y,            'Yesterday'),
-    last7d:    r(d7,             y,            'Last 7 Days'),
-    last14d:   r(d14,            y,            'Last 14 Days'),
-    last30d:   r(d30,            y,            'Last 30 Days'),
     thisMonth: r(thisMonthStart, y,            'This Month'),
     lastMonth: r(lastMonthStart, lastMonthEnd, 'Last Month')
   };
