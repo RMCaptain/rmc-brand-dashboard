@@ -129,6 +129,7 @@ async function waitForReport(reportId, token, maxWaitMs = 900000) {
       throw new Error(`Report ${reportId} ended with status: ${processingStatus}`);
     }
 
+    console.log(`[Sync] Report ${reportId} status: ${processingStatus || JSON.stringify(res.body).slice(0, 100)}`);
     await sleep(15000); // Poll every 15 seconds
   }
   throw new Error(`Report ${reportId} timed out`);
