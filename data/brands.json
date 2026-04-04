@@ -1,0 +1,681 @@
+{
+  "brands": [
+    {
+      "id": "acure",
+      "name": "Acure",
+      "marketplace": "CA",
+      "color": "#6366f1",
+      "asins": [
+        "B003Z4UKGM",
+        "B003Z4OD24",
+        "B003Z4QGRE",
+        "B00DKF7XPW",
+        "B07ZDJPFKZ",
+        "B0DJFWMW7H",
+        "B01KU49HEA",
+        "B01IKK31UC",
+        "B004DTQ9L8",
+        "B082G1C4BZ",
+        "B0FSTJ4KFP",
+        "B0CMZ58SMT",
+        "B0CMZ1G5F9",
+        "B0FSVVRJ9L",
+        "B0FSTKZ85S",
+        "B09MYC86PG",
+        "B003Z4QHP0",
+        "B09L5GGN1Z",
+        "B00H4H9RRE",
+        "B0DY8RRY91",
+        "B0DZDCG1FT",
+        "B082G1Z6HH",
+        "B0FSX8ZSRY",
+        "B0071HIE94",
+        "B0DZDCMD6N",
+        "B071XVDZ1D",
+        "B082G1XYRB",
+        "B0FSTHT5RD",
+        "B082YG2VT1",
+        "B0CMZC4GY3",
+        "B003Z4MCJA",
+        "B082G1SBGX",
+        "B0FSTLNKXY",
+        "B0DZDDZ3SW",
+        "B082YG5X38",
+        "B082YG4LNC",
+        "B00B4C35IW",
+        "B00BTYPW5E",
+        "B078ZHPLNR",
+        "B0DZDDDJ4Z",
+        "B082YGK39W",
+        "B082YG2VT8",
+        "B07NJ4H5S3"
+      ],
+      "createdAt": "2026-03-26",
+      "asinTitles": {
+        "B01KU49HEA": "ACURE The Essentials Moroccan Argan Oil | 100% Vegan | Versatile - for Any Skin & Hair Care Regimen | pure, cold Pressed & Rich in Vitamin e - Hydrates & Restores, 30ml",
+        "B004DTQ9L8": "Acure The Essentials Argan Oil - Organic Argan Oil for Hair & Skin, Pure Nourishing Moisture Treatment for Face & Body, Carrier Oil for Essential Oils, Vegan, Natural, Cold Pressed - 1 fl oz",
+        "B0FSTJ4KFP": "Acure The Essentials Argan Oil - Organic Argan Oil for Hair & Skin, Pure Renewing Moisture for Face & Body, Carrier Oil for Essential Oils, Vegan, Natural, Cold Pressed, 30ml, Pack of 2",
+        "B0CMZ58SMT": "Acure Bonding Hair Mask - Weekly Deep Conditioning Hair Mask for Damaged Locks, Rescue Bond Repair Treatment for Dry, Damaged, Thin, Fine Locks, Natural Ingredients, Vegan, 147ml",
+        "B0CMZ1G5F9": "Acure Bonding Hair Serum - Leave In Hair Oil for Damaged and Frizzy Hair, Treatment for Damage, Split Ends, Use on Dry, Curly, & Straight Locks for Lightweight Frizz Control & Shine, 50ml",
+        "B0FSVVRJ9L": "Acure Bonding Hair Serum - Leave In Hair Oil for Damaged and Frizzy Hair, Treatment for Damage, Split Ends, Use on Dry, Curly, Straight Locks for Lightweight Frizz Control & Shine, 50ml, Pack of 2",
+        "B0FSTKZ85S": "Acure Bonding Leave-In Conditioner - Leave in Conditioner Spray for Women & Men, Moisture Treatment to Repair Dry, Damaged, Color Treated Hair, Protect & Smooth Straight & Curly Hair, 147ml, Pack of 2",
+        "B003Z4UKGM": "Acure Brightening Cleansing Gel - Vegan Face Scrub, Gentle Facial Cleanser for Radiant Skin with Pomegranate, Blackberry & Acai Infused, Antioxidant-Rich Formula for All Skin Types, 118ml",
+        "B09MYC86PG": "Acure Brightening Day & Night Cream Set - Daily Cica Cream & Night Face Cream for Women & Men with Argan Oil, Hydrate, Refresh, Tone & Brighten Skin, Cruelty Free, Vegan, 50ml, Pack of 2",
+        "B003Z4QHP0": "Acure Brightening Day Cream - Cica Cream, Anti Aging Moisturizer to Brighten for Women & Men, Facial Lotion, Skincare with Argan Oil to Replenish, Tone Dry Skin & Hydrate, Cruelty Free, 50ml",
+        "B003Z4OD24": "Acure Brightening Facial Scrub, Exfoliating Face Wash, Gentle Daily Scrubber & Exfoliator for Women & Men for Radiant Skin, Cleansing Wash with Sea Kelp & French Green Clay, 118ml",
+        "B09L5GGN1Z": "Acure Brightening Facial Scrub - Exfoliating Face Wash, Gentle Daily Scrubber & Exfoliator for Women & Men for Radiant Skin, Cleansing Wash with Sea Kelp & French Green Clay, 118ml, Pack of 2",
+        "B003Z4QGRE": "Acure Brightening Night Cream - Radiance Boosting Night Face Cream for Women & Men, Hydrating & Revitalizing Moisturizer for Uneven Skin Tone & Dullness w/Chlorella, Echinacea & Argan Oil, 50ml",
+        "B00H4H9RRE": "Acure Curiously Clarifying Conditioner - Hair Conditioner for Women & Men with Oily Hair & Residue, Lightweight Hair Care for Curly, Straight, Thick & Thin Locks, Sulfate Free, Vegan, 236ml",
+        "B0DY8RRY91": "Acure Curiously Clarifying Conditioner & Argan Gently Cleanses, Removes Buildup, Boost Shine & Replenishes Moisture Lemongrass, 236ml, Pack of 2",
+        "B0DZDCG1FT": "Acure Curiously Clarifying Shampoo and Conditioner Set - Daily Deep Cleansing & Hydrating Set for Women & Men, Detox for Oily Hair & Scalp Build Up, Paraben Free, Sulfate Free, 236ml, Pack of 2",
+        "B082G1Z6HH": "Acure Daily Workout Watermelon Conditioner - Lightweight Hydrating & Moisturizing Conditioner for Women & Men with Oily, Damaged Hair, Deep Moisture, Vegan, Paraben Free, Sulfate Free, 236ml",
+        "B0FSX8ZSRY": "Acure Daily Workout Watermelon Shampoo & Conditioner - Lightweight Hydrating & Clarifying Shampoo and Conditioner for Women & Men with Oily, Damaged Hair & Dry Scalp, Color Safe, 236ml, Pack of 2",
+        "B0071HIE94": "Acure Dry Shampoo - Mini Powder Dry Shampoo for Women with Blonde & Dark Hair, Care to Refresh Treated Color Tinted Hair with Rosemary & Peppermint, Non Aerosol, Clean, 100% Vegan, Travel Size, 48g",
+        "B0DZDCMD6N": "Acure Dry Shampoo - Mini Powder Dry Shampoo for Women with Blonde & Dark Hair, Care to Refresh Treated Color Tinted Hair with Rosemary & Peppermint, Non Aerosol, Vegan, Travel Size, 48g, Pack of 2",
+        "B01IKK31UC": "Acure Dry Shampoo - Mini Powder Dry Shampoo for Women with Brunette & Dark Hair, Care to Refresh Treated Color Tinted Hair with Rosemary & Cocoa, Non Aerosol, Clean, 100% Vegan, Travel Size, 48g",
+        "B071XVDZ1D": "Acure Dry Shampoo - Mini Powder Dry Shampoo for Women with Brunette & Dark Hair, Care to Refresh Treated Color Tinted Hair with Rosemary & Cocoa, Non Aerosol, 100% Vegan, Travel Size, 48g, Pack of 2",
+        "B082G1C4BZ": "Acure Ultra Hydrating 12 Hour Facial Cream - Intense Face Moisturizer for Women & Men, Hydrating Lotion to Tone & Replenish Dry Skin with Ashwagandha, Holy Basil & Antioxidants, Vegan - 1.7 fl oz",
+        "B082G1XYRB": "Acure Ultra Hydrating Green Juice Face Cleanser - Superfood Cleanser, Green Face Wash for Women & Men, Clean Skin Formula with Spinach, Blackhead Remover, Pore Scrub, Facial Cleansing Foam, 118ml",
+        "B0FSTHT5RD": "Acure Ultra Hydrating Green Juice Face Cleanser - Superfood Cleanser, Face Wash for Women & Men, Clean Skin Formula with Spinach, Blackhead Remover, Pore Scrub, Facial Cleansing Foam, 118ml, Pack of 2",
+        "B082YG2VT1": "Acure Ultra Hydrating Conditioner - Deep Moisture Conditioner for Women & Men with Dry, Damaged, Fine, Dry, Damaged, Color Treated Hair & Scalp with Argan Oil, Vegan, Paraben Free, Sulfate Free, 236ml",
+        "B0CMZC4GY3": "Acure Bonding Leave-In Conditioner - Leave in Conditioner Spray for Women & Men, Moisture Treatment to Repair Dry, Damaged, Color Treated Hair, Protect & Smooth Straight, Curly, & Wavy Hair, 147ml",
+        "B003Z4MCJA": "Acure Radically Rejuvenating Eye Cream - Under Eye Cream for Dark Circles & Wrinkles, Firming & Hydrating Treatment to Brighten, Anti Aging Moisturizer for Hydration with CoQ10, 30ml",
+        "B082G1SBGX": "Acure Resurfacing 1% Glycolic Acid & Unicorn Root Cleanser - Exfoliating Face Wash, Glycolic Acid Cleanser for Face, Brightening Anti Aging Cream to Foam Facial Cleanser, Sulfate Free, Vegan, 118ml",
+        "B0FSTLNKXY": "Acure Resurfacing 1% Glycolic Acid & Unicorn Root Cleanser - Exfoliating Face Wash, Glycolic Acid Cleanser for Face, Brightening Anti Aging Cream to Foam, Sulfate Free, Vegan, 118ml, Pack of 2",
+        "B0DZDDZ3SW": "Acure Simply Smoothing Shampoo and Conditioner Set - Hydrating & Moisturizing for Women & Men, Moisturize Frizzy, Dry, Damaged Hair w/Coconut Water, Vegan, Paraben & Sulfate Free, 236ml, Pack of 2",
+        "B082YG5X38": "Acure Simply Smoothing Shampoo - Hydrating Anti Frizz Shampoo for Women & Men, Moisturize & Soften Frizzy, Dry, Damaged Hair & Scalp with Coconut Water, Vegan, Paraben Free, Sulfate Free, 236ml",
+        "B082YG4LNC": "Acure Simply Smoothing Conditioner - Hydrating & Moisturizing Conditioner for Women & Men, Detangling & Softening for Dry, Frizzy, Damaged, Thin & Thick Hair, Sulfate & Paraben Free, Vegan, 236ml",
+        "B00B4C35IW": "Acure Seriously Soothing Cleansing Cream - Gentle Hydrating & Exfoliating Face Wash, Daily Facial Cleanser for Women & Men with Chamomile & Sunflower Amino Acids, Sulfate Free, Vegan - 118ml",
+        "B00BTYPW5E": "Acure Soothing Day Cream - Moisturizer for Dry Sensitive Skin, Hydrating & Soothing Facial Lotion with Argan Oil, Chamomile & Sunflower Amino Acids, Vegan & Cruelty Free Skincare, 50ml",
+        "B078ZHPLNR": "Acure Ultra Hydrating Shampoo - Moisturizing Shampoo for Women & Men, Moisturize & Soften Fine, Dry, Damaged, Color Treated Hair & Scalp with Argan Oil, Vegan, Paraben Free, Sulfate Free, 236ml",
+        "B0DZDDDJ4Z": "Acure Vivacious Volume Shampoo and Conditioner Set - Thickening & Volumizing Hair Care for Thick, Full Locks, Boost for Thin, Fine Hair, Sulfate Free, Paraben Free, Vegan, 236ml, Pack of 2",
+        "B082YGK39W": "Acure Vivacious Volume Shampoo - Volumizing Shampoo for Fine Thin Hair, Add Body and Thicken Thinning Hair for Women & Men, Scalp Treatment with Mint, Sulfate & Paraben Free, Vegan, 236ml",
+        "B082YG2VT8": "Acure Vivacious Volume Conditioner - Volumizing Conditioner for Women & Men, Lightweight & Moisturizing for Fine, Thinning Hair, Boost & Lift Thin Hair, Paraben & Sulfate Free, Clean, Vegan, 236ml",
+        "B07NJ4H5S3": "Acure Radically Rejuvenating Whipped Night Cream - Anti Aging Peptide Night Face Cream for Women & Men, Hydrating & Renewing Moisturizer for Fine Lines and Dark Spots with Vitamin C, 50ml"
+      }
+    },
+    {
+      "id": "big-league-chew",
+      "name": "Big League Chew",
+      "marketplace": "CA",
+      "color": "#f59e0b",
+      "asins": [
+        "B0FXYFNYDB",
+        "B0015DMKGI",
+        "B0FKKJ672S",
+        "B0FXYG5H5T",
+        "B0FKD1YM9G",
+        "B0FXYGNW3N",
+        "B0FKKRMLGY",
+        "B000FOIYSG",
+        "B0FXYD5X11",
+        "B0FKKZ99Y5",
+        "B0FXYGBGKN",
+        "B0087SVODE"
+      ],
+      "createdAt": "2026-03-27",
+      "asinTitles": {
+        "B0FXYFNYDB": "Big League Chew Bubble Gum, Shredded Bubblegum in a Stay Fresh Pouch, Soft Shredded Chewing Gum, Big Rally Blue Raspberry Flavour, 2.12oz Pouch, Pack of 3",
+        "B0015DMKGI": "Big League Chew Sour Apple 12 Pack Box",
+        "B0FKKJ672S": "Big League Chew Bubble Gum, Shredded Bubblegum in a Stay Fresh Pouch, Soft Shredded Chewing Gum, Big Rally Blue Raspberry Flavour, 2.12oz Pouch, Pack of 12",
+        "B0FXYG5H5T": "Big League Chew Bubble Gum, Shredded Bubblegum in a Stay Fresh Pouch, Soft Shredded Chewing Gum, Ground Ball Grape Flavour, 2.12oz Pouch, Pack of 3",
+        "B0FKD1YM9G": "Big League Chew Bubble Gum, Shredded Bubblegum in a Stay Fresh Pouch, Soft Shredded Chewing Gum, Ground Ball Grape Flavour, 2.12oz Pouch, Pack of 12",
+        "B0FXYGNW3N": "Big League Chew Bubble Gum, Shredded Bubblegum in a Stay Fresh Pouch, Soft Shredded Chewing Gum, Outta' Here Original Flavour, 2.12oz Pouch, Pack of 3",
+        "B0FKKRMLGY": "Big League Chew Bubble Gum, Shredded Bubblegum in a Stay Fresh Pouch, Soft Shredded Chewing Gum, Outta' Here Original Flavour, 2.12oz Pouch, Pack of 12",
+        "B000FOIYSG": "Big League Chew, Outta' Here Original Bubble Gum, 2.12-Ounce Pouches (Pack of 12)",
+        "B0FXYD5X11": "Big League Chew Bubble Gum, Shredded Bubblegum in a Stay Fresh Pouch, Soft Shredded Chewing Gum, Slammin' Strawberry Flavour, 2.12oz Pouch, Pack of 3",
+        "B0FKKZ99Y5": "Big League Chew Bubble Gum, Shredded Bubblegum in a Stay Fresh Pouch, Soft Shredded Chewing Gum, Slammin' Strawberry Flavour, 2.12oz Pouch, Pack of 12",
+        "B0FXYGBGKN": "Big League Chew Bubble Gum, Shredded Bubblegum in a Stay Fresh Pouch, Soft Shredded Chewing Gum, Assorted Flavours, 2.12oz Pouch, Pack of 4"
+      }
+    },
+    {
+      "id": "little-trees",
+      "name": "LITTLE TREES",
+      "marketplace": "CA",
+      "color": "#10b981",
+      "asins": [
+        "B00LM558M2"
+      ],
+      "createdAt": "2026-03-27",
+      "asinTitles": {
+        "B00LM558M2": "LITTLE TREES Car Air Freshener | Hanging Tree Provides Long Lasting Scent for Auto and Home | Green Apple, 24 Air Fresheners"
+      }
+    },
+    {
+      "id": "trimax",
+      "name": "Trimax",
+      "marketplace": "CA",
+      "color": "#3b82f6",
+      "asins": [
+        "B003ESOAIS",
+        "B002IV4ZW8",
+        "B000W0OFXG",
+        "B0000ATZD5",
+        "B00J0ABS5M",
+        "B0031XXWHG",
+        "B0031XULF2",
+        "B007ACZTGQ",
+        "B000W0OGUS",
+        "B000MU8XI4",
+        "B08ND21DCZ",
+        "B007ACZVXC",
+        "B00020XQ1S",
+        "B0031XULHK",
+        "B003E1GLSM"
+      ],
+      "createdAt": "2026-03-27",
+      "asinTitles": {
+        "B000W0OFXG": "TRIMAX MAG200 5/8\" Resettable Combination Receiver Lock",
+        "B0000ATZD5": "Trimax ST30 Trimaflex Spare Tire Cable Lock (Round Key) 36\" x 12mm",
+        "B00J0ABS5M": "TRIMAX T5BLACK 5/8\" Keyed Receiver Lock with 3-1/2\" Span - Black",
+        "B0031XXWHG": "Trimax Outboard Motor Lock Quick Release/Install, Clamps and Secures",
+        "B0031XULF2": "Trimax TCL65 Wheel Chock Lock , Yellow/Red, 7.25in",
+        "B007ACZTGQ": "Trimax TCP100 Keyed Alike Combo Pack",
+        "B003ESOAIS": "Trimax TCP50 Trailer Lock Combo Pack (Keyed Alike)",
+        "B000W0OGUS": "Trimax TDL3010 Trimaflex 30' X 10mm Dual Loop Multi-Use Cable",
+        "B000MU8XI4": "Trimax TDL815 Trimaflex 8' X 15mm Dual Loop Multi-Use Cable",
+        "B08ND21DCZ": "TRIMAX TFW80HD 5th Wheel King Pin Lock",
+        "B007ACZVXC": "Trimax TH6 5/8\" x 6-1/8\" Diameter Premium Swing Away Trailer Lock",
+        "B002IV4ZW8": "TRIMAX THP3XL - Trailer Door Lock (3 Pack Keyed Alike) - Shackleless Puck Lock for Trailers, Universal Fit, Weather Resistant",
+        "B00020XQ1S": "Trimax TMC10 Deluxe Coupler/Door Latch Lock (fits couplers to 3/4\" Span)",
+        "B0031XULHK": "Trimax TNL740 Spare Tire Nut Lock for Side Mount Spare Tires",
+        "B003E1GLSM": "Trimax TWL100 Ultra-Max Adjustable Wheel Lock , Yellow/Black"
+      }
+    },
+    {
+      "id": "zellies",
+      "name": "Zellies",
+      "marketplace": "CA",
+      "color": "#8b5cf6",
+      "asins": [
+        "B08K78TJ8D",
+        "B01LWKACRL",
+        "B0B25XZGGY",
+        "B0B26HRZLZ",
+        "B00CAUMQQE",
+        "B00L2E2VXC",
+        "B004MAEXRK",
+        "B0B26FWMXD",
+        "B0B26HWF2Z",
+        "B0B26XLQZ9",
+        "B00C5L14YS",
+        "B00CB1L4O2"
+      ],
+      "createdAt": "2026-03-27",
+      "asinTitles": {
+        "B01LWKACRL": "Zellies Xylitol Sweetened Cherry Berry Mints, 250 Count Jar",
+        "B0B25XZGGY": "Zellie's | 100% Xylitol Cherry Berry Breath Mints | No Aspartame, Gluten Free, Vegan & Kosher Mints (540 Count - Pack of 1)",
+        "B0B26HRZLZ": "Zellie's | 100% Xylitol Sugar Free Chewing Gum (Cinnamon, 240 Count (Pack of 1))",
+        "B00CAUMQQE": "Zellie's | 100% Xylitol Sugar Free Cinnamon Chewing Gum | Cinnamon Flavor (100 Count (Pack of 1))",
+        "B00L2E2VXC": "Zellies Cinnamon Xylitol Mints, 250 Count Jar by Zellies",
+        "B004MAEXRK": "Zellie's Cool Fruit Mints, 250 Count Jar by Zellies",
+        "B0B26FWMXD": "Zellie's | 100% Xylitol Sugar Free Cool Fruit Mints Breath Mints | Non-GMO, Low-Calorie, Gluten Free, Vegan & Kosher Mints (540 Count - Pack of 1)",
+        "B0B26HWF2Z": "Zellie's | 100% Xylitol Cool Mint Breath Mints | No Aspartame, Gluten Free, Vegan & Kosher (540 Count - Pack of 1)",
+        "B0B26XLQZ9": "Zellie's | 100% Xylitol Sugar Free Chewing Gum (Peppermint, 240 Count (Pack of 1))",
+        "B00C5L14YS": "Zellie's | 100% Xylitol Sugar Free Peppermint Chewing Gum | Peppermint Flavor (100 Count (Pack of 1))",
+        "B00CB1L4O2": "Zellies 851278001035 Spearmint Gum (Pack of 100)",
+        "B08K78TJ8D": "Zellie's | 100% Xylitol Spearmint Breath Mints | No Aspartame, Gluten Free, Vegan & Kosher Mints (250 Count - Pack of 1)"
+      }
+    },
+    {
+      "id": "supreme-petfoods",
+      "name": "Supreme Petfoods",
+      "marketplace": "CA",
+      "color": "#ef4444",
+      "asins": [
+        "B007ZYR7T6",
+        "B09PZ1772S",
+        "B0058OCDBC",
+        "B0DL6GG2V9",
+        "B091VQJMRX",
+        "B0030N1QZ2",
+        "B01N442619",
+        "B083FS2FK6",
+        "B01NA9AJPS",
+        "B078VKDBL2",
+        "B07PJYSZYH",
+        "B07PGPQ54H",
+        "B01BHVDSGS",
+        "B0746RPLXX",
+        "B07ZH7XSFN",
+        "B005OCXN1M",
+        "B00VF2AN7M",
+        "B0B3S7QQHP",
+        "B08T1QDV6Y",
+        "B00VF2IRH0",
+        "B07SJ93GT7",
+        "B09S3YVPVF",
+        "B0012SNXJ4",
+        "B07SNW77J2",
+        "B07SN66BBF",
+        "B07SM1ZX7B",
+        "B07SNRX61V",
+        "B07SNTYWWK",
+        "B011M7W3MM",
+        "B07SLCVFKP",
+        "B00J5Z03DU",
+        "B0028Z5F96",
+        "B07S4KLBK4",
+        "B003672P98",
+        "B01BHVDS9A",
+        "B087RSQN7Y",
+        "B07QD5X7WY",
+        "B0716ZVTJ5",
+        "B0DL6C9B2M",
+        "B0DL6G34D4",
+        "B01BHVDSFE",
+        "B07SN6B37R",
+        "B07SH9G75L",
+        "B0DL6CZ2SZ",
+        "B01MYDU6BV",
+        "B01MTQP79L",
+        "B07SKCJYPX",
+        "B07SKY1JVQ",
+        "B07SH9FRBN",
+        "B07SNY9SKB",
+        "B01NBAN5OK",
+        "B078Y5VSTZ",
+        "B00VF2G52E",
+        "B01BHVDS7C",
+        "B00VF239NC",
+        "B00TPZ9H14",
+        "B07ZH9DWXQ",
+        "B003ZGCC98",
+        "B01BHVDUSE",
+        "B07WG2S31B",
+        "B003ZGBJII",
+        "B0922S61M3",
+        "B091VMQ93H",
+        "B0791W7F4F",
+        "B07SJVR8RB",
+        "B07SNXRMF4",
+        "B078Y36KN1",
+        "B09RTDJLN4",
+        "B07S1Q189X",
+        "B00VF22140",
+        "B07SK8ZFY5",
+        "B07SN61M8M",
+        "B086L6RD13",
+        "B07RZMDR4W",
+        "B07SKY1Z7D",
+        "B07SG7CR89",
+        "B07SLBXMHJ"
+      ],
+      "createdAt": "2026-03-27",
+      "asinTitles": {
+        "B0058OCDBC": "Tiny Friends Farm Supreme Russel Premium Crunchers Carrot Healthy Baked Bites for Rabbits 4.2z",
+        "B007ZYR7T6": "Supreme Petfoods Science Selective Junior Rabbit 1.5 kg",
+        "B0DL6GG2V9": "Selective Vitamin C Care Supplement",
+        "B091VQJMRX": "Supreme Science Selective Naturals Berry Loops with Timothy Hay & Cranberry for Guinea Pigs, 2.8 oz.",
+        "B0030N1QZ2": "Supremepetfoods Charlie Chinchilla Food, 2-Pound",
+        "B01N442619": "Selective Naturals Garden Sticks Pea & Mint For Rabbits 2.1-Ounce",
+        "B083FS2FK6": "Supreme Petfoods Science Selective Rabbit Food 8.8lbs",
+        "B09PZ1772S": "Supreme Petfoods Science Selective Bathing Sand for Hamsters, Gerbils, Chinchillas & Degu",
+        "B01NA9AJPS": "Supreme Petfoods 1 Pack of Selective Naturals Forest Sticks Guinea Pig Treats, 2.1 Ounces each, with Blackberry and Chamomile",
+        "B078VKDBL2": "Supreme Selective Naturals Grain Free Rabbit Food 3.3lbs",
+        "B07PJYSZYH": "Selective Naturals Country Loops with Carrot & Timothy Hay (Pack of 4)",
+        "B07PGPQ54H": "Supreme Petfoods Selective Naturals Harvest Loops with Apple, Linseed & Peanut (Pack of 4), Brown, 2.8 OZ",
+        "B01BHVDSGS": "Supreme Petfoods Science Selective Rabbit Food, 4 lb",
+        "B0746RPLXX": "Selective Naturals Grain Free Guinea Pig Food 3.3 Pound (Pack of 1)",
+        "B07ZH7XSFN": "Hazel Hamster Lovelies Treats, 4.2-oz.",
+        "B005OCXN1M": "Supreme Tiny Friends Farm Bathing Sand 2.2lb",
+        "B00VF2AN7M": "Supreme Tiny Friends Farm Gerty Guinea Pig Tasty Mix, Apple Strawberry, 2lbs",
+        "B0B3S7QQHP": "Supreme Petfoods Tiny Friends Farm Harry Hamster Fruity Nutty Mix",
+        "B08T1QDV6Y": "Supreme Tiny Friends Farm Russel Rabbit Tasty Mix 5.5lb",
+        "B00VF2IRH0": "Supreme Tiny Friends Farm Reggie Rat and Mimi Mouse Tasty Mix 2lb",
+        "B07SJ93GT7": "Supreme Petfoods 3 Pack of Charlie Chinchilla Cookies Small Pet Treats, 4.2 Ounces each, with Raisin and Carrot",
+        "B09S3YVPVF": "Supreme Petfoods Tiny Friends Farm Charlie Chinchilla Cookies (Pack of Four)",
+        "B0012SNXJ4": "Supreme Petfoods Farm Gerty Guinea Pig Tasty Mix",
+        "B07SNW77J2": "Supreme Selective Naturals Garden Sticks 2.1 oz - Pack of 10",
+        "B07SN66BBF": "Supreme Selective Naturals Garden Sticks 2.1 oz - Pack of 12",
+        "B07SM1ZX7B": "Supreme Petfoods 2 Pack of Selective Naturals Garden Sticks Rabbit Treats, 2.1 Ounces each, with Pea and Mint",
+        "B07SNRX61V": "Supreme Petfoods 3 Pack of Selective Naturals Garden Sticks Rabbit Treats, 2.1 Ounces each, with Pea and Mint",
+        "B07SNTYWWK": "Supreme Selective Naturals Garden Sticks 2.1 oz - Pack of 6",
+        "B011M7W3MM": "Tiny Friends Farm Russel Rabbit Munchers with Carrot & Leek 4.2oz",
+        "B07SLCVFKP": "Russel Rabbit Carrot Crunchers Treat, 4.2-oz.",
+        "B00J5Z03DU": "Supreme Petfoods 3 Pack of Tiny Friends Farm Russel Rabbit Crunchers with Carrot, 4.2 Ounces Each",
+        "B0028Z5F96": "Supreme Russel Cherry and Apricot Crunchers 80G",
+        "B07S4KLBK4": "Supreme Petfoods 2 Pack of Russel Rabbit Fruities Small Pet Treats, 4.2 Ounces each, with Cherry and Apricot",
+        "B003672P98": "Supreme Petfoods Science Selective Hamster Foods, Brown,natural,0.1 kg",
+        "B01BHVDS9A": "Supreme Petfoods Science Selective Chinchilla Food, 4 Lb 6 Oz",
+        "B087RSQN7Y": "Supreme Petfoods Science Selective Guinea Pig 8.8lbs, Brown (4290)",
+        "B07QD5X7WY": "SCIENCE Selective Supreme Junior Rabbit Food 4lb 6 ounce (pack of 1)",
+        "B0716ZVTJ5": "Supreme Petfoods Limited Selective Rabbit Diet 4+ Years 4 Lb 6 Oz",
+        "B0DL6C9B2M": "Selective Skin & Coat Care Supplement",
+        "B0DL6G34D4": "Selective Urinary Care Supplement",
+        "B01BHVDSFE": "Supreme Petfoods Science Selective Rat Food, 4 Lb 6 Oz, 4.38 Pound (Pack of 1)",
+        "B07SN6B37R": "Supreme Petfoods 2 Pack of Selective Naturals Forest Sticks Guinea Pig Treats, 2.1 Ounces each, with Blackberry and Chamomile",
+        "B07SH9G75L": "Supreme Petfoods Selective Naturals Forest Sticks Treats (2.1 oz) (3-Pack)",
+        "B0DL6CZ2SZ": "Selective Digestive Care Supplement",
+        "B01MYDU6BV": "Selective Naturals Meadow Loops for Rabbits with Timothy Hay & Thyme 80g (Pack of 4)",
+        "B01MTQP79L": "Selective Naturals Supreme Science Meadow Loops for Rabbit, 2.8 oz.",
+        "B07SKCJYPX": "Supreme Selective Naturals Woodland Loops 2.8 oz - Pack of 4",
+        "B07SKY1JVQ": "Supreme Petfoods 3 Pack of Selective Naturals Woodland Loops Guinea Pig Treats, 2.8 Ounces each, with Dandelion and Rosehip",
+        "B07SH9FRBN": "Supreme Petfoods 2 Pack of Selective Naturals Woodland Loops Guinea Pig Treats, 2.8 Ounces each, with Dandelion and Rosehip",
+        "B07SNY9SKB": "Supreme Selective Naturals Woodland Loops 2.8 oz - Pack of 10",
+        "B01NBAN5OK": "Supreme Science Selective Naturals Loops for Guinea Pig, 2.8 oz",
+        "B078Y5VSTZ": "Supreme Petfoods Selective Naturals Woodland Loops For Guinea Pigs (Pack Of Four)",
+        "B00VF2G52E": "Supreme Tiny Friends Farm Russel Rabbit Tasty Mix 2lb",
+        "B01BHVDS7C": "Supreme Tiny Friends Farm Hazel Hamster Tasty Mix 2lbs",
+        "B00VF239NC": "Supreme Petfoods Tiny Friends Farm Charlie Chinchilla Food, 2 Lb",
+        "B00TPZ9H14": "Supreme Tiny Friends Farm Russel Rabbit Tasty Mix 5.5lb",
+        "B07ZH9DWXQ": "Hazel Hamster Lovelies Treats, 4.2-oz.",
+        "B003ZGCC98": "Supreme Gerty Scrummies Apple Strawberry Healthy Baked Bites For Guinea Pig 4.2Z",
+        "B01BHVDUSE": "Supreme Petfoods Tiny Friends Farm Gerty Guinea Pig Food, 5.5 Lb",
+        "B07WG2S31B": "Supreme Petfoods Science Selective House Rabbit Food, Brown,Natural,52.8 ounces",
+        "B003ZGBJII": "Supreme Charlie Raisin Carrots Crunchers Cookies Pet Healthy Baked Bites 4.2z",
+        "B0922S61M3": "Selective Naturals Orchard Loops with Timothy Hay & Apple (Pack of 4)",
+        "B091VMQ93H": "Supreme Science Selective Naturals Orchard Loops with Timothy Hay & Apple for Rabbits, 2.8 oz.",
+        "B0791W7F4F": "Supreme Petfoods Selective Naturals Meadow Loops For Rabbits 2.8Oz (Pack Of Four)",
+        "B07SJVR8RB": "Supreme Petfoods 3 Pack of Selective Naturals Meadow Loops, 2.8 Ounces each, with Timothy Hay and Thyme",
+        "B07SNXRMF4": "Selective Naturals Meadow Loops Timothy Hay & Thyme For Rabbits 2.8-Oz - 2 Pack",
+        "B078Y36KN1": "Selective Naturals Garden Sticks For Rabbits (Pack Of Four),Vegetable,0.53 pounds",
+        "B09RTDJLN4": "Supreme Petfoods Tiny Friends Farm Gerty Guinea Pig Scrummies (Pack of Four) (8163)",
+        "B07S1Q189X": "Supreme Petfoods Russel Rabbit Fruities Small Pet Treats 3 Pack, 4.2 Ounce Each, Cherry & Apricot",
+        "B00VF22140": "Supreme Tiny Friends Farm Lovelies Hamster Treats, 4.2 oz.",
+        "B07SK8ZFY5": "Tiny Friends Farm Premium Carrot & Leek Healthy Bites for Rabbits 4.2oz - 3 Pack",
+        "B07SN61M8M": "SupremePetfoods Tiny Friends Farm Russel Rabbit Munchers with Carrot & Leek 4.2 oz - Pack of 2",
+        "B086L6RD13": "Supreme Scrummies Apple Strawberry Baked Bites For Guinea Pigs 4.2 oz - 3 Pack",
+        "B07RZMDR4W": "Tiny Friends Farm Premium Baked Bites with Carrots for Rabbits 4.2 oz - 2 Pack",
+        "B07SKY1Z7D": "Tiny Friends Farm Premium Baked Bites with Carrots for Rabbits 4.2 oz - 12 Pack",
+        "B07SG7CR89": "Tiny Friends Farm Premium Baked Bites with Carrots for Rabbits 4.2 oz - 4 Pack",
+        "B07SLBXMHJ": "Tiny Friends Farm Premium Baked Bites with Carrots for Rabbits 4.2 oz - 6 Pack"
+      }
+    },
+    {
+      "id": "omega-alpha",
+      "name": "Omega Alpha",
+      "marketplace": "CA",
+      "color": "#14b8a6",
+      "asins": [
+        "B00I47O7J6",
+        "B00H2U50CO",
+        "B07PKH1V5V"
+      ],
+      "createdAt": "2026-03-27",
+      "asinTitles": {
+        "B00I47O7J6": "Omega Alpha - OptiPet Multi - 500ml",
+        "B00H2U50CO": "Omega Alpha Probiotic 8 Plus Equine Powder 500g, Multi-Strain Digestive Support Supplement with Enzymes & Prebiotics for Gut Health & Nutrient Absorption",
+        "B07PKH1V5V": "Hyaluronic Acid Supplement (HA-180), Hip and Joint Supplement for Dogs & Cats, Pets Performance and Mobility, Cat & Dog Supplements Promote Healthy Joints and Flexibility, Omega Alpha, 250ml"
+      }
+    },
+    {
+      "id": "animal",
+      "name": "Animal",
+      "marketplace": "CA",
+      "color": "#10b981",
+      "asins": [
+        "B012Z6EQ06"
+      ],
+      "asinTitles": {
+        "B012Z6EQ06": "Animal Animal Flex 44 Paks - CLF-ANI-AP53 by Animal"
+      },
+      "createdAt": "2026-03-27"
+    },
+    {
+      "id": "purewine",
+      "name": "Purewine",
+      "marketplace": "CA",
+      "color": "#ef4444",
+      "asins": [
+        "B07LGBLWBS",
+        "B06XGP85LR",
+        "B09HJJ2C8Z",
+        "B09HJMRZWS"
+      ],
+      "asinTitles": {
+        "B07LGBLWBS": "PureWine The Wand Wine Purifier - Remove Histamine & Sulfites, Eliminate Headaches & Allergies, Wine Filter for Red, White & Rosé, Single Use BPA Free, Perfect Vin Accessories Gift, Silver, 30-Pack",
+        "B06XGP85LR": "PureWine The Wand Wine Purifier - Remove Histamine & Sulfites, Eliminate Headaches & Allergies, Wine Filter for Red, White & Rosé, Single Use BPA Free, Perfect Vin Accessories Gift, Silver, 8-Pack",
+        "B09HJJ2C8Z": "PureWine Phoenix Bio-Pods - Premium Wine Filter Replacements for Enhanced Flavour - Removes Sulfites & Sediments - Perfect Wine Accessories for Enthusiasts - Pack of 8",
+        "B09HJMRZWS": "Phoenix Wine Aerator & Purifier - Reusable Wine Aerator Pourer with BioPod Filter System for Red, White & Rosé, Removes Sulfites & Histamine, Eliminate Headaches, Ideal Unisex Gift for Adults, White"
+      },
+      "createdAt": "2026-03-27"
+    },
+    {
+      "id": "jarrow",
+      "name": "Jarrow",
+      "marketplace": "CA",
+      "color": "#ef4444",
+      "asins": [
+        "B001GAOHMK",
+        "B001F0R78M",
+        "B003ZCNER6",
+        "B00OGXISJW",
+        "B010E6RMLY",
+        "B00R1OFSC8",
+        "B00TDFMU2Y",
+        "B001GL1VGE",
+        "B000HKZ85A",
+        "B0013OSK40",
+        "B00OGXKHB4",
+        "B000SPF03O",
+        "B008OXVMBQ",
+        "B093RVLX3X",
+        "B001U3QT24"
+      ],
+      "asinTitles": {
+        "B001GAOHMK": "Jarrow Formulas Biotin 5000 mcg - 100 Veggie Caps, Pack of 2 - Supports Skin & Hair Growth, Lipid Metabolism & Energy Production (ATP) - 200 Total Servings",
+        "B001F0R78M": "Jarrow Formulas B-Right - 100 Veggie Caps, Pack of 2 - Low-Odor Vitamin B-Complex Formula - Energy & Metabolism Support - Promotes Brain, Heart & Cardiovascular Health - 100 Count (Pack of 2)",
+        "B003ZCNER6": "Jarrow Formulas - Glutathione Reduced 500 mg 60 caps (Pack of 2)",
+        "B00OGXISJW": "Jarrow Formulas Vitamin B12 5000 mcg - Maximum Strength for Cellular Energy and Brain Health, 90 Cherry Chewable Tablets, B12 Vitamins 5000 mcg",
+        "B010E6RMLY": "Jarrow Formulas Milk Thistle 150 mg - 100 Veggie Capsules - Antioxidant Supporting Immune Response, Liver Function & Glutathione - Up to 100 Servings (packaging may vary)",
+        "B00R1OFSC8": "Jarrow Formulas QH-absorb 200 mg - 60 Softgels - High Absorption Co-Q10 - Active Antioxidant Form of Co-Q10 - Supports Mitochondrial Energy Production and Cardiovascular Health - 60 Servings",
+        "B00TDFMU2Y": "Jarrow Formulas Same 200 mg - 60 Tablets - Highest Concentration of Active S,S Form - Supports Joint Health, Liver Function, Brain Metabolism, Mood & Antioxidant Defense - 60 Servings",
+        "B001GL1VGE": "Jarrow Formulas Vitamin D3 2500 IU - 100 Softgels, Pack of 2 - Bone Health, Immune Function & Calcium Metabolism Support - 200 Total Servings",
+        "B000HKZ85A": "Jarrow Formulas Curcumin 95 Supplement - Turmeric Extract Supplement, 500 mg for Antioxidant & Joint Support, 60 Capsules",
+        "B0013OSK40": "Jarrow Formulas Co-Q10, Promotes Cellular Energy Production, 100 mg, 60 Caps",
+        "B00OGXKHB4": "Jarrow Formulas Glutathione Reduced 500 mg - 150 Veggie Capsules - Intracellular Antioxidant - Quality Glutathione Supplements - Supports Recycling of Vitamins C & E - Non-GMO - Gluten Free - Vegan",
+        "B000SPF03O": "Jarrow Formulas MK-7 60 Softgels",
+        "B008OXVMBQ": "Jarrow Formulas trans-Pterostilbene, 50 Milligrams Per Serving, 60 Vegetarian Capsules. Pack of 2 bottles",
+        "B093RVLX3X": "Jarrow Formulas QH-Absorb 200 mg - Active Antioxidant Form of Co-Q10 - Dietary Supplement - Supports Mitochondrial Energy Production & Cardiovascular Health - 90 Softgels",
+        "B001U3QT24": "Jarrow Formulas Zinc Balance 15 mg - 100 Veggie Caps, Pack of 2 - Immune Support - Includes Copper - 100 Count (Pack of 2)"
+      },
+      "createdAt": "2026-03-27"
+    },
+    {
+      "id": "lillie-s-q",
+      "name": "Lillie's Q",
+      "marketplace": "CA",
+      "color": "#f97316",
+      "asins": [
+        "B0DJRJ7WYD"
+      ],
+      "asinTitles": {
+        "B0DJRJ7WYD": "LILLIES Q Smoky BBQ Sauce, 15.3 OZ"
+      },
+      "createdAt": "2026-03-27"
+    },
+    {
+      "id": "viva",
+      "name": "Viva",
+      "marketplace": "CA",
+      "color": "#14b8a6",
+      "asins": [
+        "B078YBJ6YG",
+        "B01DYJ4G4O",
+        "B01DYKA64W",
+        "B08813TWX1",
+        "B0CFRNSNZD",
+        "B08T7K9S56",
+        "B078YW78H4",
+        "B078YYZ8Z1"
+      ],
+      "asinTitles": {
+        "B078YBJ6YG": "Viva Vitamins Time Release Vitamin C 1000mg Tablets, High Potency Organic Vitamin C Supplement, Immune Support and Antioxidant Supplement Enriched with Essential & Chelated Minerals, 210 Tablets",
+        "B01DYJ4G4O": "Viva Vitamins PMA Positive Mental Attitude - Mood Support Supplement - Mood Pills - Mood Enhancer Vitamins - Calming Mind Support - Supplement for Good Mood - 60 caps",
+        "B01DYKA64W": "Viva Vitamins - Complete Minerals, Regular Strength - Complete Multiple Mineral Supplement with Krebs' Cycle Intermediates - 90 Tablets",
+        "B08813TWX1": "Greater Greens Detox Cleanse - Super Greens Powder for Bloating Relief for Women & Men, Mixed Greens Powder for Improved Digestive Health & Gut Health, Juice Cleanse, Green Juice, 10 Oz",
+        "B0CFRNSNZD": "Hair Growth Vitamins for Women & Men, Multivitamin Hair Growth Supplement with Biotin Supplement & L-cysteine, Hair Regrowth Treatment for Women & Men, Hair Vitamins to Prevent Hair Loss, 120 Tablets",
+        "B078YYZ8Z1": "CSP Packs Extra Strength - Multivitamin and Multi Mineral Supplements Complete E & C, Immunity Vitamin Supplements for Menand Women, Complete Wellness Formula for Immune Support, 30 Packs"
+      },
+      "createdAt": "2026-03-27"
+    },
+    {
+      "id": "maison-orph-e",
+      "name": "Maison Orphée",
+      "marketplace": "CA",
+      "color": "#ec4899",
+      "asins": [
+        "B00PN1AFHE",
+        "B00PN0EW42",
+        "B00PNQ0ER0",
+        "B00PN1AXLW",
+        "B0DPBJQ3QB",
+        "B0DPBK36TX",
+        "B015GEJJR4"
+      ],
+      "asinTitles": {
+        "B00PN1AFHE": "Grey Coarse Sea Salt with Mineral from Noirmoutier Identical to Celtic Salt ‒ Hand Harvested & Sun Dried, Sel de Mer Gros Gris, Non Iodized for Grilling, Seafood & Everyday Seasoning ‒ 1kg",
+        "B00PN0EW42": "Organic Dijon Mustard 250ml, BBQ & Grilling Condiment for Burgers, Marinades & Summer Salads, Organic Mustard, Gluten Free, No Preservatives or Artificial Colourings, Made in Canada, Moutarde Dijon",
+        "B00PNQ0ER0": "Grey Non Iodized Fine Sea Salt ‒ Sel De Mer Fin Gris from Noirmoutier, Mineral Rich Real Table Salt with Trace Minerals, Kosher Style Seasoning Salt for Grilling & Everyday Cooking, 500g",
+        "B00PN1AXLW": "Grey Non Iodized Fine Sea Salt Shaker ‒ Sel De Mer Fin Gris from Noirmoutier, Mineral Rich Real Table Salt w/Trace Minerals, Kosher Style Seasoning Salt for Grilling & Everyday Cooking, 250g",
+        "B0DPBJQ3QB": "Grey Non Iodized Fine Sea Salt Shaker ? Sel De Mer Fin Gris from Noirmoutier, Mineral Rich Real Table Salt w/Trace Minerals, Kosher Style Seasoning Salt for Grilling & Everyday Cooking, 250g, 2-Pack",
+        "B0DPBK36TX": "Grey Non Iodized Fine Sea Salt Shaker ? Sel De Mer Fin Gris from Noirmoutier, Mineral Rich Real Table Salt w/Trace Minerals, Kosher Style Seasoning Salt for Grilling & Everyday Cooking, 250g, 3-Pack",
+        "B015GEJJR4": "Organic Old-Fashioned Whole Grain Mustard 250ml, Low FODMAP Organic Mustard Condiment for Burgers, Sausages & BBQ, Gluten Free, No Preservatives, Made in Canada, Moutarde � L'ancienne Biologique"
+      },
+      "createdAt": "2026-03-27"
+    },
+    {
+      "id": "bio-fen",
+      "name": "Bio-fen",
+      "marketplace": "CA",
+      "color": "#ef4444",
+      "asins": [
+        "B01LQQ4VIS",
+        "B01LQMZ0ZA"
+      ],
+      "asinTitles": {
+        "B01LQQ4VIS": "Bio-Fen hair stimulating conditioner, 240ml",
+        "B01LQMZ0ZA": "Biofen Hair Revitalizing Womens and Mens Shampoo, 240ml"
+      },
+      "createdAt": "2026-03-27"
+    },
+    {
+      "id": "unknown-brand",
+      "name": "Unknown Brand",
+      "marketplace": "CA",
+      "color": "#f59e0b",
+      "asins": [
+        "B0CS4JZH2H",
+        "B0C9V2DMF7",
+        "B08QDQCYWN",
+        "B089WD943F",
+        "B005P0T12S",
+        "B0C5K42Z3F"
+      ],
+      "asinTitles": {
+        "B0CS4JZH2H": "Core Nutritionals ABC Advanced BCAA Supplement | Amino Acid Recovery Blend | with Glutamine, Beta Alanine, Citrulline Malate | 20 Servings (Lemon Drop)",
+        "B0C9V2DMF7": "Anima Mundi Apothecary Relax Tonic Nervous System Support - Natural Calm Aid & Mood Enhancer - Achieve Stress Relief with Lemon Balm, Passionflower, Chamomile, Ashwagandha Root & Lavender (2 fl oz)",
+        "B08QDQCYWN": "Anima Mundi Collagen Booster Face Oil Hydrating Organic Plant-Based Collagen Oil Rose Petals - Restore & Regenerate Collagen Receptors for Glowing Skin Complexion (1 Fl Oz)",
+        "B089WD943F": "Core Nutritionals Platinum Hard Advanced Recomposition and Hardening Agent, Reduces Cortisol Levels and Regulates Healthy Estrogen Production (84 Capsules)",
+        "B005P0T12S": "Calcium & Magnesium - Full Range Amino Acid Chelates in a Special Herb Base (90 Capsules)",
+        "B0C5K42Z3F": "Pacha Soap Coconut Papaya - 4 Ounce Bar - Natural"
+      },
+      "createdAt": "2026-03-27"
+    },
+    {
+      "id": "hilroy",
+      "name": "Hilroy",
+      "marketplace": "CA",
+      "color": "#10b981",
+      "asins": [
+        "B003M5SZY8"
+      ],
+      "asinTitles": {
+        "B003M5SZY8": "Hilroy 10 Lb. Woven Envelopes, 4-1/8 X 9-1/2 Inches, 50 Count, White (36612)"
+      },
+      "createdAt": "2026-03-27"
+    },
+    {
+      "id": "arm-hammer",
+      "name": "Arm & Hammer",
+      "marketplace": "CA",
+      "color": "#3b82f6",
+      "asins": [
+        "B0D7JWN3V3"
+      ],
+      "asinTitles": {
+        "B0D7JWN3V3": "Arm & Hammer for Pets Odor Control Wipes for Dogs, Best Odor Eliminating Waterless Cleaning for Dogs & Puppies | Kiwi Blossom Scent, 100 Count - 3 Pack"
+      },
+      "createdAt": "2026-03-27"
+    },
+    {
+      "id": "poo-pourri",
+      "name": "Poo-pourri",
+      "marketplace": "CA",
+      "color": "#8b5cf6",
+      "asins": [
+        "B08WJPQNYB"
+      ],
+      "asinTitles": {
+        "B08WJPQNYB": "Poo-Pourri Before-You-Go Toilet Spray, Fresh Sea Salt, 2 Fl Oz, Up to 100 Uses, Bathroom Odor Deodorizer with Essential Oils for Home or Work, Travel Essentials, TSA Approved Size, Sea Salt Bergamot"
+      },
+      "createdAt": "2026-03-27"
+    },
+    {
+      "id": "powobest",
+      "name": "Powobest",
+      "marketplace": "CA",
+      "color": "#ef4444",
+      "asins": [
+        "B0F7H759GN"
+      ],
+      "asinTitles": {
+        "B0F7H759GN": "Magic Sponge Eraser POWOBEST 100 Pac Extra Thick Melamine Sponges Magic Cleaning Sponge, Household Cleaning Scrub Sponge Pads for Kitchen, Car,Sink,Shoe，Bathtub Cleaning Sponge"
+      },
+      "createdAt": "2026-03-27"
+    },
+    {
+      "id": "yankee-candle",
+      "name": "Yankee Candle",
+      "marketplace": "CA",
+      "color": "#14b8a6",
+      "asins": [
+        "B09R511V1Z"
+      ],
+      "asinTitles": {
+        "B09R511V1Z": "Yankee Candle Sidekick Refill MidSummer's Night"
+      },
+      "createdAt": "2026-03-27"
+    },
+    {
+      "id": "philos",
+      "name": "Philos",
+      "marketplace": "CA",
+      "color": "#f97316",
+      "asins": [
+        "B00O53SIKC"
+      ],
+      "asinTitles": {
+        "B00O53SIKC": "DGT 3000 Chess timer ,12 years+"
+      },
+      "createdAt": "2026-03-27"
+    },
+    {
+      "id": "core-nutritionals",
+      "name": "Core Nutritionals",
+      "marketplace": "CA",
+      "color": "#84cc16",
+      "asins": [
+        "B0CS4B5HTN"
+      ],
+      "asinTitles": {
+        "B0CS4B5HTN": "Core Nutritionals ABC Advanced BCAA Supplement | Amino Acid Recovery Blend | with Glutamine, Beta Alanine, Citrulline Malate | 20 Servings (Patriot Pop)"
+      },
+      "createdAt": "2026-03-27"
+    },
+    {
+      "id": "pacha-soap-co",
+      "name": "Pacha Soap Co",
+      "marketplace": "CA",
+      "color": "#06b6d4",
+      "asins": [
+        "B09CFT5WKW"
+      ],
+      "asinTitles": {
+        "B09CFT5WKW": "PACHA SOAP Spearmint Lemongrass Bar Soap, 4 OZ"
+      },
+      "createdAt": "2026-03-27"
+    }
+  ]
+}

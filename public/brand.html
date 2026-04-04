@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Brand Detail — RMC Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>body { font-family: 'Inter', sans-serif; }</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+  <!-- Nav -->
+  <nav class="bg-white border-b border-slate-200 sticky top-0 z-10">
+    <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+      <div class="flex items-center gap-6">
+        <span class="font-bold text-slate-900 text-base tracking-tight">RMC Dashboard</span>
+        <div class="flex gap-1">
+          <a href="/" class="px-3 py-1.5 text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-md">Brands</a>
+          <a href="/admin.html" class="px-3 py-1.5 text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-md">ASIN Mapping</a>
+        </div>
+      </div>
+      <div class="flex items-center gap-3">
+        <div class="flex items-center gap-0.5 bg-slate-100 rounded-lg p-0.5">
+          <button id="toggleCAD" onclick="setCurrency('CAD')"
+            class="text-xs px-3 py-1 rounded-md font-medium transition-colors">CA$</button>
+          <button id="toggleUSD" onclick="setCurrency('USD')"
+            class="text-xs px-3 py-1 rounded-md font-medium transition-colors">US$</button>
+        </div>
+        <span id="syncBadge" class="text-xs px-2.5 py-1 rounded-full font-medium"></span>
+      </div>
+    </div>
+  </nav>
+
+  <div class="max-w-7xl mx-auto px-6 py-6">
+
+    <!-- Back + header -->
+    <div class="flex items-center gap-3 mb-6">
+      <a href="/" class="text-sm text-slate-500 hover:text-slate-900 flex items-center gap-1">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+        </svg>
+        All Brands
+      </a>
+      <span class="text-slate-300">/</span>
+      <div class="flex items-center gap-2">
+        <div id="brandColorDot" class="w-3 h-3 rounded-full"></div>
+        <h1 id="brandName" class="text-lg font-semibold text-slate-900">—</h1>
+        <span id="brandMarketplace" class="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full"></span>
+      </div>
+      <div class="ml-auto">
+        <a id="editMappingLink" href="#" class="text-sm text-blue-600 hover:text-blue-800 font-medium">Edit ASIN Mapping →</a>
+      </div>
+    </div>
+
+    <!-- Date Range Picker -->
+    <div class="flex items-center justify-between mb-6">
+      <div class="flex items-center gap-1 flex-wrap">
+        <button onclick="setPreset('yesterday')" id="preset-yesterday" class="preset-btn px-3 py-1.5 text-sm rounded-lg border border-slate-200 text-slate-600 hover:border-indigo-400 hover:text-indigo-600 transition-colors">Yesterday</button>
+        <button onclick="setPreset('last7d')" id="preset-last7d" class="preset-btn px-3 py-1.5 text-sm rounded-lg border border-slate-200 text-slate-600 hover:border-indigo-400 hover:text-indigo-600 transition-colors">7 Days</button>
+        <button onclick="setPreset('last14d')" id="preset-last14d" class="preset-btn px-3 py-1.5 text-sm rounded-lg border border-slate-200 text-slate-600 hover:border-indigo-400 hover:text-indigo-600 transition-colors">14 Days</button>
+        <button onclick="setPreset('last30d')" id="preset-last30d" class="preset-btn px-3 py-1.5 text-sm rounded-lg border border-slate-200 text-slate-600 hover:border-indigo-400 hover:text-indigo-600 transition-colors">30 Days</button>
+        <button onclick="setPreset('thisMonth')" id="preset-thisMonth" class="preset-btn px-3 py-1.5 text-sm rounded-lg border border-slate-200 text-slate-600 hover:border-indigo-400 hover:text-indigo-600 transition-colors">This Month</button>
+        <button onclick="setPreset('lastMonth')" id="preset-lastMonth" class="preset-btn px-3 py-1.5 text-sm rounded-lg border border-slate-200 text-slate-600 hover:border-indigo-400 hover:text-indigo-600 transition-colors">Last Month</button>
+      </div>
+      <p id="dateRangeLabel" class="text-sm text-slate-500 ml-4 whitespace-nowrap"></p>
+    </div>
+
+    <!-- Summary tiles -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8" id="summaryTiles">
+      <!-- Rendered by JS -->
+    </div>
+
+    <!-- Alerts row -->
+    <div id="alertsRow" class="hidden mb-6 flex gap-3"></div>
+
+    <!-- SKU table -->
+    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+        <h2 class="text-sm font-semibold text-slate-900">ASINs <span id="asinCount" class="text-slate-400 font-normal"></span></h2>
+        <span class="text-xs text-slate-400">Last 7 days</span>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="bg-slate-50 border-b border-slate-100">
+              <th class="text-left px-5 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">ASIN</th>
+              <th class="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Product</th>
+              <th class="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Status</th>
+              <th class="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Revenue</th>
+              <th class="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Units</th>
+              <th class="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Sessions</th>
+              <th class="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Buy Box</th>
+              <th class="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">CVR</th>
+              <th class="text-right px-5 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Inventory</th>
+            </tr>
+          </thead>
+          <tbody id="skuTable">
+            <!-- Rendered by JS -->
+          </tbody>
+        </table>
+      </div>
+
+      <!-- No data state -->
+      <div id="noDataState" class="hidden px-5 py-12 text-center">
+        <p class="text-slate-400 text-sm">No SKU data available yet — sync pending.</p>
+      </div>
+
+      <!-- No ASINs state -->
+      <div id="noAsinState" class="hidden px-5 py-12 text-center">
+        <p class="text-slate-500 text-sm mb-2">No ASINs mapped to this brand yet.</p>
+        <a id="addAsinLink" href="#" class="text-sm font-medium text-blue-600 hover:text-blue-800">Add ASINs in mapping →</a>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    let currency = localStorage.getItem('currency') || 'CAD';
+    let fxRate = { usdToCad: 1.38, cadToUsd: 0.724 };
+    let brandCache = null;
+    let presetMetrics = {};
+    let activePreset = 'last7d';
+
+    function fmt(cad, usd) {
+      if (currency === 'CAD') {
+        const total = (cad || 0) + (usd || 0) * fxRate.usdToCad;
+        return 'CA$' + total.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      } else {
+        const total = (usd || 0) + (cad || 0) * fxRate.cadToUsd;
+        return 'US$' + total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      }
+    }
+
+    function updateToggleUI() {
+      const active = 'text-xs px-3 py-1 rounded-md font-medium bg-white text-slate-900 shadow-sm';
+      const inactive = 'text-xs px-3 py-1 rounded-md font-medium text-slate-500 hover:text-slate-700';
+      document.getElementById('toggleCAD').className = currency === 'CAD' ? active : inactive;
+      document.getElementById('toggleUSD').className = currency === 'USD' ? active : inactive;
+    }
+
+    function setCurrency(c) {
+      currency = c;
+      localStorage.setItem('currency', c);
+      updateToggleUI();
+      if (brandCache) renderBrand(brandCache);
+    }
+
+    function setPreset(key) {
+      activePreset = key;
+      localStorage.setItem('dashboardPreset', key);
+
+      document.querySelectorAll('.preset-btn').forEach(btn => {
+        const isActive = btn.id === `preset-${key}`;
+        btn.classList.toggle('bg-indigo-600', isActive);
+        btn.classList.toggle('text-white', isActive);
+        btn.classList.toggle('border-indigo-600', isActive);
+        btn.classList.toggle('text-slate-600', !isActive);
+        btn.classList.toggle('border-slate-200', !isActive);
+      });
+
+      const meta = presetMetrics.presets?.[key];
+      if (meta) {
+        const fmtLabel = d => new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        document.getElementById('dateRangeLabel').textContent = meta.startDate === meta.endDate
+          ? fmtLabel(meta.startDate)
+          : `${fmtLabel(meta.startDate)} – ${fmtLabel(meta.endDate)}`;
+      }
+
+      if (brandCache) {
+        const presetBrandData = presetMetrics.presets?.[key]?.brands || {};
+        const updatedBrand = { ...brandCache, metrics: presetBrandData[brandCache.id] || null };
+        renderBrand(updatedBrand);
+      }
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const brandId = params.get('id');
+
+    if (!brandId) location.href = '/';
+
+    async function loadBrand() {
+      const id = new URLSearchParams(location.search).get('id');
+      if (!id) { document.getElementById('brandName').textContent = 'No brand selected'; return; }
+
+      activePreset = localStorage.getItem('dashboardPreset') || 'last7d';
+
+      const [brandRes, pmRes, fxRes] = await Promise.all([
+        fetch(`/api/brands/${id}`).then(r => r.json()),
+        fetch('/api/preset-metrics').then(r => r.json()),
+        fetch('/api/fx').then(r => r.json())
+      ]);
+
+      fxRate = fxRes;
+      updateToggleUI();
+      presetMetrics = pmRes;
+      brandCache = brandRes;
+
+      setPreset(activePreset);
+    }
+
+    function renderBrand(brand) {
+
+      // Header
+      document.title = `${brand.name} — RMC Dashboard`;
+      document.getElementById('brandName').textContent = brand.name;
+      document.getElementById('brandColorDot').style.background = brand.color;
+      document.getElementById('brandMarketplace').textContent = brand.marketplace;
+      document.getElementById('editMappingLink').href = `/admin.html?brand=${brand.id}`;
+      document.getElementById('addAsinLink').href = `/admin.html?brand=${brand.id}`;
+
+      const m = brand.metrics ? brand.metrics.summary : null;
+
+      // Summary tiles
+      const tiles = [
+        { label: 'Revenue', value: m ? fmt(m.revenueCad, m.revenueUsd) : '—' },
+        { label: 'Units', value: m ? (m.units || 0).toLocaleString() : '—' },
+        { label: 'Sessions', value: m ? (m.sessions || 0).toLocaleString() : '—' },
+        { label: 'Margin', value: m && m.margin != null ? m.margin.toFixed(1) + '%' : '—' }
+      ];
+      document.getElementById('summaryTiles').innerHTML = tiles.map(t => `
+        <div class="bg-white rounded-xl border border-slate-200 p-4">
+          <p class="text-xs text-slate-500 mb-1">${t.label}</p>
+          <p class="text-2xl font-bold text-slate-900">${t.value}</p>
+        </div>`).join('');
+
+      // Alerts
+      if (m && (m.alerts.suppressedListings > 0 || m.alerts.lostBuyBox > 0)) {
+        const row = document.getElementById('alertsRow');
+        row.classList.remove('hidden');
+        row.innerHTML = [
+          m.alerts.suppressedListings > 0
+            ? `<div class="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-4 py-2 text-sm text-red-700"><span class="font-semibold">${m.alerts.suppressedListings}</span> suppressed listing${m.alerts.suppressedListings > 1 ? 's' : ''}</div>`
+            : '',
+          m.alerts.lostBuyBox > 0
+            ? `<div class="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 text-sm text-amber-700"><span class="font-semibold">${m.alerts.lostBuyBox}</span> ASIN${m.alerts.lostBuyBox > 1 ? 's' : ''} with lost Buy Box</div>`
+            : ''
+        ].join('');
+      }
+
+      // SKU table
+      if (brand.asins.length === 0) {
+        document.getElementById('noAsinState').classList.remove('hidden');
+        return;
+      }
+
+      document.getElementById('asinCount').textContent = `(${brand.asins.length})`;
+
+      const skus = brand.metrics ? brand.metrics.skus : null;
+      if (!skus || skus.length === 0) {
+        // Show ASINs without metrics
+        document.getElementById('noDataState').classList.remove('hidden');
+        document.getElementById('skuTable').innerHTML = brand.asins.map(asin => `
+          <tr class="border-b border-slate-50 last:border-0">
+            <td class="px-5 py-3 font-mono text-xs text-slate-600">${asin}</td>
+            <td class="px-4 py-3 text-slate-400 text-xs" colspan="8">No data yet</td>
+          </tr>`).join('');
+        return;
+      }
+
+      // Map ASINs without metrics too
+      const skuMap = Object.fromEntries(skus.map(s => [s.asin, s]));
+
+      document.getElementById('skuTable').innerHTML = brand.asins.map(asin => {
+        const s = skuMap[asin];
+        if (!s) return `
+          <tr class="border-b border-slate-50 last:border-0">
+            <td class="px-5 py-3 font-mono text-xs text-slate-600">${asin}</td>
+            <td class="px-4 py-3 text-slate-400 text-xs" colspan="8">No data yet</td>
+          </tr>`;
+
+        const statusColor = s.status === 'active'
+          ? 'bg-emerald-100 text-emerald-700'
+          : s.status === 'suppressed'
+          ? 'bg-red-100 text-red-700'
+          : 'bg-slate-100 text-slate-500';
+
+        const bbColor = s.buyBox == null ? 'text-slate-400' : s.buyBox >= 90 ? 'text-emerald-600' : s.buyBox >= 70 ? 'text-amber-600' : 'text-red-600';
+
+        return `
+          <tr class="border-b border-slate-50 last:border-0 hover:bg-slate-50">
+            <td class="px-5 py-3 font-mono text-xs text-slate-600 whitespace-nowrap">${s.asin}</td>
+            <td class="px-4 py-3 text-slate-700 text-xs max-w-xs truncate" title="${s.title}">${s.title}</td>
+            <td class="px-4 py-3">
+              <span class="text-xs px-2 py-0.5 rounded-full font-medium ${statusColor}">${s.status}</span>
+            </td>
+            <td class="px-4 py-3 text-right font-medium text-slate-900">${fmt(s.revenueCad, s.revenueUsd)}</td>
+            <td class="px-4 py-3 text-right text-slate-700">${s.units}</td>
+            <td class="px-4 py-3 text-right text-slate-700">${(s.sessions || 0).toLocaleString()}</td>
+            <td class="px-4 py-3 text-right font-medium ${bbColor}">${s.buyBox != null ? s.buyBox.toFixed(1) + '%' : '—'}</td>
+            <td class="px-4 py-3 text-right text-slate-700">${s.cvr != null ? s.cvr.toFixed(2) + '%' : '—'}</td>
+            <td class="px-5 py-3 text-right text-slate-700">${s.inventory.toLocaleString()}</td>
+          </tr>`;
+      }).join('');
+    }
+
+    loadBrand();
+  </script>
+</body>
+</html>
