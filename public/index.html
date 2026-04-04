@@ -56,6 +56,7 @@
     <div class="flex items-center justify-between mb-6">
       <div class="flex items-center gap-1 flex-wrap">
         <button onclick="setPreset('yesterday')" id="preset-yesterday" class="preset-btn px-3 py-1.5 text-sm rounded-lg border border-slate-200 text-slate-600 hover:border-indigo-400 hover:text-indigo-600 transition-colors">Yesterday</button>
+        <button onclick="setPreset('last30d')" id="preset-last30d" class="preset-btn px-3 py-1.5 text-sm rounded-lg border border-slate-200 text-slate-600 hover:border-indigo-400 hover:text-indigo-600 transition-colors">Last 30 Days</button>
         <button onclick="setPreset('thisMonth')" id="preset-thisMonth" class="preset-btn px-3 py-1.5 text-sm rounded-lg border border-slate-200 text-slate-600 hover:border-indigo-400 hover:text-indigo-600 transition-colors">This Month</button>
         <button onclick="setPreset('lastMonth')" id="preset-lastMonth" class="preset-btn px-3 py-1.5 text-sm rounded-lg border border-slate-200 text-slate-600 hover:border-indigo-400 hover:text-indigo-600 transition-colors">Last Month</button>
       </div>
@@ -171,7 +172,7 @@
     }
 
     async function loadDashboard() {
-      activePreset = localStorage.getItem('dashboardPreset') || 'thisMonth';
+      activePreset = localStorage.getItem('dashboardPreset') || 'last30d';
       try {
         const [brandsRes, pmRes, fxRes] = await Promise.all([
           fetch('/api/brands').then(r => r.json()),

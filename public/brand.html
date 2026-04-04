@@ -7,7 +7,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
-  <style>body { font-family: 'Inter', sans-serif; }</style>
+  <style>
+    body { font-family: 'Inter', sans-serif; }
+    #salesPopup { pointer-events: none; transition: opacity 0.1s ease; }
+  </style>
 </head>
 <body class="bg-slate-50 min-h-screen">
 
@@ -58,6 +61,7 @@
     <div class="flex items-center justify-between mb-6">
       <div class="flex items-center gap-1 flex-wrap">
         <button onclick="setPreset('yesterday')" id="preset-yesterday" class="preset-btn px-3 py-1.5 text-sm rounded-lg border border-slate-200 text-slate-600 hover:border-indigo-400 hover:text-indigo-600 transition-colors">Yesterday</button>
+        <button onclick="setPreset('last30d')" id="preset-last30d" class="preset-btn px-3 py-1.5 text-sm rounded-lg border border-slate-200 text-slate-600 hover:border-indigo-400 hover:text-indigo-600 transition-colors">Last 30 Days</button>
         <button onclick="setPreset('thisMonth')" id="preset-thisMonth" class="preset-btn px-3 py-1.5 text-sm rounded-lg border border-slate-200 text-slate-600 hover:border-indigo-400 hover:text-indigo-600 transition-colors">This Month</button>
         <button onclick="setPreset('lastMonth')" id="preset-lastMonth" class="preset-btn px-3 py-1.5 text-sm rounded-lg border border-slate-200 text-slate-600 hover:border-indigo-400 hover:text-indigo-600 transition-colors">Last Month</button>
       </div>
@@ -184,7 +188,7 @@
       const id = new URLSearchParams(location.search).get('id');
       if (!id) { document.getElementById('brandName').textContent = 'No brand selected'; return; }
 
-      activePreset = localStorage.getItem('dashboardPreset') || 'thisMonth';
+      activePreset = localStorage.getItem('dashboardPreset') || 'last30d';
 
       const [brandRes, pmRes, fxRes] = await Promise.all([
         fetch(`/api/brands/${id}`).then(r => r.json()),
@@ -291,7 +295,9 @@
             <td class="px-4 py-3">
               <span class="text-xs px-2 py-0.5 rounded-full font-medium ${statusColor}">${s.status}</span>
             </td>
-            <td class="px-4 py-3 text-right font-medium text-slate-900">${fmt(s.revenueCad, s.revenueUsd)}</td>
+            <td class="px-4 py-3 text-right font-medium text-slate-900 cursor-pointer underline decoration-dotted decoration-slate-400"
+                onmouseenter="showSalesPopup(event, '${s.asin}')"
+                onmouseleave="hideSalesPopup()">${fmt(s.revenueCad, s.revenueUsd)}</td>
             <td class="px-4 py-3 text-right text-slate-700">${s.units}</td>
             <td class="px-4 py-3 text-right text-slate-700">${(s.sessions || 0).toLocaleString()}</td>
             <td class="px-4 py-3 text-right font-medium ${bbColor}">${s.buyBox != null ? s.buyBox.toFixed(1) + '%' : '—'}</td>
@@ -304,7 +310,82 @@
       }).join('');
     }
 
+    // ── Sales popup ────────────────────────────────────────────────────────────
+
+    const PRESET_LABELS = {
+      yesterday: 'Yesterday',
+      last30d:   'Last 30 Days',
+      thisMonth: 'This Month',
+      lastMonth: 'Last Month'
+    };
+
+    function getAsinPresetData(asin) {
+      const rows = [];
+      for (const [key, label] of Object.entries(PRESET_LABELS)) {
+        const preset = presetMetrics.presets?.[key];
+        if (!preset) continue;
+        const brandData = preset.brands?.[brandCache?.id];
+        const sku = brandData?.skus?.find(s => s.asin === asin);
+        rows.push({
+          label,
+          startDate: preset.startDate,
+          endDate: preset.endDate,
+          revenueCad: sku?.revenueCad ?? null,
+          revenueUsd: sku?.revenueUsd ?? null,
+          units: sku?.units ?? null
+        });
+      }
+      return rows;
+    }
+
+    function showSalesPopup(e, asin) {
+      const popup = document.getElementById('salesPopup');
+      const rows = getAsinPresetData(asin);
+
+      popup.innerHTML = `
+        <div class="text-xs font-semibold text-slate-700 mb-2">Sales Summary</div>
+        <table class="w-full text-xs">
+          <thead>
+            <tr class="text-slate-400 border-b border-slate-100">
+              <th class="text-left pb-1.5 font-medium">Period</th>
+              <th class="text-right pb-1.5 font-medium">Revenue</th>
+              <th class="text-right pb-1.5 font-medium pl-4">Units</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map(r => `
+              <tr class="border-b border-slate-50 last:border-0">
+                <td class="py-1.5 text-slate-600">${r.label}</td>
+                <td class="py-1.5 text-right font-medium text-slate-900">${r.revenueCad !== null ? fmt(r.revenueCad, r.revenueUsd) : '—'}</td>
+                <td class="py-1.5 text-right text-slate-700 pl-4">${r.units !== null ? r.units.toLocaleString() : '—'}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>`;
+
+      popup.style.opacity = '1';
+      positionPopup(e, popup);
+    }
+
+    function positionPopup(e, popup) {
+      popup.style.display = 'block';
+      const x = e.clientX + window.scrollX;
+      const y = e.clientY + window.scrollY;
+      popup.style.left = (x - popup.offsetWidth - 12) + 'px';
+      popup.style.top  = (y - popup.offsetHeight / 2) + 'px';
+    }
+
+    function hideSalesPopup() {
+      const popup = document.getElementById('salesPopup');
+      popup.style.opacity = '0';
+      setTimeout(() => { popup.style.display = 'none'; }, 100);
+    }
+
     loadBrand();
   </script>
+
+  <!-- Sales popup -->
+  <div id="salesPopup" class="hidden fixed z-50 bg-white border border-slate-200 rounded-xl shadow-lg px-4 py-3 w-64"
+       style="opacity:0; display:none;"></div>
+
 </body>
 </html>
