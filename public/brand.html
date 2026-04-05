@@ -455,10 +455,12 @@
 
     function positionPopup(e, popup) {
       popup.style.display = 'block';
-      const x = e.clientX + window.scrollX;
-      const y = e.clientY + window.scrollY;
-      popup.style.left = (x - popup.offsetWidth - 12) + 'px';
-      popup.style.top  = (y - popup.offsetHeight / 2) + 'px';
+      const w = popup.offsetWidth;
+      const h = popup.offsetHeight;
+      const left = Math.max(8, e.clientX - w - 12);
+      const top  = Math.max(8, Math.min(e.clientY - h / 2, window.innerHeight - h - 8));
+      popup.style.left = left + 'px';
+      popup.style.top  = top + 'px';
     }
 
     function hideSalesPopup() {
