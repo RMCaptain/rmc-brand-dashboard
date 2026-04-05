@@ -79,11 +79,18 @@
       <!-- Rendered by JS -->
     </div>
 
-    <!-- Brands summary table -->
+    <!-- Bottom table -->
     <div class="bg-slate-900 rounded-xl border border-slate-700 overflow-hidden">
-      <div class="px-5 py-3 border-b border-slate-700 flex items-center justify-between">
+      <div class="px-5 py-3 border-b border-slate-700 flex items-center justify-between flex-wrap gap-2">
         <div class="flex items-center gap-4">
-          <h2 class="text-sm font-semibold text-white">Brands</h2>
+          <!-- View tabs -->
+          <div class="flex gap-0.5 bg-slate-800 rounded-lg p-0.5">
+            <button onclick="setTableView('products')" id="view-products"
+              class="view-tab text-xs px-3 py-1 rounded-md font-medium transition-colors">Products</button>
+            <button onclick="setTableView('brands')" id="view-brands"
+              class="view-tab text-xs px-3 py-1 rounded-md font-medium transition-colors">Brands</button>
+          </div>
+          <!-- Preset selector -->
           <div class="flex gap-1">
             <button onclick="setBrandPreset('yesterday')" id="bp-yesterday" class="bp-btn text-xs px-2.5 py-1 rounded-md border border-slate-600 text-slate-400 hover:text-white hover:border-slate-400 transition-colors">Yesterday</button>
             <button onclick="setBrandPreset('last30d')"   id="bp-last30d"   class="bp-btn text-xs px-2.5 py-1 rounded-md border border-slate-600 text-slate-400 hover:text-white hover:border-slate-400 transition-colors">Last 30d</button>
@@ -93,7 +100,33 @@
         </div>
         <a href="/admin.html" class="text-xs text-indigo-400 hover:text-indigo-300 font-medium">+ Add brand</a>
       </div>
-      <div class="overflow-x-auto">
+
+      <!-- Products table -->
+      <div id="productsView" class="overflow-x-auto">
+        <table class="w-full text-xs">
+          <thead>
+            <tr class="border-b border-slate-700">
+              <th class="text-left px-5 py-2.5 text-slate-400 font-medium min-w-64">Product</th>
+              <th class="sortable-th text-right px-4 py-2.5 text-slate-400 font-medium cursor-pointer hover:text-white select-none" onclick="sortBy('units')">Units <span class="sort-ind" data-col="units"></span></th>
+              <th class="sortable-th text-right px-4 py-2.5 text-slate-400 font-medium cursor-pointer hover:text-white select-none" onclick="sortBy('revenue')">Sales <span class="sort-ind" data-col="revenue"></span></th>
+              <th class="sortable-th text-right px-4 py-2.5 text-slate-400 font-medium cursor-pointer hover:text-white select-none" onclick="sortBy('sessions')">Sessions <span class="sort-ind" data-col="sessions"></span></th>
+              <th class="sortable-th text-right px-4 py-2.5 text-slate-400 font-medium cursor-pointer hover:text-white select-none" onclick="sortBy('cvr')">CVR <span class="sort-ind" data-col="cvr"></span></th>
+              <th class="sortable-th text-right px-4 py-2.5 text-slate-400 font-medium cursor-pointer hover:text-white select-none" onclick="sortBy('buyBox')">Buy Box <span class="sort-ind" data-col="buyBox"></span></th>
+              <th class="sortable-th text-right px-4 py-2.5 text-slate-400 font-medium cursor-pointer hover:text-white select-none" onclick="sortBy('inventory')">Inventory <span class="sort-ind" data-col="inventory"></span></th>
+              <th class="sortable-th text-right px-4 py-2.5 text-slate-400 font-medium cursor-pointer hover:text-white select-none" onclick="sortBy('costPerUnit')">COGS/unit <span class="sort-ind" data-col="costPerUnit"></span></th>
+              <th class="sortable-th text-right px-4 py-2.5 text-slate-400 font-medium cursor-pointer hover:text-white select-none" onclick="sortBy('totalCogs')">Total COGS <span class="sort-ind" data-col="totalCogs"></span></th>
+              <th class="sortable-th text-right px-4 py-2.5 text-slate-400 font-medium cursor-pointer hover:text-white select-none" onclick="sortBy('grossProfit')">Gross Profit <span class="sort-ind" data-col="grossProfit"></span></th>
+              <th class="sortable-th text-right px-4 py-2.5 text-slate-400 font-medium cursor-pointer hover:text-white select-none" onclick="sortBy('margin')">Margin <span class="sort-ind" data-col="margin"></span></th>
+            </tr>
+          </thead>
+          <tbody id="productTableBody">
+            <tr><td colspan="11" class="text-center text-slate-500 py-8">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Brands table -->
+      <div id="brandsView" class="overflow-x-auto hidden">
         <table class="w-full text-xs">
           <thead>
             <tr class="border-b border-slate-700">
@@ -124,6 +157,9 @@
     let fxRate = { usdToCad: 1.38, cadToUsd: 0.724 };
     let activeBrandPreset = localStorage.getItem('brandPreset') || 'last30d';
     let expandedTiles = {};
+    let activeTableView = localStorage.getItem('tableView') || 'products';
+    let sortCol = 'revenue';
+    let sortDir = -1; // -1 desc, 1 asc
 
     const TILE_CONFIG = [
       { key: 'yesterday', label: 'Yesterday',    color: 'from-blue-700 to-blue-800',    accent: '#3b82f6' },
@@ -314,6 +350,125 @@
       renderTiles();
     }
 
+    // ── Table view toggle ─────────────────────────────────────────────────────
+    function setTableView(view) {
+      activeTableView = view;
+      localStorage.setItem('tableView', view);
+      document.getElementById('productsView').classList.toggle('hidden', view !== 'products');
+      document.getElementById('brandsView').classList.toggle('hidden', view !== 'brands');
+      const activeTab = 'text-xs px-3 py-1 rounded-md font-medium bg-white text-slate-900 shadow-sm';
+      const inactiveTab = 'text-xs px-3 py-1 rounded-md font-medium text-slate-400 hover:text-white';
+      document.getElementById('view-products').className = `view-tab ${view === 'products' ? activeTab : inactiveTab}`;
+      document.getElementById('view-brands').className   = `view-tab ${view === 'brands'   ? activeTab : inactiveTab}`;
+    }
+
+    // ── Product table ─────────────────────────────────────────────────────────
+    function getAllSkus(presetKey) {
+      const preset = presetMetrics.presets?.[presetKey];
+      if (!preset) return [];
+      const skus = [];
+      for (const brand of brandsData) {
+        const bm = preset.brands?.[brand.id];
+        if (!bm?.skus) continue;
+        for (const sku of bm.skus) {
+          const costPerUnit = brand.cogs?.[sku.asin] || 0;
+          const rev = getNum(sku.revenueCad, sku.revenueUsd);
+          const totalCogs = sku.units * costPerUnit;
+          const grossProfit = costPerUnit > 0 ? rev - totalCogs : null;
+          const margin = grossProfit != null && rev > 0 ? (grossProfit / rev) * 100 : null;
+          const inv = sku.inventory || {};
+          const inventory = (inv.onHand ?? 0) + (inv.inbound ?? 0) + (inv.reserved ?? 0) + (inv.researching ?? 0) + (inv.unfulfillable ?? 0);
+          skus.push({
+            asin: sku.asin,
+            title: sku.title || brand.asinTitles?.[sku.asin] || sku.asin,
+            brand: brand.name, brandId: brand.id, brandColor: brand.color,
+            status: sku.status,
+            units: sku.units || 0,
+            revenueCad: sku.revenueCad || 0, revenueUsd: sku.revenueUsd || 0,
+            revenue: rev,
+            sessions: sku.sessions || 0,
+            buyBox: sku.buyBox ?? null,
+            cvr: sku.cvr ?? null,
+            inventory, costPerUnit, totalCogs, grossProfit, margin
+          });
+        }
+      }
+      return skus;
+    }
+
+    function sortBy(col) {
+      if (sortCol === col) sortDir *= -1;
+      else { sortCol = col; sortDir = -1; }
+      renderProductTable();
+    }
+
+    function updateSortIndicators() {
+      document.querySelectorAll('.sort-ind').forEach(el => {
+        const col = el.dataset.col;
+        el.textContent = col === sortCol ? (sortDir === -1 ? '↓' : '↑') : '';
+      });
+      document.querySelectorAll('.sortable-th').forEach(th => {
+        const col = th.querySelector('.sort-ind')?.dataset.col;
+        th.classList.toggle('text-white', col === sortCol);
+        th.classList.toggle('text-slate-400', col !== sortCol);
+      });
+    }
+
+    function renderProductTable() {
+      const tbody = document.getElementById('productTableBody');
+      const skus = getAllSkus(activeBrandPreset);
+
+      if (!skus.length) {
+        tbody.innerHTML = '<tr><td colspan="11" class="text-center text-slate-500 py-8">No data — run sync first</td></tr>';
+        updateSortIndicators();
+        return;
+      }
+
+      const sorted = [...skus].sort((a, b) => {
+        const av = a[sortCol] ?? -Infinity;
+        const bv = b[sortCol] ?? -Infinity;
+        return sortDir * (av < bv ? -1 : av > bv ? 1 : 0);
+      });
+
+      const sym = currency === 'CAD' ? 'CA$' : 'US$';
+      const fmtN = v => v != null ? sym + Math.abs(v).toLocaleString(currency === 'CAD' ? 'en-CA' : 'en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
+
+      tbody.innerHTML = sorted.map(s => {
+        const statusColor = s.status === 'active' ? 'text-emerald-400' : s.status === 'inactive' ? 'text-red-400' : 'text-slate-500';
+        const gpColor = s.grossProfit == null ? 'text-slate-600' : s.grossProfit >= 0 ? 'text-emerald-400' : 'text-red-400';
+        const marginColor = s.margin == null ? 'text-slate-600' : s.margin >= 0 ? 'text-emerald-400' : 'text-red-400';
+        const bbColor = s.buyBox == null ? 'text-slate-600' : s.buyBox >= 90 ? 'text-emerald-400' : s.buyBox >= 70 ? 'text-amber-400' : 'text-red-400';
+
+        return `<tr class="border-b border-slate-800 hover:bg-slate-800/50 cursor-pointer" onclick="location.href='/brand.html?id=${s.brandId}'">
+          <td class="px-5 py-3">
+            <div class="flex items-start gap-2.5">
+              <div class="w-1.5 rounded-full flex-shrink-0 mt-0.5 self-stretch" style="background:${s.brandColor}"></div>
+              <div>
+                <div class="font-mono text-slate-400 text-xs">${s.asin}</div>
+                <div class="text-slate-200 text-xs mt-0.5 max-w-xs truncate">${s.title}</div>
+                <div class="flex items-center gap-2 mt-0.5">
+                  <span class="text-slate-500 text-xs">${s.brand}</span>
+                  <span class="${statusColor} text-xs">${s.status || '—'}</span>
+                </div>
+              </div>
+            </div>
+          </td>
+          <td class="px-4 py-3 text-right text-slate-300">${s.units.toLocaleString()}</td>
+          <td class="px-4 py-3 text-right text-slate-200 font-medium">${fmtN(s.revenue)}</td>
+          <td class="px-4 py-3 text-right text-slate-400">${s.sessions.toLocaleString()}</td>
+          <td class="px-4 py-3 text-right text-slate-400">${s.cvr != null ? s.cvr.toFixed(2) + '%' : '—'}</td>
+          <td class="px-4 py-3 text-right ${bbColor}">${s.buyBox != null ? s.buyBox.toFixed(1) + '%' : '—'}</td>
+          <td class="px-4 py-3 text-right text-slate-400">${s.inventory.toLocaleString()}</td>
+          <td class="px-4 py-3 text-right ${s.costPerUnit > 0 ? 'text-slate-400' : 'text-slate-600'}">${s.costPerUnit > 0 ? fmtN(s.costPerUnit) : '—'}</td>
+          <td class="px-4 py-3 text-right ${s.totalCogs > 0 ? 'text-slate-400' : 'text-slate-600'}">${s.costPerUnit > 0 ? fmtN(s.totalCogs) : '—'}</td>
+          <td class="px-4 py-3 text-right ${gpColor} font-medium">${s.grossProfit != null ? (s.grossProfit < 0 ? '-' : '') + fmtN(s.grossProfit) : '—'}</td>
+          <td class="px-4 py-3 text-right ${marginColor}">${s.margin != null ? s.margin.toFixed(1) + '%' : '—'}</td>
+        </tr>`;
+      }).join('');
+
+      updateSortIndicators();
+    }
+
     // ── Brand table ───────────────────────────────────────────────────────────
     function setBrandPreset(key) {
       activeBrandPreset = key;
@@ -327,6 +482,7 @@
         btn.classList.toggle('border-slate-600', !active);
       });
       renderBrandTable();
+      renderProductTable();
     }
 
     function renderBrandTable() {
@@ -411,6 +567,7 @@
       updateExpCurrencySymbol();
       renderTiles();
       renderBrandTable();
+      renderProductTable();
     }
 
     function updateExpCurrencySymbol() {
@@ -493,6 +650,7 @@
 
         updateToggleUI();
         updateExpCurrencySymbol();
+        setTableView(activeTableView);
         renderTiles();
         setBrandPreset(activeBrandPreset);
       } catch (err) {
