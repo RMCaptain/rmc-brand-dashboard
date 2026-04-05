@@ -254,6 +254,21 @@ app.delete('/api/brands/:id/asins/:asin', async (req, res) => {
   res.json(brand);
 });
 
+// PUT set COGS (cost per unit) for an ASIN
+app.put('/api/brands/:id/asins/:asin/cogs', async (req, res) => {
+  const { cost } = req.body;
+  if (cost == null || isNaN(cost) || cost < 0) return res.status(400).json({ error: 'Invalid cost value' });
+
+  const data = await loadBrands();
+  const brand = data.brands.find(b => b.id === req.params.id);
+  if (!brand) return res.status(404).json({ error: 'Brand not found' });
+
+  brand.cogs = brand.cogs || {};
+  brand.cogs[req.params.asin.toUpperCase()] = Number(cost);
+  await saveBrands(data);
+  res.json({ success: true });
+});
+
 // PUT set lead time for an ASIN
 app.put('/api/brands/:id/asins/:asin/leadtime', async (req, res) => {
   const { days } = req.body;

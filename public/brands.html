@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RMC Brands</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: 'Inter', sans-serif; background: #0f172a; color: #f1f5f9; }
+    .brand-card:hover { transform: translateY(-1px); box-shadow: 0 8px 25px rgba(0,0,0,0.4); }
+    .brand-card { transition: transform 0.15s ease, box-shadow 0.15s ease; }
+  </style>
+</head>
+<body class="min-h-screen">
+
+  <nav class="bg-slate-900 border-b border-slate-700 sticky top-0 z-20">
+    <div class="max-w-screen-xl mx-auto px-6 py-3 flex items-center justify-between">
+      <div class="flex items-center gap-6">
+        <span class="font-bold text-white text-sm tracking-tight">RMC Dashboard</span>
+        <div class="flex gap-1">
+          <a href="/" class="px-3 py-1.5 text-sm font-medium text-slate-400 hover:text-white hover:bg-slate-700 rounded-md transition-colors">Dashboard</a>
+          <a href="/brands.html" class="px-3 py-1.5 text-sm font-medium text-white bg-slate-700 rounded-md">Brands</a>
+          <a href="/admin.html" class="px-3 py-1.5 text-sm font-medium text-slate-400 hover:text-white hover:bg-slate-700 rounded-md transition-colors">ASIN Mapping</a>
+        </div>
+      </div>
+      <div class="flex items-center gap-3">
+        <div class="flex items-center gap-0.5 bg-slate-800 rounded-lg p-0.5">
+          <button id="toggleCAD" onclick="setCurrency('CAD')" class="text-xs px-3 py-1 rounded-md font-medium transition-colors">CA$</button>
+          <button id="toggleUSD" onclick="setCurrency('USD')" class="text-xs px-3 py-1 rounded-md font-medium transition-colors">US$</button>
+        </div>
+        <span id="lastSyncText" class="text-xs text-slate-500"></span>
+      </div>
+    </div>
+  </nav>
+
+  <div class="max-w-screen-xl mx-auto px-6 py-6">
+
+    <div class="flex items-center justify-between mb-5">
+      <div class="flex items-center gap-3">
+        <h1 class="text-base font-semibold text-white">Brands <span id="brandCount" class="text-slate-500 font-normal text-sm"></span></h1>
+        <div class="flex gap-1">
+          <button onclick="setPreset('yesterday')" id="preset-yesterday" class="preset-btn text-xs px-2.5 py-1 rounded-md border border-slate-600 text-slate-400 hover:text-white hover:border-slate-400 transition-colors">Yesterday</button>
+          <button onclick="setPreset('last30d')"   id="preset-last30d"   class="preset-btn text-xs px-2.5 py-1 rounded-md border border-slate-600 text-slate-400 hover:text-white hover:border-slate-400 transition-colors">Last 30d</button>
+          <button onclick="setPreset('thisMonth')" id="preset-thisMonth" class="preset-btn text-xs px-2.5 py-1 rounded-md border border-slate-600 text-slate-400 hover:text-white hover:border-slate-400 transition-colors">This Month</button>
+          <button onclick="setPreset('lastMonth')" id="preset-lastMonth" class="preset-btn text-xs px-2.5 py-1 rounded-md border border-slate-600 text-slate-400 hover:text-white hover:border-slate-400 transition-colors">Last Month</button>
+        </div>
+      </div>
+      <a href="/admin.html" class="text-sm text-indigo-400 hover:text-indigo-300 font-medium">+ Add brand</a>
+    </div>
+
+    <div id="brandsGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div class="col-span-3 text-center py-12 text-slate-500 text-sm">Loading...</div>
+    </div>
+
+  </div>
+
+  <script>
+    let brandsData = [];
+    let presetMetrics = {};
+    let activePreset = localStorage.getItem('brandPreset') || 'last30d';
+    let currency = localStorage.getItem('currency') || 'CAD';
+    let fxRate = { usdToCad: 1.38, cadToUsd: 0.724 };
+
+    function fmt(cad, usd = 0) {
+      if (currency === 'CAD') {
+        return 'CA$' + ((cad || 0) + (usd || 0) * fxRate.usdToCad).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      }
+      return 'US$' + ((usd || 0) + (cad || 0) * fxRate.cadToUsd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function updateToggleUI() {
+      const active = 'text-xs px-3 py-1 rounded-md font-medium bg-white text-slate-900 shadow-sm';
+      const inactive = 'text-xs px-3 py-1 rounded-md font-medium text-slate-400 hover:text-white';
+      document.getElementById('toggleCAD').className = currency === 'CAD' ? active : inactive;
+      document.getElementById('toggleUSD').className = currency === 'USD' ? active : inactive;
+    }
+
+    function setCurrency(c) {
+      currency = c;
+      localStorage.setItem('currency', c);
+      updateToggleUI();
+      render();
+    }
+
+    function setPreset(key) {
+      activePreset = key;
+      localStorage.setItem('brandPreset', key);
+      document.querySelectorAll('.preset-btn').forEach(btn => {
+        const active = btn.id === `preset-${key}`;
+        btn.classList.toggle('bg-slate-700', active);
+        btn.classList.toggle('text-white', active);
+        btn.classList.toggle('border-slate-500', active);
+        btn.classList.toggle('text-slate-400', !active);
+        btn.classList.toggle('border-slate-600', !active);
+      });
+      render();
+    }
+
+    function render() {
+      const presetBrandData = presetMetrics.presets?.[activePreset]?.brands || {};
+      document.getElementById('brandCount').textContent = `(${brandsData.length})`;
+
+      if (!brandsData.length) {
+        document.getElementById('brandsGrid').innerHTML =
+          '<div class="col-span-3 text-center py-12 text-slate-500 text-sm">No brands — <a href="/admin.html" class="text-indigo-400">add one</a></div>';
+        return;
+      }
+
+      document.getElementById('brandsGrid').innerHTML = brandsData.map(brand => {
+        const m = presetBrandData[brand.id]?.summary;
+        const buyBox = m?.buyBox;
+        const buyBoxColor = buyBox == null ? 'bg-slate-600' : buyBox >= 90 ? 'bg-emerald-500' : buyBox >= 70 ? 'bg-amber-500' : 'bg-red-500';
+        const alerts = m?.alerts;
+        const alertBadges = alerts ? [
+          alerts.suppressedListings > 0 ? `<span class="text-xs bg-red-900/60 text-red-300 px-2 py-0.5 rounded-full">${alerts.suppressedListings} suppressed</span>` : '',
+          alerts.lostBuyBox > 0 ? `<span class="text-xs bg-amber-900/60 text-amber-300 px-2 py-0.5 rounded-full">${alerts.lostBuyBox} BB lost</span>` : ''
+        ].filter(Boolean).join('') : '';
+
+        return `
+          <div class="brand-card bg-slate-800 border border-slate-700 rounded-xl overflow-hidden cursor-pointer shadow-md"
+               onclick="location.href='/brand.html?id=${brand.id}'">
+            <div class="h-1" style="background:${brand.color}"></div>
+            <div class="p-5">
+              <div class="flex items-start justify-between mb-3">
+                <div>
+                  <h3 class="font-semibold text-slate-100 text-sm">${brand.name}</h3>
+                  <span class="text-xs text-slate-500">${brand.marketplace} · ${brand.asins.length} ASINs</span>
+                </div>
+                <div class="flex flex-wrap gap-1 justify-end">${alertBadges}</div>
+              </div>
+              ${m ? `
+              <div class="grid grid-cols-2 gap-3 mb-4">
+                <div><p class="text-xs text-slate-500">Revenue</p><p class="text-lg font-bold text-slate-100">${fmt(m.revenueCad, m.revenueUsd)}</p></div>
+                <div><p class="text-xs text-slate-500">Units</p><p class="text-lg font-bold text-slate-100">${(m.units || 0).toLocaleString()}</p></div>
+                <div><p class="text-xs text-slate-500">Sessions</p><p class="text-lg font-bold text-slate-100">${(m.sessions || 0).toLocaleString()}</p></div>
+                <div><p class="text-xs text-slate-500">CVR</p><p class="text-lg font-bold text-slate-100">${m.cvr != null ? m.cvr.toFixed(2) + '%' : '—'}</p></div>
+              </div>
+              <div>
+                <div class="flex items-center justify-between mb-1">
+                  <span class="text-xs text-slate-500">Buy Box</span>
+                  <span class="text-xs font-medium text-slate-300">${buyBox != null ? buyBox.toFixed(1) + '%' : '—'}</span>
+                </div>
+                <div class="w-full bg-slate-700 rounded-full h-1.5">
+                  <div class="${buyBoxColor} h-1.5 rounded-full" style="width:${buyBox || 0}%"></div>
+                </div>
+              </div>` : `
+              <div class="py-4 text-center">
+                <p class="text-xs text-slate-600">No data — sync pending</p>
+              </div>`}
+            </div>
+          </div>`;
+      }).join('');
+    }
+
+    async function load() {
+      const [brandsRes, pmRes, fxRes] = await Promise.all([
+        fetch('/api/brands').then(r => r.json()),
+        fetch('/api/preset-metrics').then(r => r.json()),
+        fetch('/api/fx').then(r => r.json())
+      ]);
+      fxRate = fxRes;
+      presetMetrics = pmRes;
+      brandsData = brandsRes.brands || [];
+      if (brandsRes.lastSync) {
+        document.getElementById('lastSyncText').textContent = 'Synced ' + new Date(brandsRes.lastSync).toLocaleString();
+      }
+      const available = Object.keys(presetMetrics.presets || {});
+      if (!available.includes(activePreset) && available.length > 0) activePreset = available[0];
+      updateToggleUI();
+      setPreset(activePreset);
+    }
+
+    load();
+  </script>
+</body>
+</html>

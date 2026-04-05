@@ -98,6 +98,7 @@
               <th class="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Velocity</th>
               <th class="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Days Left</th>
               <th class="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Lead Time</th>
+              <th class="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">COGS/unit</th>
             </tr>
           </thead>
           <tbody id="skuTable">
@@ -153,6 +154,18 @@
         return sku.units / d;
       }
       return null;
+    }
+
+    async function saveCogs(brandId, asin, cost) {
+      await fetch(`/api/brands/${brandId}/asins/${asin}/cogs`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cost: Number(cost) })
+      });
+      if (brandCache) {
+        brandCache.cogs = brandCache.cogs || {};
+        brandCache.cogs[asin] = Number(cost);
+      }
     }
 
     async function saveLeadTime(brandId, asin, days) {
@@ -359,6 +372,12 @@
                 class="w-14 text-right text-xs border border-slate-200 rounded px-1.5 py-0.5 focus:outline-none focus:border-indigo-400"
                 onchange="saveLeadTime('${brand.id}', '${s.asin}', this.value)"
                 title="Lead time in days" />
+            </td>
+            <td class="px-4 py-3 text-right">
+              <input type="number" min="0" step="0.01" value="${brand.cogs?.[s.asin] ?? ''}" placeholder="—"
+                class="w-16 text-right text-xs border border-slate-200 rounded px-1.5 py-0.5 focus:outline-none focus:border-indigo-400"
+                onchange="saveCogs('${brand.id}', '${s.asin}', this.value)"
+                title="Cost per unit (in brand marketplace currency)" />
             </td>`;
             })()}
           </tr>`;

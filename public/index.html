@@ -8,120 +8,398 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    body { font-family: 'Inter', sans-serif; }
-    .brand-card:hover { transform: translateY(-1px); }
-    .brand-card { transition: transform 0.15s ease, box-shadow 0.15s ease; }
+    body { font-family: 'Inter', sans-serif; background: #0f172a; color: #f1f5f9; }
+    .tile-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    @media (max-width: 1100px) { .tile-row { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 600px)  { .tile-row { grid-template-columns: 1fr; } }
+    .metric-row { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; }
+    .metric-row .label { color: #94a3b8; font-size: 12px; }
+    .metric-row .value { font-size: 13px; font-weight: 500; color: #f1f5f9; }
+    .metric-row .value.pos { color: #34d399; }
+    .metric-row .value.neg { color: #f87171; }
+    .metric-row .value.dim { color: #64748b; }
+    .divider { border-top: 1px solid #334155; margin: 6px 0; }
+    .profit-row .label { color: #cbd5e1; font-size: 13px; font-weight: 500; }
+    .profit-row .value { font-size: 14px; font-weight: 700; }
+    .more-section { border-top: 1px solid #334155; margin-top: 8px; padding-top: 8px; }
+    .brand-row:hover { background: #1e293b; }
+    input[type=number]::-webkit-inner-spin-button { opacity: 1; }
   </style>
 </head>
-<body class="bg-slate-50 min-h-screen">
+<body class="min-h-screen">
 
   <!-- Nav -->
-  <nav class="bg-white border-b border-slate-200 sticky top-0 z-10">
-    <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+  <nav class="bg-slate-900 border-b border-slate-700 sticky top-0 z-20">
+    <div class="max-w-screen-xl mx-auto px-6 py-3 flex items-center justify-between">
       <div class="flex items-center gap-6">
-        <span class="font-bold text-slate-900 text-base tracking-tight">RMC Dashboard</span>
+        <span class="font-bold text-white text-sm tracking-tight">RMC Dashboard</span>
         <div class="flex gap-1">
-          <a href="/" class="px-3 py-1.5 text-sm font-medium text-blue-600 bg-blue-50 rounded-md">Brands</a>
-          <a href="/admin.html" class="px-3 py-1.5 text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-md">ASIN Mapping</a>
+          <a href="/" class="px-3 py-1.5 text-sm font-medium text-white bg-slate-700 rounded-md">Dashboard</a>
+          <a href="/brands.html" class="px-3 py-1.5 text-sm font-medium text-slate-400 hover:text-white hover:bg-slate-700 rounded-md transition-colors">Brands</a>
+          <a href="/admin.html" class="px-3 py-1.5 text-sm font-medium text-slate-400 hover:text-white hover:bg-slate-700 rounded-md transition-colors">ASIN Mapping</a>
         </div>
       </div>
       <div class="flex items-center gap-3">
-        <div class="flex items-center gap-0.5 bg-slate-100 rounded-lg p-0.5">
+        <div class="flex items-center gap-0.5 bg-slate-800 rounded-lg p-0.5">
           <button id="toggleCAD" onclick="setCurrency('CAD')"
             class="text-xs px-3 py-1 rounded-md font-medium transition-colors">CA$</button>
           <button id="toggleUSD" onclick="setCurrency('USD')"
             class="text-xs px-3 py-1 rounded-md font-medium transition-colors">US$</button>
         </div>
-        <span id="syncBadge" class="text-xs px-2.5 py-1 rounded-full font-medium"></span>
-        <span id="lastSyncText" class="text-xs text-slate-400"></span>
+        <span id="lastSyncText" class="text-xs text-slate-500 hidden md:inline"></span>
         <button id="syncBtn" onclick="triggerSync()"
-          class="text-sm px-3 py-1.5 bg-slate-900 text-white rounded-md font-medium hover:bg-slate-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+          class="text-sm px-3 py-1.5 bg-indigo-600 text-white rounded-md font-medium hover:bg-indigo-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
           Sync Data
         </button>
       </div>
     </div>
   </nav>
 
-  <div class="max-w-7xl mx-auto px-6 py-6">
+  <div class="max-w-screen-xl mx-auto px-6 py-6">
 
-    <!-- Mock data banner -->
-    <div id="mockBanner" class="hidden mb-5 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 flex items-center gap-3">
-      <svg class="w-4 h-4 text-amber-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-        <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
-      </svg>
-      <span class="text-sm text-amber-800">Showing sample data — connect SP-API to see live metrics. Go to <a href="/admin.html" class="font-semibold underline">ASIN Mapping</a> to set up your brands while credentials are being configured.</span>
+    <!-- Sync status bar -->
+    <div id="syncBar" class="hidden mb-4 bg-indigo-900/50 border border-indigo-700 rounded-lg px-4 py-2.5 flex items-center gap-3">
+      <div class="w-3 h-3 rounded-full bg-indigo-400 animate-pulse flex-shrink-0"></div>
+      <span class="text-sm text-indigo-200">Sync in progress — this takes 5–10 minutes. You can keep using the dashboard.</span>
     </div>
 
-    <!-- Date Range Picker -->
-    <div class="flex items-center justify-between mb-6">
-      <div class="flex items-center gap-1 flex-wrap">
-        <button onclick="setPreset('yesterday')" id="preset-yesterday" class="preset-btn px-3 py-1.5 text-sm rounded-lg border border-slate-200 text-slate-600 hover:border-indigo-400 hover:text-indigo-600 transition-colors">Yesterday</button>
-        <button onclick="setPreset('last30d')" id="preset-last30d" class="preset-btn px-3 py-1.5 text-sm rounded-lg border border-slate-200 text-slate-600 hover:border-indigo-400 hover:text-indigo-600 transition-colors">Last 30 Days</button>
-        <button onclick="setPreset('thisMonth')" id="preset-thisMonth" class="preset-btn px-3 py-1.5 text-sm rounded-lg border border-slate-200 text-slate-600 hover:border-indigo-400 hover:text-indigo-600 transition-colors">This Month</button>
-        <button onclick="setPreset('lastMonth')" id="preset-lastMonth" class="preset-btn px-3 py-1.5 text-sm rounded-lg border border-slate-200 text-slate-600 hover:border-indigo-400 hover:text-indigo-600 transition-colors">Last Month</button>
-      </div>
-      <p id="dateRangeLabel" class="text-sm text-slate-500 ml-4 whitespace-nowrap"></p>
-    </div>
-
-    <!-- Summary tiles -->
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-      <div class="bg-white rounded-xl border border-slate-200 p-4">
-        <p class="text-xs text-slate-500 mb-1">Total Revenue</p>
-        <p class="text-2xl font-bold text-slate-900" id="totalRevenue">—</p>
-      </div>
-      <div class="bg-white rounded-xl border border-slate-200 p-4">
-        <p class="text-xs text-slate-500 mb-1">Total Units</p>
-        <p class="text-2xl font-bold text-slate-900" id="totalUnits">—</p>
-      </div>
-      <div class="bg-white rounded-xl border border-slate-200 p-4">
-        <p class="text-xs text-slate-500 mb-1">Total Sessions</p>
-        <p class="text-2xl font-bold text-slate-900" id="totalSessions">—</p>
-      </div>
-      <div class="bg-white rounded-xl border border-slate-200 p-4">
-        <p class="text-xs text-slate-500 mb-1">Avg Margin</p>
-        <p class="text-2xl font-bold text-slate-900" id="avgMargin">—</p>
+    <!-- Other expenses input -->
+    <div class="flex items-center justify-end gap-3 mb-5">
+      <label class="text-xs text-slate-500">Other expenses (monthly):</label>
+      <div class="relative">
+        <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs" id="expCurrencySymbol">CA$</span>
+        <input type="number" id="otherExpenses" min="0" step="0.01" placeholder="0.00"
+          class="bg-slate-800 border border-slate-600 text-white text-xs rounded-md pl-8 pr-3 py-1.5 w-28 focus:outline-none focus:border-indigo-500"
+          oninput="saveExpenses(); renderTiles()" />
       </div>
     </div>
 
-    <!-- Brands heading -->
-    <div class="flex items-center justify-between mb-4">
-      <h2 class="text-base font-semibold text-slate-900">Brands <span id="brandCount" class="text-slate-400 font-normal text-sm"></span></h2>
-      <a href="/admin.html" class="text-sm text-blue-600 hover:text-blue-800 font-medium">+ Add brand</a>
-    </div>
-
-    <!-- Brand cards grid -->
-    <div id="brandsGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+    <!-- 4 Tiles -->
+    <div class="tile-row mb-8" id="tilesRow">
       <!-- Rendered by JS -->
     </div>
 
-    <!-- Empty state -->
-    <div id="emptyState" class="hidden text-center py-16">
-      <p class="text-slate-500 text-sm mb-3">No brands added yet.</p>
-      <a href="/admin.html" class="text-sm font-medium text-blue-600 hover:text-blue-800">Add your first brand →</a>
+    <!-- Brands summary table -->
+    <div class="bg-slate-900 rounded-xl border border-slate-700 overflow-hidden">
+      <div class="px-5 py-3 border-b border-slate-700 flex items-center justify-between">
+        <div class="flex items-center gap-4">
+          <h2 class="text-sm font-semibold text-white">Brands</h2>
+          <div class="flex gap-1">
+            <button onclick="setBrandPreset('yesterday')" id="bp-yesterday" class="bp-btn text-xs px-2.5 py-1 rounded-md border border-slate-600 text-slate-400 hover:text-white hover:border-slate-400 transition-colors">Yesterday</button>
+            <button onclick="setBrandPreset('last30d')"   id="bp-last30d"   class="bp-btn text-xs px-2.5 py-1 rounded-md border border-slate-600 text-slate-400 hover:text-white hover:border-slate-400 transition-colors">Last 30d</button>
+            <button onclick="setBrandPreset('thisMonth')" id="bp-thisMonth" class="bp-btn text-xs px-2.5 py-1 rounded-md border border-slate-600 text-slate-400 hover:text-white hover:border-slate-400 transition-colors">This Month</button>
+            <button onclick="setBrandPreset('lastMonth')" id="bp-lastMonth" class="bp-btn text-xs px-2.5 py-1 rounded-md border border-slate-600 text-slate-400 hover:text-white hover:border-slate-400 transition-colors">Last Month</button>
+          </div>
+        </div>
+        <a href="/admin.html" class="text-xs text-indigo-400 hover:text-indigo-300 font-medium">+ Add brand</a>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-xs">
+          <thead>
+            <tr class="border-b border-slate-700">
+              <th class="text-left px-5 py-2.5 text-slate-400 font-medium">Brand</th>
+              <th class="text-right px-4 py-2.5 text-slate-400 font-medium">Revenue</th>
+              <th class="text-right px-4 py-2.5 text-slate-400 font-medium">Units</th>
+              <th class="text-right px-4 py-2.5 text-slate-400 font-medium">COGS</th>
+              <th class="text-right px-4 py-2.5 text-slate-400 font-medium">Gross Profit</th>
+              <th class="text-right px-4 py-2.5 text-slate-400 font-medium">Margin</th>
+              <th class="text-right px-4 py-2.5 text-slate-400 font-medium">Sessions</th>
+              <th class="text-right px-4 py-2.5 text-slate-400 font-medium">Buy Box</th>
+            </tr>
+          </thead>
+          <tbody id="brandTableBody">
+            <tr><td colspan="8" class="text-center text-slate-500 py-8">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
 
   </div>
 
   <script>
+    // ── State ─────────────────────────────────────────────────────────────────
     let brandsData = [];
     let presetMetrics = {};
-    let activePreset = 'last7d';
     let currency = localStorage.getItem('currency') || 'CAD';
     let fxRate = { usdToCad: 1.38, cadToUsd: 0.724 };
+    let activeBrandPreset = localStorage.getItem('brandPreset') || 'last30d';
+    let expandedTiles = {};
 
-    function fmt(cad, usd) {
+    const TILE_CONFIG = [
+      { key: 'yesterday', label: 'Yesterday',    color: 'from-blue-700 to-blue-800',    accent: '#3b82f6' },
+      { key: 'last30d',   label: 'Last 30 Days', color: 'from-violet-700 to-violet-800', accent: '#7c3aed' },
+      { key: 'thisMonth', label: 'This Month',   color: 'from-teal-700 to-teal-800',    accent: '#0d9488' },
+      { key: 'lastMonth', label: 'Last Month',   color: 'from-emerald-700 to-emerald-800', accent: '#059669' }
+    ];
+
+    // ── Formatting ────────────────────────────────────────────────────────────
+    function fmtMoney(cad, usd = 0) {
       if (currency === 'CAD') {
-        const total = (cad || 0) + (usd || 0) * fxRate.usdToCad;
-        return 'CA$' + total.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      } else {
-        const total = (usd || 0) + (cad || 0) * fxRate.cadToUsd;
-        return 'US$' + total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const t = (cad || 0) + (usd || 0) * fxRate.usdToCad;
+        return 'CA$' + t.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       }
+      const t = (usd || 0) + (cad || 0) * fxRate.cadToUsd;
+      return 'US$' + t.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
 
+    function fmtPct(val) {
+      return val != null ? val.toFixed(2) + '%' : '—';
+    }
+
+    function getNum(cad, usd = 0) {
+      if (currency === 'CAD') return (cad || 0) + (usd || 0) * fxRate.usdToCad;
+      return (usd || 0) + (cad || 0) * fxRate.cadToUsd;
+    }
+
+    // ── Other expenses ────────────────────────────────────────────────────────
+    function loadExpenses() {
+      const v = localStorage.getItem('otherExpensesMonthly');
+      document.getElementById('otherExpenses').value = v || '';
+    }
+
+    function saveExpenses() {
+      localStorage.setItem('otherExpensesMonthly', document.getElementById('otherExpenses').value || '0');
+    }
+
+    function getOtherExpenses(presetKey) {
+      const monthly = parseFloat(localStorage.getItem('otherExpensesMonthly') || '0') || 0;
+      if (!monthly) return 0;
+      const preset = presetMetrics.presets?.[presetKey];
+      if (!preset) return monthly;
+      const days = Math.max(1, Math.round((new Date(preset.endDate) - new Date(preset.startDate)) / 86400000) + 1);
+      // In selected currency already (user enters in selected currency)
+      return (monthly / 30) * days;
+    }
+
+    // ── COGS calculation ──────────────────────────────────────────────────────
+    function calcCogs(presetKey) {
+      let cad = 0, usd = 0;
+      for (const brand of brandsData) {
+        const bm = presetMetrics.presets?.[presetKey]?.brands?.[brand.id];
+        if (!bm?.skus) continue;
+        const isCA = brand.marketplace !== 'US';
+        for (const sku of bm.skus) {
+          const cost = brand.cogs?.[sku.asin] || 0;
+          if (isCA) cad += (sku.units || 0) * cost;
+          else usd += (sku.units || 0) * cost;
+        }
+      }
+      return { cad: Math.round(cad * 100) / 100, usd: Math.round(usd * 100) / 100 };
+    }
+
+    // ── Tile metrics ──────────────────────────────────────────────────────────
+    function getTileMetrics(presetKey) {
+      const preset = presetMetrics.presets?.[presetKey];
+      if (!preset) return null;
+
+      // Aggregate across all brands
+      let revCad = 0, revUsd = 0, units = 0, sessions = 0, refundUnits = 0;
+      for (const bm of Object.values(preset.brands || {})) {
+        revCad += bm.summary?.revenueCad || 0;
+        revUsd += bm.summary?.revenueUsd || 0;
+        units  += bm.summary?.units || 0;
+        sessions += bm.summary?.sessions || 0;
+      }
+
+      const fin = preset.financials || {};
+      const fCad = fin.CAD || {};
+      const fUsd = fin.USD || {};
+
+      const cogs = calcCogs(presetKey);
+      const otherExp = getOtherExpenses(presetKey);
+
+      // All figures in selected display currency
+      const sales     = getNum(revCad, revUsd);
+      const amzFees   = getNum(fCad.amazonFees, fUsd.amazonFees);
+      const refunds   = getNum(fCad.refundAmount, fUsd.refundAmount);
+      const refundFee = getNum(fCad.refundFees, fUsd.refundFees);
+      const adSpend   = getNum(fCad.adSpend, fUsd.adSpend);
+      const cogsTotal = getNum(cogs.cad, cogs.usd);
+
+      const grossProfit = sales - cogsTotal - amzFees - refunds - refundFee - adSpend;
+      const netProfit   = grossProfit - otherExp;
+      const estPayout   = sales - amzFees - adSpend - refunds;
+      const margin      = sales > 0 ? (netProfit / sales) * 100 : null;
+      const roi         = cogsTotal > 0 ? (netProfit / cogsTotal) * 100 : null;
+      const realAcos    = sales > 0 ? (adSpend / sales) * 100 : null;
+      const pctRefunds  = sales > 0 ? (refunds / sales) * 100 : null;
+
+      const fmtC = v => {
+        const sym = currency === 'CAD' ? 'CA$' : 'US$';
+        return sym + Math.abs(v).toLocaleString(currency === 'CAD' ? 'en-CA' : 'en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      };
+
+      return {
+        sales, units, sessions, amzFees, refunds, refundFee, adSpend,
+        cogsTotal, grossProfit, netProfit, estPayout, margin, roi,
+        realAcos, pctRefunds, otherExp,
+        startDate: preset.startDate, endDate: preset.endDate,
+        fmtC
+      };
+    }
+
+    // ── Tile rendering ────────────────────────────────────────────────────────
+    function renderTiles() {
+      const container = document.getElementById('tilesRow');
+      container.innerHTML = TILE_CONFIG.map(tc => buildTile(tc)).join('');
+      updateExpCurrencySymbol();
+    }
+
+    function buildTile({ key, label, color }) {
+      const m = getTileMetrics(key);
+      const preset = presetMetrics.presets?.[key];
+      const isExpanded = expandedTiles[key];
+
+      const fmtD = d => d ? new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
+      const dateStr = preset
+        ? (preset.startDate === preset.endDate ? fmtD(preset.startDate) : `${fmtD(preset.startDate)} – ${fmtD(preset.endDate)}`)
+        : '—';
+
+      if (!m) {
+        return `<div class="rounded-xl overflow-hidden">
+          <div class="bg-gradient-to-b ${color} px-4 py-3">
+            <div class="text-white font-semibold text-sm">${label}</div>
+            <div class="text-white/50 text-xs mt-0.5">${dateStr}</div>
+          </div>
+          <div class="bg-slate-800 px-4 py-6 text-center">
+            <p class="text-slate-500 text-xs">No data — run sync</p>
+          </div>
+        </div>`;
+      }
+
+      const { fmtC } = m;
+      const profitClass = m.netProfit >= 0 ? 'pos' : 'neg';
+      const sym = currency === 'CAD' ? 'CA$' : 'US$';
+
+      const moreRows = `
+        <div class="more-section space-y-0.5">
+          <div class="metric-row"><span class="label">Refund cost</span><span class="value neg">-${fmtC(m.refundFee)}</span></div>
+          <div class="metric-row"><span class="label">Amazon fees</span><span class="value neg">-${fmtC(m.amzFees)}</span></div>
+          <div class="metric-row"><span class="label">Cost of goods</span><span class="value ${m.cogsTotal > 0 ? 'neg' : 'dim'}">-${fmtC(m.cogsTotal)}</span></div>
+          <div class="metric-row"><span class="label">Other expenses</span><span class="value ${m.otherExp > 0 ? 'neg' : 'dim'}">-${fmtC(m.otherExp)}</span></div>
+          <div class="divider"></div>
+          <div class="metric-row"><span class="label">Real ACOS</span><span class="value">${fmtPct(m.realAcos)}</span></div>
+          <div class="metric-row"><span class="label">% Refunds</span><span class="value">${fmtPct(m.pctRefunds)}</span></div>
+          <div class="metric-row"><span class="label">Margin</span><span class="value ${profitClass}">${fmtPct(m.margin)}</span></div>
+          <div class="metric-row"><span class="label">ROI</span><span class="value ${profitClass}">${m.roi != null ? m.roi.toFixed(1) + '%' : m.cogsTotal === 0 ? '<span class=\'dim text-xs\'>Enter COGS</span>' : '—'}</span></div>
+          <div class="metric-row"><span class="label">Sessions</span><span class="value">${m.sessions.toLocaleString()}</span></div>
+        </div>`;
+
+      return `
+        <div class="rounded-xl overflow-hidden shadow-lg">
+          <div class="bg-gradient-to-b ${color} px-4 py-3">
+            <div class="text-white font-semibold text-sm">${label}</div>
+            <div class="text-white/60 text-xs mt-0.5">${dateStr}</div>
+          </div>
+          <div class="bg-slate-800 px-4 py-3 space-y-0.5">
+            <div class="metric-row"><span class="label">Sales</span><span class="value">${fmtC(m.sales)}</span></div>
+            <div class="metric-row"><span class="label">Orders / Units</span><span class="value">${m.units.toLocaleString()}</span></div>
+            <div class="metric-row"><span class="label">Refunds</span><span class="value ${m.refunds > 0 ? 'neg' : 'dim'}">-${fmtC(m.refunds)}</span></div>
+            <div class="metric-row"><span class="label">Adv. cost</span><span class="value ${m.adSpend > 0 ? 'neg' : 'dim'}">-${fmtC(m.adSpend)}</span></div>
+            <div class="metric-row"><span class="label">Est. payout</span><span class="value">${fmtC(m.estPayout)}</span></div>
+            <div class="divider"></div>
+            <div class="metric-row profit-row"><span class="label">Gross profit</span><span class="value ${profitClass}">${m.grossProfit < 0 ? '-' : ''}${fmtC(Math.abs(m.grossProfit))}</span></div>
+            <div class="metric-row profit-row"><span class="label">Net profit</span><span class="value ${profitClass}">${m.netProfit < 0 ? '-' : ''}${fmtC(Math.abs(m.netProfit))}</span></div>
+            ${isExpanded ? moreRows : ''}
+            <button onclick="toggleTile('${key}')"
+              class="w-full text-center text-slate-500 text-xs pt-2 hover:text-slate-300 transition-colors">
+              ${isExpanded ? '▲ Less' : '▼ More'}
+            </button>
+          </div>
+        </div>`;
+    }
+
+    function toggleTile(key) {
+      expandedTiles[key] = !expandedTiles[key];
+      renderTiles();
+    }
+
+    // ── Brand table ───────────────────────────────────────────────────────────
+    function setBrandPreset(key) {
+      activeBrandPreset = key;
+      localStorage.setItem('brandPreset', key);
+      document.querySelectorAll('.bp-btn').forEach(btn => {
+        const active = btn.id === `bp-${key}`;
+        btn.classList.toggle('bg-slate-700', active);
+        btn.classList.toggle('text-white', active);
+        btn.classList.toggle('border-slate-500', active);
+        btn.classList.toggle('text-slate-400', !active);
+        btn.classList.toggle('border-slate-600', !active);
+      });
+      renderBrandTable();
+    }
+
+    function renderBrandTable() {
+      const preset = presetMetrics.presets?.[activeBrandPreset];
+      const tbody = document.getElementById('brandTableBody');
+
+      if (!brandsData.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-slate-500 py-8">No brands — <a href="/admin.html" class="text-indigo-400">add one</a></td></tr>';
+        return;
+      }
+
+      const rows = brandsData.map(brand => {
+        const bm = preset?.brands?.[brand.id];
+        const s = bm?.summary;
+        if (!s) {
+          return `<tr class="brand-row border-b border-slate-800 cursor-pointer" onclick="location.href='/brand.html?id=${brand.id}'">
+            <td class="px-5 py-3">
+              <div class="flex items-center gap-2.5">
+                <div class="w-2.5 h-2.5 rounded-full flex-shrink-0" style="background:${brand.color}"></div>
+                <span class="font-medium text-slate-200 text-xs">${brand.name}</span>
+                <span class="text-slate-600 text-xs">${brand.marketplace}</span>
+              </div>
+            </td>
+            <td colspan="7" class="px-4 py-3 text-slate-600 text-center">No data</td>
+          </tr>`;
+        }
+
+        const cogs = calcBrandCogs(brand, activeBrandPreset);
+        const rev = getNum(s.revenueCad, s.revenueUsd);
+        const cogsNum = getNum(cogs.cad, cogs.usd);
+        const grossProfit = rev - cogsNum;
+        const margin = rev > 0 && cogsNum > 0 ? (grossProfit / rev) * 100 : null;
+
+        const profitColor = grossProfit > 0 ? 'text-emerald-400' : grossProfit < 0 ? 'text-red-400' : 'text-slate-400';
+
+        return `<tr class="brand-row border-b border-slate-800 cursor-pointer" onclick="location.href='/brand.html?id=${brand.id}'">
+          <td class="px-5 py-3">
+            <div class="flex items-center gap-2.5">
+              <div class="w-2.5 h-2.5 rounded-full flex-shrink-0" style="background:${brand.color}"></div>
+              <span class="font-medium text-slate-200 text-xs">${brand.name}</span>
+              <span class="text-slate-600 text-xs">${brand.marketplace} · ${brand.asins.length} ASINs</span>
+            </div>
+          </td>
+          <td class="px-4 py-3 text-right text-slate-200 font-medium">${fmtMoney(s.revenueCad, s.revenueUsd)}</td>
+          <td class="px-4 py-3 text-right text-slate-400">${(s.units || 0).toLocaleString()}</td>
+          <td class="px-4 py-3 text-right ${cogsNum > 0 ? 'text-slate-400' : 'text-slate-600'}">${cogsNum > 0 ? fmtMoney(cogs.cad, cogs.usd) : '—'}</td>
+          <td class="px-4 py-3 text-right ${profitColor} font-medium">${cogsNum > 0 ? fmtMoney(grossProfit, 0) : '—'}</td>
+          <td class="px-4 py-3 text-right ${margin != null ? (margin > 0 ? 'text-emerald-400' : 'text-red-400') : 'text-slate-600'}">${margin != null ? margin.toFixed(1) + '%' : '—'}</td>
+          <td class="px-4 py-3 text-right text-slate-400">${(s.sessions || 0).toLocaleString()}</td>
+          <td class="px-4 py-3 text-right ${s.buyBox >= 90 ? 'text-emerald-400' : s.buyBox >= 70 ? 'text-amber-400' : s.buyBox != null ? 'text-red-400' : 'text-slate-600'}">${s.buyBox != null ? s.buyBox.toFixed(1) + '%' : '—'}</td>
+        </tr>`;
+      });
+
+      tbody.innerHTML = rows.join('');
+    }
+
+    function calcBrandCogs(brand, presetKey) {
+      let cad = 0, usd = 0;
+      const bm = presetMetrics.presets?.[presetKey]?.brands?.[brand.id];
+      if (!bm?.skus) return { cad: 0, usd: 0 };
+      const isCA = brand.marketplace !== 'US';
+      for (const sku of bm.skus) {
+        const cost = brand.cogs?.[sku.asin] || 0;
+        if (isCA) cad += (sku.units || 0) * cost;
+        else usd += (sku.units || 0) * cost;
+      }
+      return { cad: Math.round(cad * 100) / 100, usd: Math.round(usd * 100) / 100 };
+    }
+
+    // ── Currency ──────────────────────────────────────────────────────────────
     function updateToggleUI() {
       const active = 'text-xs px-3 py-1 rounded-md font-medium bg-white text-slate-900 shadow-sm';
-      const inactive = 'text-xs px-3 py-1 rounded-md font-medium text-slate-500 hover:text-slate-700';
+      const inactive = 'text-xs px-3 py-1 rounded-md font-medium text-slate-400 hover:text-white';
       document.getElementById('toggleCAD').className = currency === 'CAD' ? active : inactive;
       document.getElementById('toggleUSD').className = currency === 'USD' ? active : inactive;
     }
@@ -130,175 +408,20 @@
       currency = c;
       localStorage.setItem('currency', c);
       updateToggleUI();
-      if (brandsData.length > 0) {
-        const presetBrands = mergePresetIntoBrands(brandsData, activePreset);
-        renderDashboard(presetBrands);
-      }
+      updateExpCurrencySymbol();
+      renderTiles();
+      renderBrandTable();
     }
 
-    function setPreset(key) {
-      activePreset = key;
-      localStorage.setItem('dashboardPreset', key);
-
-      // Update button styles
-      document.querySelectorAll('.preset-btn').forEach(btn => {
-        const isActive = btn.id === `preset-${key}`;
-        btn.classList.toggle('bg-indigo-600', isActive);
-        btn.classList.toggle('text-white', isActive);
-        btn.classList.toggle('border-indigo-600', isActive);
-        btn.classList.toggle('text-slate-600', !isActive);
-        btn.classList.toggle('border-slate-200', !isActive);
-      });
-
-      // Update date range label
-      const meta = presetMetrics.presets?.[key];
-      if (meta) {
-        const fmtLabel = d => new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-        document.getElementById('dateRangeLabel').textContent = meta.startDate === meta.endDate
-          ? fmtLabel(meta.startDate)
-          : `${fmtLabel(meta.startDate)} – ${fmtLabel(meta.endDate)}`;
-      }
-
-      // Re-render with preset data
-      if (brandsData.length > 0) {
-        const presetBrands = mergePresetIntoBrands(brandsData, key);
-        renderDashboard(presetBrands);
-      }
+    function updateExpCurrencySymbol() {
+      document.getElementById('expCurrencySymbol').textContent = currency === 'CAD' ? 'CA$' : 'US$';
     }
 
-    function mergePresetIntoBrands(brands, presetKey) {
-      const presetBrandData = presetMetrics.presets?.[presetKey]?.brands || {};
-      return brands.map(b => ({ ...b, metrics: presetBrandData[b.id] || null }));
-    }
-
-    async function loadDashboard() {
-      activePreset = localStorage.getItem('dashboardPreset') || 'last30d';
-      try {
-        const [brandsRes, pmRes, fxRes] = await Promise.all([
-          fetch('/api/brands').then(r => r.json()),
-          fetch('/api/preset-metrics').then(r => r.json()),
-          fetch('/api/fx').then(r => r.json())
-        ]);
-
-        fxRate = fxRes;
-        updateToggleUI();
-
-        presetMetrics = pmRes;
-        brandsData = brandsRes.brands || [];
-
-        const lastSync = brandsRes.lastSync;
-        if (lastSync) {
-          document.getElementById('lastSyncText').textContent = 'Synced ' + new Date(lastSync).toLocaleString();
-        }
-
-        // Fall back to first available preset if stored one no longer exists
-        const availablePresets = Object.keys(presetMetrics.presets || {});
-        if (!availablePresets.includes(activePreset) && availablePresets.length > 0) {
-          activePreset = availablePresets[0];
-        }
-
-        setPreset(activePreset);
-      } catch (err) {
-        console.error('Failed to load dashboard:', err);
-      }
-    }
-
-    function renderDashboard(brands) {
-      document.getElementById('brandCount').textContent = `(${brands.length})`;
-
-      if (brands.length === 0) {
-        document.getElementById('emptyState').classList.remove('hidden');
-        return;
-      }
-
-      let totalCad = 0, totalUsd = 0, totalUnits = 0, totalSessions = 0, margins = [];
-      brands.forEach(b => {
-        if (b.metrics) {
-          totalCad += b.metrics.summary.revenueCad || 0;
-          totalUsd += b.metrics.summary.revenueUsd || 0;
-          totalUnits += b.metrics.summary.units || 0;
-          totalSessions += b.metrics.summary.sessions || 0;
-          if (b.metrics.summary.margin) margins.push(b.metrics.summary.margin);
-        }
-      });
-
-      document.getElementById('totalRevenue').textContent = fmt(totalCad, totalUsd);
-      document.getElementById('totalUnits').textContent = totalUnits.toLocaleString();
-      document.getElementById('totalSessions').textContent = totalSessions.toLocaleString();
-      document.getElementById('avgMargin').textContent = margins.length
-        ? (margins.reduce((a, b) => a + b, 0) / margins.length).toFixed(1) + '%'
-        : '—';
-
-      document.getElementById('brandsGrid').innerHTML = brands.map(b => brandCard(b)).join('');
-    }
-
-    function brandCard(brand) {
-      const m = brand.metrics ? brand.metrics.summary : null;
-      const alerts = m ? m.alerts : null;
-      const alertBadges = alerts
-        ? [
-            alerts.suppressedListings > 0 ? `<span class="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">${alerts.suppressedListings} suppressed</span>` : '',
-            alerts.lostBuyBox > 0 ? `<span class="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">${alerts.lostBuyBox} BB lost</span>` : ''
-          ].filter(Boolean).join('')
-        : '';
-
-      const buyBox = m ? m.buyBox : null;
-      const buyBoxColor = buyBox == null ? 'bg-slate-300' : buyBox >= 90 ? 'bg-emerald-500' : buyBox >= 70 ? 'bg-amber-500' : 'bg-red-500';
-
-      return `
-        <div class="brand-card bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden cursor-pointer hover:shadow-md"
-             onclick="location.href='/brand.html?id=${brand.id}'">
-          <div class="h-1.5" style="background:${brand.color}"></div>
-          <div class="p-5">
-            <div class="flex items-start justify-between mb-3">
-              <div>
-                <h3 class="font-semibold text-slate-900 text-sm">${brand.name}</h3>
-                <span class="text-xs text-slate-400">${brand.marketplace} &bull; ${brand.asins.length} ASINs</span>
-              </div>
-              <div class="flex flex-wrap gap-1 justify-end">${alertBadges}</div>
-            </div>
-
-            ${m ? `
-            <div class="grid grid-cols-2 gap-3 mb-4">
-              <div>
-                <p class="text-xs text-slate-500">Revenue</p>
-                <p class="text-lg font-bold text-slate-900">${fmt(m.revenueCad, m.revenueUsd)}</p>
-              </div>
-              <div>
-                <p class="text-xs text-slate-500">Units</p>
-                <p class="text-lg font-bold text-slate-900">${(m.units || 0).toLocaleString()}</p>
-              </div>
-              <div>
-                <p class="text-xs text-slate-500">Sessions</p>
-                <p class="text-lg font-bold text-slate-900">${(m.sessions || 0).toLocaleString()}</p>
-              </div>
-              <div>
-                <p class="text-xs text-slate-500">Margin</p>
-                <p class="text-lg font-bold text-slate-900">${m.margin != null ? m.margin.toFixed(1) + '%' : '—'}</p>
-              </div>
-            </div>
-            <div>
-              <div class="flex items-center justify-between mb-1">
-                <span class="text-xs text-slate-500">Buy Box</span>
-                <span class="text-xs font-medium text-slate-700">${buyBox != null ? buyBox.toFixed(1) + '%' : '—'}</span>
-              </div>
-              <div class="w-full bg-slate-100 rounded-full h-1.5">
-                <div class="${buyBoxColor} h-1.5 rounded-full transition-all" style="width:${buyBox || 0}%"></div>
-              </div>
-            </div>
-            ` : `
-            <div class="py-4 text-center">
-              <p class="text-xs text-slate-400">No data — sync pending</p>
-            </div>
-            `}
-          </div>
-        </div>`;
-    }
-
+    // ── Sync ──────────────────────────────────────────────────────────────────
     async function triggerSync() {
       const btn = document.getElementById('syncBtn');
       btn.disabled = true;
-      btn.textContent = 'Syncing...';
+      btn.textContent = 'Starting...';
 
       try {
         const res = await fetch('/api/sync', { method: 'POST' });
@@ -316,30 +439,68 @@
         return;
       }
 
-      // Poll until done
+      document.getElementById('syncBar').classList.remove('hidden');
+      btn.textContent = 'Syncing...';
+
       const poll = setInterval(async () => {
         try {
           const s = await fetch('/api/sync/status').then(r => r.json());
           if (s.status === 'done') {
             clearInterval(poll);
-            await loadDashboard();
+            document.getElementById('syncBar').classList.add('hidden');
             btn.disabled = false;
             btn.textContent = 'Sync Data';
+            await loadDashboard();
           } else if (s.status === 'error') {
             clearInterval(poll);
+            document.getElementById('syncBar').classList.add('hidden');
             alert('Sync error: ' + s.error);
             btn.disabled = false;
             btn.textContent = 'Sync Data';
           }
-          // still 'syncing' — keep polling
         } catch (e) {
           clearInterval(poll);
+          document.getElementById('syncBar').classList.add('hidden');
           btn.disabled = false;
           btn.textContent = 'Sync Data';
         }
       }, 5000);
     }
 
+    // ── Boot ──────────────────────────────────────────────────────────────────
+    async function loadDashboard() {
+      try {
+        const [brandsRes, pmRes, fxRes] = await Promise.all([
+          fetch('/api/brands').then(r => r.json()),
+          fetch('/api/preset-metrics').then(r => r.json()),
+          fetch('/api/fx').then(r => r.json())
+        ]);
+
+        fxRate = fxRes;
+        presetMetrics = pmRes;
+        brandsData = brandsRes.brands || [];
+
+        if (brandsRes.lastSync) {
+          document.getElementById('lastSyncText').textContent =
+            'Synced ' + new Date(brandsRes.lastSync).toLocaleString();
+        }
+
+        // Validate active brand preset still exists
+        const available = Object.keys(presetMetrics.presets || {});
+        if (!available.includes(activeBrandPreset) && available.length > 0) {
+          activeBrandPreset = available[0];
+        }
+
+        updateToggleUI();
+        updateExpCurrencySymbol();
+        renderTiles();
+        setBrandPreset(activeBrandPreset);
+      } catch (err) {
+        console.error('Failed to load dashboard:', err);
+      }
+    }
+
+    loadExpenses();
     loadDashboard();
   </script>
 </body>

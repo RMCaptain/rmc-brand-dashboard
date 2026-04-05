@@ -362,6 +362,81 @@ async function getInventory(marketplaceId, token) {
   return inventory;
 }
 
+// ─── Finances API ────────────────────────────────────────────────────────────
+
+async function getFinancialSummary(startDate, endDate, token) {
+  const zero = () => ({ amazonFees: 0, refundAmount: 0, refundFees: 0, adSpend: 0 });
+  const result = { CAD: zero(), USD: zero() };
+  let nextToken = null;
+  let page = 0;
+
+  do {
+    const path = nextToken
+      ? `/finances/v0/financialEvents?NextToken=${encodeURIComponent(nextToken)}&MaxResultsPerPage=100`
+      : `/finances/v0/financialEvents?PostedAfter=${encodeURIComponent(startDate)}&PostedBefore=${encodeURIComponent(endDate)}&MaxResultsPerPage=100`;
+
+    const res = await spRequest('GET', path, token);
+    if (res.status !== 200) {
+      console.warn(`[Finances] HTTP ${res.status}: ${JSON.stringify(res.body).slice(0, 200)}`);
+      break;
+    }
+
+    const events = res.body.payload?.FinancialEvents || {};
+
+    // FBA fulfillment fees + referral fees
+    for (const shipment of (events.ShipmentEventList || [])) {
+      for (const item of (shipment.ShipmentItemList || [])) {
+        for (const fee of (item.ItemFeeList || [])) {
+          const amount = Math.abs(fee.FeeAmount?.Amount || 0);
+          const cur = fee.FeeAmount?.CurrencyCode;
+          if (cur && result[cur]) result[cur].amazonFees += amount;
+        }
+      }
+    }
+
+    // Refunds — returned principal + refund processing fees
+    for (const refund of (events.RefundEventList || [])) {
+      for (const item of (refund.ShipmentItemAdjustmentList || [])) {
+        for (const charge of (item.ItemChargeAdjustmentList || [])) {
+          if (charge.ChargeType === 'Principal') {
+            const amount = Math.abs(charge.ChargeAmount?.Amount || 0);
+            const cur = charge.ChargeAmount?.CurrencyCode;
+            if (cur && result[cur]) result[cur].refundAmount += amount;
+          }
+        }
+        for (const fee of (item.ItemFeeAdjustmentList || [])) {
+          const amount = Math.abs(fee.FeeAmount?.Amount || 0);
+          const cur = fee.FeeAmount?.CurrencyCode;
+          if (cur && result[cur]) result[cur].refundFees += amount;
+        }
+      }
+    }
+
+    // Sponsored Products / advertising charges
+    for (const serviceFee of (events.ServiceFeeEventList || [])) {
+      for (const fee of (serviceFee.FeeList || [])) {
+        const feeType = (fee.FeeType || '').toLowerCase();
+        if (feeType.includes('sponsor') || feeType.includes('advertis')) {
+          const amount = Math.abs(fee.FeeAmount?.Amount || 0);
+          const cur = fee.FeeAmount?.CurrencyCode;
+          if (cur && result[cur]) result[cur].adSpend += amount;
+        }
+      }
+    }
+
+    nextToken = res.body.nextToken || null;
+    if (nextToken) await sleep(2100); // stay under 0.5 req/s rate limit
+    page++;
+  } while (nextToken && page < 20);
+
+  for (const cur of Object.keys(result)) {
+    for (const k of Object.keys(result[cur])) {
+      result[cur][k] = Math.round(result[cur][k] * 100) / 100;
+    }
+  }
+  return result;
+}
+
 // ─── Utilities ───────────────────────────────────────────────────────────────
 
 function avg(arr, decimals = 1) {
@@ -511,6 +586,24 @@ async function syncBrandMetrics(brands) {
     fs.writeFileSync(LISTINGS_CACHE_PATH, JSON.stringify({ fetched: new Date().toISOString(), listingsData, inventory }));
   }
 
+  // ── Financial events per preset (sequential — 0.5 req/s rate limit) ─────────
+  console.log('[Sync] Fetching financial events for each preset...');
+  const financialsMap = {};
+  for (const [presetKey, range] of Object.entries(presets)) {
+    try {
+      financialsMap[presetKey] = await getFinancialSummary(range.start, range.end, token);
+      const f = financialsMap[presetKey];
+      console.log(`[Sync] Financials OK for ${presetKey}: fees CAD=${f.CAD.amazonFees} USD=${f.USD.amazonFees}`);
+    } catch (err) {
+      console.warn(`[Sync] Financials failed for ${presetKey}: ${err.message}`);
+      financialsMap[presetKey] = {
+        CAD: { amazonFees: 0, refundAmount: 0, refundFees: 0, adSpend: 0 },
+        USD: { amazonFees: 0, refundAmount: 0, refundFees: 0, adSpend: 0 }
+      };
+    }
+    await sleep(2100);
+  }
+
   // ── S&T reports for all presets × all marketplaces (parallel) ───────────────
   console.log(`[Sync] Requesting S&T reports for ${presetKeys.length} presets × ${marketplaceIds.length} marketplaces...`);
 
@@ -582,6 +675,10 @@ async function syncBrandMetrics(brands) {
       label: presets[presetKey].label,
       startDate: presets[presetKey].startDate,
       endDate: presets[presetKey].endDate,
+      financials: financialsMap[presetKey] || {
+        CAD: { amazonFees: 0, refundAmount: 0, refundFees: 0, adSpend: 0 },
+        USD: { amazonFees: 0, refundAmount: 0, refundFees: 0, adSpend: 0 }
+      },
       brands: buildPresetMetrics(brands, stDatasets, marketplaceIds, listingsData, inventory)
     };
   }
