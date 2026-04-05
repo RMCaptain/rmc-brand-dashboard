@@ -341,7 +341,8 @@ async function getInventory(marketplaceId, token) {
     const res = await spRequest('GET', path, token);
     if (res.status !== 200) break;
 
-    const { inventorySummaries, pagination } = res.body.payload || {};
+    const { inventorySummaries } = res.body.payload || {};
+    const pagination = res.body.pagination; // pagination is at root, not inside payload
     for (const item of (inventorySummaries || [])) {
       if (!item.asin) continue;
       const d = item.inventoryDetails || {};
