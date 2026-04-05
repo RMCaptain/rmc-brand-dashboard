@@ -384,10 +384,11 @@ async function getFinancialSummary(startDate, endDate, token) {
     const events = res.body.payload?.FinancialEvents || {};
 
     // FBA fulfillment fees + referral fees
+    // Note: SP-API uses CurrencyAmount (not Amount), values are negative for charges
     for (const shipment of (events.ShipmentEventList || [])) {
       for (const item of (shipment.ShipmentItemList || [])) {
         for (const fee of (item.ItemFeeList || [])) {
-          const amount = Math.abs(fee.FeeAmount?.Amount || 0);
+          const amount = Math.abs(fee.FeeAmount?.CurrencyAmount || 0);
           const cur = fee.FeeAmount?.CurrencyCode;
           if (cur && result[cur]) result[cur].amazonFees += amount;
         }
@@ -399,28 +400,25 @@ async function getFinancialSummary(startDate, endDate, token) {
       for (const item of (refund.ShipmentItemAdjustmentList || [])) {
         for (const charge of (item.ItemChargeAdjustmentList || [])) {
           if (charge.ChargeType === 'Principal') {
-            const amount = Math.abs(charge.ChargeAmount?.Amount || 0);
+            const amount = Math.abs(charge.ChargeAmount?.CurrencyAmount || 0);
             const cur = charge.ChargeAmount?.CurrencyCode;
             if (cur && result[cur]) result[cur].refundAmount += amount;
           }
         }
         for (const fee of (item.ItemFeeAdjustmentList || [])) {
-          const amount = Math.abs(fee.FeeAmount?.Amount || 0);
+          const amount = Math.abs(fee.FeeAmount?.CurrencyAmount || 0);
           const cur = fee.FeeAmount?.CurrencyCode;
           if (cur && result[cur]) result[cur].refundFees += amount;
         }
       }
     }
 
-    // Sponsored Products / advertising charges
-    for (const serviceFee of (events.ServiceFeeEventList || [])) {
-      for (const fee of (serviceFee.FeeList || [])) {
-        const feeType = (fee.FeeType || '').toLowerCase();
-        if (feeType.includes('sponsor') || feeType.includes('advertis')) {
-          const amount = Math.abs(fee.FeeAmount?.Amount || 0);
-          const cur = fee.FeeAmount?.CurrencyCode;
-          if (cur && result[cur]) result[cur].adSpend += amount;
-        }
+    // Advertising spend — lives in ProductAdsPaymentEventList, not ServiceFeeEventList
+    for (const adsEvent of (events.ProductAdsPaymentEventList || [])) {
+      if ((adsEvent.TransactionType || '').toLowerCase() === 'charge') {
+        const amount = Math.abs(adsEvent.TransactionValue?.CurrencyAmount || 0);
+        const cur = adsEvent.TransactionValue?.CurrencyCode;
+        if (cur && result[cur]) result[cur].adSpend += amount;
       }
     }
 
