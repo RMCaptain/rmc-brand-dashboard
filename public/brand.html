@@ -336,7 +336,7 @@
             <td class="px-5 py-3 text-right text-slate-700 font-medium cursor-pointer underline decoration-dotted decoration-slate-400"
                 onmouseenter="showInventoryPopup(event, '${s.asin}', ${JSON.stringify(s.inventory ?? {}).replace(/"/g, '&quot;')})"
                 onmouseleave="hideInventoryPopup()">
-              ${((s.inventory?.onHand ?? 0) + (s.inventory?.researching ?? 0)).toLocaleString()}
+              ${((s.inventory?.onHand ?? 0) + (s.inventory?.inbound ?? 0) + (s.inventory?.reserved ?? 0) + (s.inventory?.researching ?? 0) + (s.inventory?.unfulfillable ?? 0)).toLocaleString()}
             </td>
             ${(() => {
               const velocity = calcVelocity(s.asin, brand.id);
