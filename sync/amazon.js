@@ -12,12 +12,18 @@ const path = require('path');
 
 const LISTINGS_CACHE_PATH = path.join(__dirname, '../data/listings-cache.json');
 const LISTINGS_CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
+const IMAGE_CACHE_PATH = path.join(__dirname, '../data/image-cache.json');
 
 const SP_API_HOST = 'sellingpartnerapi-na.amazon.com';
 
 const MARKETPLACE_CURRENCY = {
   'A2EUQ1WTGCTBG2': 'CAD', // Amazon.ca
   'ATVPDKIKX0DER':  'USD'  // Amazon.com
+};
+
+const MARKETPLACE_CODE = {
+  'A2EUQ1WTGCTBG2': 'CA',
+  'ATVPDKIKX0DER':  'US'
 };
 
 function getMarketplaceIds() {
@@ -167,11 +173,12 @@ function parseSalesTrafficReport(jsonStr) {
     const sales = item.salesByAsin || {};
     const traffic = item.trafficByAsin || {};
 
-    if (!byAsin[asin]) byAsin[asin] = { revenue: 0, units: 0, sessions: 0, buyBoxPcts: [], cvrs: [] };
+    if (!byAsin[asin]) byAsin[asin] = { revenue: 0, units: 0, sessions: 0, pageViews: 0, buyBoxPcts: [], cvrs: [] };
 
     byAsin[asin].revenue += sales.orderedProductSales?.amount || 0;
     byAsin[asin].units += sales.unitsOrdered || 0;
     byAsin[asin].sessions += traffic.sessions || 0;
+    byAsin[asin].pageViews += traffic.pageViews || 0;
 
     // API returns these as percentages (0–100), not decimals
     if (traffic.buyBoxPercentage != null) byAsin[asin].buyBoxPcts.push(traffic.buyBoxPercentage);
@@ -184,6 +191,7 @@ function parseSalesTrafficReport(jsonStr) {
       revenue: Math.round(d.revenue * 100) / 100,
       units: d.units,
       sessions: d.sessions,
+      pageViews: d.pageViews,
       buyBox: d.buyBoxPcts.length ? avg(d.buyBoxPcts, 1) : null,
       cvr: d.cvrs.length ? avg(d.cvrs, 2) : null
     };
@@ -203,15 +211,62 @@ function parseListingsReport(tsvStr) {
     const cols = line.split('\t');
     const asin = cols[col('asin1')]?.trim();
     if (!asin) continue;
+    const productId   = cols[col('product-id')]?.trim() || '';
+    const productType = cols[col('product-id-type')]?.trim() || '';
+    // product-id-type: 1=ASIN, 2=ISBN, 3=UPC, 4=EAN
+    const upc = (productType === '3' || productType === '4') ? productId : '';
     result[asin] = {
       title: cols[col('item-name')]?.trim() || '',
-      status: (cols[col('status')]?.trim() || 'unknown').toLowerCase()
+      status: (cols[col('status')]?.trim() || 'unknown').toLowerCase(),
+      sellerSku: cols[col('seller-sku')]?.trim() || '',
+      imageUrl: cols[col('image-url')]?.trim() || '',
+      upc
     };
   }
   return result;
 }
 
 // ─── Catalog Items API ───────────────────────────────────────────────────────
+
+// Fetch main product image URLs for a list of ASINs using individual lookups.
+// Individual endpoint returns any catalog ASIN (not restricted to seller's active listings like the batch endpoint).
+async function getAsinImages(asins, marketplaceIds, token) {
+  const result = {};
+  const mpIds = Array.isArray(marketplaceIds) ? marketplaceIds : [marketplaceIds];
+  const mpParam = mpIds.join(',');
+  let found = 0, missing = 0;
+
+  console.log(`[Images] Fetching images for ${asins.length} ASINs (individual lookups)...`);
+
+  for (const asin of asins) {
+    if (result[asin]) continue;
+    const path = `/catalog/2022-04-01/items/${encodeURIComponent(asin)}?marketplaceIds=${mpParam}&includedData=images`;
+    try {
+      const res = await spRequest('GET', path, token);
+      if (res.status === 200 && res.body.images) {
+        const allImgs = (res.body.images || []).flatMap(mp => mp.images || []);
+        const main = allImgs.find(img => img.variant === 'MAIN') || allImgs[0];
+        if (main?.link) { result[asin] = main.link; found++; }
+        else missing++;
+      } else if (res.status === 429) {
+        console.warn(`[Images] Rate limited — waiting 5s`);
+        await sleep(5000);
+        const retry = await spRequest('GET', path, token);
+        if (retry.status === 200 && retry.body.images) {
+          const allImgs = (retry.body.images || []).flatMap(mp => mp.images || []);
+          const main = allImgs.find(img => img.variant === 'MAIN') || allImgs[0];
+          if (main?.link) { result[asin] = main.link; found++; }
+        }
+      }
+    } catch (err) {
+      console.warn(`[Images] ${asin} error: ${err.message}`);
+    }
+    await sleep(600); // 600ms between calls — stays within 2 req/s catalog limit
+  }
+
+  console.log(`[Images] Done: ${found} found, ${missing + (asins.length - found - missing)} not in catalog`);
+  return result;
+}
 
 // Fetch brand names for a list of ASINs using Catalog Items API
 // Pass 1: batch queries (faster) — Pass 2: individual lookups for anything still missing
@@ -330,43 +385,104 @@ async function importBrandsFromAmazon() {
 
 // ─── Inventory API ───────────────────────────────────────────────────────────
 
-async function getInventory(marketplaceId, token) {
+function parseInventoryItems(items, inventory) {
+  for (const item of (items || [])) {
+    if (!item.asin) continue;
+    const d = item.inventoryDetails || {};
+    const existing = inventory[item.asin] || { onHand: 0, inbound: 0, reserved: 0, researching: 0, unfulfillable: 0 };
+    inventory[item.asin] = {
+      onHand:        existing.onHand        + (d.fulfillableQuantity || 0),
+      inbound:       existing.inbound       + (d.inboundWorkingQuantity || 0) + (d.inboundShippedQuantity || 0) + (d.inboundReceivingQuantity || 0),
+      reserved:      existing.reserved      + (d.reservedQuantity?.totalReservedQuantity || 0),
+      researching:   existing.researching   + (d.researchingQuantity?.totalResearchingQuantity || 0),
+      unfulfillable: existing.unfulfillable + (d.unfulfillableQuantity?.totalUnfulfillableQuantity || 0)
+    };
+  }
+}
+
+// Fetch FBA inventory for a specific list of seller SKUs (up to 50 per call).
+// Much faster than full pagination — use when seller SKUs are known.
+async function getInventoryBySkus(marketplaceId, sellerSkus, token) {
   const inventory = {};
-  let nextToken = null;
+  const batchSize = 50;
+  const base = `/fba/inventory/v1/summaries?details=true&granularityType=Marketplace&granularityId=${marketplaceId}&marketplaceIds=${marketplaceId}`;
 
-  do {
-    let path = `/fba/inventory/v1/summaries?details=true&granularityType=Marketplace&granularityId=${marketplaceId}&marketplaceIds=${marketplaceId}`;
-    if (nextToken) path += `&nextToken=${encodeURIComponent(nextToken)}`;
+  for (let i = 0; i < sellerSkus.length; i += batchSize) {
+    if (i > 0) await sleep(600);
+    const batch = sellerSkus.slice(i, i + batchSize);
+    const skuParam = `sellerSkus=${encodeURIComponent(batch.join(','))}`;
+    const path = `${base}&${skuParam}`;
 
-    const res = await spRequest('GET', path, token);
-    if (res.status !== 200) break;
-
-    const { inventorySummaries } = res.body.payload || {};
-    const pagination = res.body.pagination; // pagination is at root, not inside payload
-    for (const item of (inventorySummaries || [])) {
-      if (!item.asin) continue;
-      const d = item.inventoryDetails || {};
-      const existing = inventory[item.asin] || { onHand: 0, inbound: 0, reserved: 0, researching: 0, unfulfillable: 0 };
-      inventory[item.asin] = {
-        onHand:        existing.onHand        + (d.fulfillableQuantity || 0),
-        inbound:       existing.inbound       + (d.inboundWorkingQuantity || 0) + (d.inboundShippedQuantity || 0) + (d.inboundReceivingQuantity || 0),
-        reserved:      existing.reserved      + (d.reservedQuantity?.totalReservedQuantity || 0),
-        researching:   existing.researching   + (d.researchingQuantity?.totalResearchingQuantity || 0),
-        unfulfillable: existing.unfulfillable + (d.unfulfillableQuantity?.totalUnfulfillableQuantity || 0)
-      };
+    let res = await spRequest('GET', path, token);
+    if (res.status === 429) {
+      console.warn(`[Inventory] Rate limited — waiting 10s and retrying`);
+      await sleep(10000);
+      res = await spRequest('GET', path, token);
     }
+    if (res.status !== 200) {
+      console.warn(`[Inventory] HTTP ${res.status} for SKU batch ${Math.floor(i/batchSize)+1}`);
+      continue;
+    }
+    parseInventoryItems(res.body.payload?.inventorySummaries, inventory);
 
-    nextToken = pagination?.nextToken || null;
-  } while (nextToken);
+    // Handle pagination within a SKU batch (rare but possible)
+    let nextToken = res.body.pagination?.nextToken || null;
+    while (nextToken) {
+      await sleep(600);
+      const pageRes = await spRequest('GET', `${base}&nextToken=${encodeURIComponent(nextToken)}`, token);
+      if (pageRes.status !== 200) break;
+      parseInventoryItems(pageRes.body.payload?.inventorySummaries, inventory);
+      nextToken = pageRes.body.pagination?.nextToken || null;
+    }
+  }
 
+  console.log(`[Inventory] ${marketplaceId}: ${Object.keys(inventory).length} ASINs via SKU lookup (${Math.ceil(sellerSkus.length/batchSize)} calls)`);
   return inventory;
 }
 
 // ─── Finances API ────────────────────────────────────────────────────────────
 
+// Fee type → display group mapping
+const FEE_GROUPS = {
+  FBAPerUnitFulfillmentFee:          'FBA Fulfillment',
+  FBAPerOrderFulfillmentFee:         'FBA Fulfillment',
+  FBAWeightBasedFee:                 'FBA Fulfillment',
+  Commission:                        'Referral Fee',
+  FixedClosingFee:                   'Closing Fee',
+  VariableClosingFee:                'Closing Fee',
+  // Service fee types
+  FBAStorageExpirationBillingFee:    'Storage',
+  FBALongTermStorageFee:             'Storage',
+  StorageRenewalBillingFee:          'Storage',
+  FBAInboundTransportationFee:       'Inbound',
+  FBAInboundTransportationProgramFee:'Inbound',
+  FBAInboundConvenienceFee:          'Inbound',
+  FBARemovalFee:                     'Removal',
+  FBADisposalFee:                    'Removal',
+  Vine:                              'Vine',
+  CouponRedemptionFee:               'Coupons',
+};
+
+function feeGroup(type) {
+  if (!type) return 'Other';
+  for (const [key, group] of Object.entries(FEE_GROUPS)) {
+    if (type.includes(key) || key.includes(type)) return group;
+  }
+  if (type.toLowerCase().includes('storage')) return 'Storage';
+  if (type.toLowerCase().includes('inbound')) return 'Inbound';
+  if (type.toLowerCase().includes('removal') || type.toLowerCase().includes('disposal')) return 'Removal';
+  return 'Other';
+}
+
 async function getFinancialSummary(startDate, endDate, token) {
-  const zero = () => ({ amazonFees: 0, refundAmount: 0, refundFees: 0, adSpend: 0 });
-  const result = { CAD: zero(), USD: zero() };
+  const zero = () => ({ amazonFees: 0, serviceFees: 0, refundAmount: 0, refundFees: 0, adSpend: 0 });
+  const result = { CAD: zero(), USD: zero(), refundCount: 0 };
+  // feeBreakdown tracks totals per display group per currency
+  const breakdown = { CAD: {}, USD: {} };
+  const addBreakdown = (cur, group, amount) => {
+    if (!breakdown[cur]) return;
+    breakdown[cur][group] = (breakdown[cur][group] || 0) + amount;
+  };
   let nextToken = null;
   let page = 0;
 
@@ -383,14 +499,15 @@ async function getFinancialSummary(startDate, endDate, token) {
 
     const events = res.body.payload?.FinancialEvents || {};
 
-    // FBA fulfillment fees + referral fees
-    // Note: SP-API uses CurrencyAmount (not Amount), values are negative for charges
+    // FBA fulfillment fees + referral fees (per-order)
     for (const shipment of (events.ShipmentEventList || [])) {
       for (const item of (shipment.ShipmentItemList || [])) {
         for (const fee of (item.ItemFeeList || [])) {
           const amount = Math.abs(fee.FeeAmount?.CurrencyAmount || 0);
           const cur = fee.FeeAmount?.CurrencyCode;
-          if (cur && result[cur]) result[cur].amazonFees += amount;
+          if (!cur || !result[cur] || amount === 0) continue;
+          result[cur].amazonFees += amount;
+          addBreakdown(cur, feeGroup(fee.FeeType), amount);
         }
       }
     }
@@ -398,6 +515,7 @@ async function getFinancialSummary(startDate, endDate, token) {
     // Refunds — returned principal + refund processing fees
     for (const refund of (events.RefundEventList || [])) {
       for (const item of (refund.ShipmentItemAdjustmentList || [])) {
+        result.refundCount++;
         for (const charge of (item.ItemChargeAdjustmentList || [])) {
           if (charge.ChargeType === 'Principal') {
             const amount = Math.abs(charge.ChargeAmount?.CurrencyAmount || 0);
@@ -406,10 +524,23 @@ async function getFinancialSummary(startDate, endDate, token) {
           }
         }
         for (const fee of (item.ItemFeeAdjustmentList || [])) {
-          const amount = Math.abs(fee.FeeAmount?.CurrencyAmount || 0);
-          const cur = fee.FeeAmount?.CurrencyCode;
-          if (cur && result[cur]) result[cur].refundFees += amount;
+          const raw = fee.FeeAmount?.CurrencyAmount || 0;
+          if (raw < 0) {
+            const cur = fee.FeeAmount?.CurrencyCode;
+            if (cur && result[cur]) result[cur].refundFees += Math.abs(raw);
+          }
         }
+      }
+    }
+
+    // Service fees — storage, inbound, Vine, coupons, etc.
+    for (const svc of (events.ServiceFeeEventList || [])) {
+      for (const fee of (svc.FeeList || [])) {
+        const amount = fee.FeeAmount?.CurrencyAmount || 0;
+        const cur = fee.FeeAmount?.CurrencyCode;
+        if (!cur || !result[cur] || amount >= 0) continue;
+        result[cur].serviceFees += Math.abs(amount);
+        addBreakdown(cur, feeGroup(fee.FeeType), Math.abs(amount));
       }
     }
 
@@ -422,16 +553,24 @@ async function getFinancialSummary(startDate, endDate, token) {
       }
     }
 
-    nextToken = res.body.nextToken || null;
+    nextToken = res.body.payload?.NextToken || res.body.nextToken || null;
     if (nextToken) await sleep(2100); // stay under 0.5 req/s rate limit
     page++;
-  } while (nextToken && page < 20);
+  } while (nextToken && page < 100);
 
   for (const cur of Object.keys(result)) {
     for (const k of Object.keys(result[cur])) {
       result[cur][k] = Math.round(result[cur][k] * 100) / 100;
     }
   }
+  // Round breakdown values
+  for (const cur of Object.keys(breakdown)) {
+    for (const k of Object.keys(breakdown[cur])) {
+      breakdown[cur][k] = Math.round(breakdown[cur][k] * 100) / 100;
+    }
+  }
+  result.CAD.breakdown = breakdown.CAD;
+  result.USD.breakdown = breakdown.USD;
   return result;
 }
 
@@ -481,19 +620,20 @@ function getPresetRanges() {
 
 // ─── Main Sync ───────────────────────────────────────────────────────────────
 
-function buildPresetMetrics(brands, stDatasets, marketplaceIds, listingsData, inventory) {
+function buildPresetMetrics(brands, stDatasets, marketplaceIds, listingsData, inventory, imageUrls = {}) {
   // Merge S&T data — split revenue by currency
   const stData = {};
   for (let i = 0; i < stDatasets.length; i++) {
     const currency = MARKETPLACE_CURRENCY[marketplaceIds[i]] || 'USD';
     for (const [asin, d] of Object.entries(stDatasets[i])) {
       if (!stData[asin]) {
-        stData[asin] = { revenueCad: 0, revenueUsd: 0, units: 0, sessions: 0, buyBoxSamples: [], cvrSamples: [] };
+        stData[asin] = { revenueCad: 0, revenueUsd: 0, units: 0, sessions: 0, pageViews: 0, buyBoxSamples: [], cvrSamples: [] };
       }
       if (currency === 'CAD') stData[asin].revenueCad += d.revenue;
       else stData[asin].revenueUsd += d.revenue;
       stData[asin].units += d.units;
       stData[asin].sessions += d.sessions;
+      stData[asin].pageViews += (d.pageViews || 0);
       if (d.buyBox != null) stData[asin].buyBoxSamples.push(d.buyBox);
       if (d.cvr != null) stData[asin].cvrSamples.push(d.cvr);
     }
@@ -509,17 +649,25 @@ function buildPresetMetrics(brands, stDatasets, marketplaceIds, listingsData, in
     const skus = brand.asins.map(asin => {
       const st = stData[asin] || {};
       const listing = listingsData[asin] || {};
+      const inv = inventory[asin] || {};
+      const effectiveStatus = (st.units > 0 || (inv.onHand > 0))
+        ? 'active'
+        : (listing.status || 'unknown');
       return {
         asin,
+        sellerSku: listing.sellerSku || '',
+        marketplace: listing.marketplace || brand.marketplace || 'CA',
         title: listing.title || brand.asinTitles?.[asin] || '',
-        status: listing.status || 'unknown',
+        status: effectiveStatus,
         revenueCad: Math.round((st.revenueCad || 0) * 100) / 100,
         revenueUsd: Math.round((st.revenueUsd || 0) * 100) / 100,
         units: st.units || 0,
         sessions: st.sessions || 0,
+        pageViews: st.pageViews || 0,
         buyBox: st.buyBox ?? null,
         cvr: st.cvr ?? null,
-        inventory: inventory[asin] || { onHand: 0, inbound: 0, reserved: 0, researching: 0, unfulfillable: 0 }
+        inventory: inv.onHand !== undefined ? inv : { onHand: 0, inbound: 0, reserved: 0, researching: 0, unfulfillable: 0 },
+        imageUrl: imageUrls[asin] || null
       };
     });
 
@@ -528,6 +676,7 @@ function buildPresetMetrics(brands, stDatasets, marketplaceIds, listingsData, in
     const totalUnits = skus.reduce((s, x) => s + x.units, 0);
     const totalSessions = skus.reduce((s, x) => s + x.sessions, 0);
     const bbValues = skus.filter(s => s.buyBox != null).map(s => s.buyBox);
+    const cvrValues = skus.filter(s => s.cvr != null).map(s => s.cvr);
     const suppressedListings = skus.filter(s => ['suppressed', 'inactive'].includes(s.status)).length;
     const lostBuyBox = skus.filter(s => s.buyBox != null && s.buyBox < 80).length;
 
@@ -538,6 +687,7 @@ function buildPresetMetrics(brands, stDatasets, marketplaceIds, listingsData, in
         units: totalUnits,
         sessions: totalSessions,
         buyBox: bbValues.length ? avg(bbValues, 1) : null,
+        avgCvr: cvrValues.length ? avg(cvrValues, 2) : null,
         alerts: { suppressedListings, lostBuyBox }
       },
       skus
@@ -554,14 +704,22 @@ async function syncBrandMetrics(brands) {
   const presets = getPresetRanges();
   const presetKeys = Object.keys(presets);
 
+  // ── Persistent image cache (merge-only, never overwritten) ──────────────────
+  let persistedImages = {};
+  try {
+    persistedImages = JSON.parse(fs.readFileSync(IMAGE_CACHE_PATH, 'utf8'));
+    console.log(`[Sync] Loaded ${Object.keys(persistedImages).length} images from persistent cache`);
+  } catch {}
+
   // ── Listings + Inventory (cached 4h to avoid quota errors) ─────────────────
-  let listingsData, inventory;
+  let listingsData, inventory, imageUrls;
   try {
     const cache = JSON.parse(fs.readFileSync(LISTINGS_CACHE_PATH, 'utf8'));
     if (cache.fetched && (Date.now() - new Date(cache.fetched)) < LISTINGS_CACHE_TTL_MS) {
       console.log('[Sync] Using cached listings data (< 4h old)');
       listingsData = cache.listingsData;
       inventory = cache.inventory;
+      imageUrls = { ...(cache.imageUrls || {}), ...persistedImages };
     }
   } catch {}
 
@@ -571,18 +729,78 @@ async function syncBrandMetrics(brands) {
       marketplaceIds.map(mpId => createReport('GET_MERCHANT_LISTINGS_ALL_DATA', [mpId], null, null, token))
     );
     const listingsDocIds = await Promise.all(listingsReportIds.map(id => waitForReport(id, token)));
-    const listingsDatasets = await Promise.all(listingsDocIds.map(docId => downloadReport(docId, token).then(parseListingsReport)));
+    const listingsDatasets = await Promise.all(
+      listingsDocIds.map((docId, i) =>
+        downloadReport(docId, token).then(raw => ({
+          marketplace: MARKETPLACE_CODE[marketplaceIds[i]] || 'CA',
+          data: parseListingsReport(raw)
+        }))
+      )
+    );
 
     listingsData = {};
-    for (const dataset of listingsDatasets) {
-      for (const [asin, d] of Object.entries(dataset)) {
-        if (!listingsData[asin] || d.status === 'active') listingsData[asin] = d;
+    for (const { marketplace, data } of listingsDatasets) {
+      for (const [asin, d] of Object.entries(data)) {
+        if (!listingsData[asin] || d.status === 'active') listingsData[asin] = { ...d, marketplace };
       }
     }
 
-    inventory = await getInventory(marketplaceIds[0], token);
-    fs.writeFileSync(LISTINGS_CACHE_PATH, JSON.stringify({ fetched: new Date().toISOString(), listingsData, inventory }));
+    // Build seller SKU lists per marketplace from the listings report
+    const skusByMarketplace = {};
+    for (const mpId of marketplaceIds) {
+      const mpCode = MARKETPLACE_CODE[mpId] || 'CA';
+      skusByMarketplace[mpId] = Object.values(listingsData)
+        .filter(d => d.marketplace === mpCode && d.sellerSku)
+        .map(d => d.sellerSku);
+    }
+
+    const inventoryResults = await Promise.all(
+      marketplaceIds.map(mpId => getInventoryBySkus(mpId, skusByMarketplace[mpId], token))
+    );
+    inventory = {};
+    for (const inv of inventoryResults) {
+      for (const [asin, data] of Object.entries(inv)) {
+        if (!inventory[asin]) inventory[asin] = { onHand: 0, inbound: 0, reserved: 0, researching: 0, unfulfillable: 0 };
+        inventory[asin].onHand        += data.onHand;
+        inventory[asin].inbound       += data.inbound;
+        inventory[asin].reserved      += data.reserved;
+        inventory[asin].researching   += data.researching;
+        inventory[asin].unfulfillable += data.unfulfillable;
+      }
+    }
+
+    // Apply UPCs from listings report — most complete source, never overwrites existing
+    let listingsUpcCount = 0;
+    for (const brand of brands) {
+      brand.upcs = brand.upcs || {};
+      for (const asin of brand.asins) {
+        if (!(asin in brand.upcs) && listingsData[asin]?.upc) {
+          brand.upcs[asin] = listingsData[asin].upc;
+          listingsUpcCount++;
+        }
+      }
+    }
+    if (listingsUpcCount > 0) console.log(`[Sync] Applied ${listingsUpcCount} UPCs from listings report`);
+
+    // Base image URLs from listings report (image-url column — covers all active ASINs)
+    imageUrls = {};
+    for (const [asin, d] of Object.entries(listingsData)) {
+      if (d.imageUrl) imageUrls[asin] = d.imageUrl;
+    }
+    console.log(`[Sync] Got ${Object.keys(imageUrls).length} images from listings report`);
+
+    // Overlay Catalog API images for mapped brand ASINs (higher quality, fills gaps)
+    const allAsins = [...new Set(brands.flatMap(b => b.asins))];
+    const catalogImages = await getAsinImages(allAsins, marketplaceIds, token);
+    Object.assign(imageUrls, catalogImages);
+    // Merge persistent image cache on top — never lose manually backfilled images
+    Object.assign(imageUrls, persistedImages);
+    console.log(`[Sync] Total images after Catalog API overlay + persistent cache: ${Object.keys(imageUrls).length}`);
+
+    fs.writeFileSync(LISTINGS_CACHE_PATH, JSON.stringify({ fetched: new Date().toISOString(), listingsData, inventory, imageUrls }));
   }
+
+  imageUrls = imageUrls || {};
 
   // ── Financial events per preset (sequential — 0.5 req/s rate limit) ─────────
   console.log('[Sync] Fetching financial events for each preset...');
@@ -644,25 +862,191 @@ async function syncBrandMetrics(brands) {
     else console.warn(`[Sync] Download skipped: ${r.reason?.message}`);
   }
 
-  // ── Add unassigned S&T ASINs to Unknown Brand ───────────────────────────────
+  // ── Auto-map + clean up unassigned ASINs ────────────────────────────────────
   const allStAsins = new Set(Object.values(stParsedMap).flatMap(d => Object.keys(d)));
-  const allBrandAsins = new Set(brands.flatMap(b => b.asins));
+  const allBrandAsins = new Set(brands.filter(b => b.id !== 'unknown-brand').flatMap(b => b.asins));
   const unassigned = [...allStAsins].filter(a => !allBrandAsins.has(a));
 
-  if (unassigned.length > 0) {
-    let unknownBrand = brands.find(b => b.id === 'unknown-brand');
+  // Real brands sorted longest-name-first to avoid "Acure" matching before "Acure Organics"
+  const realBrands = brands
+    .filter(b => b.id !== 'unknown-brand')
+    .sort((a, b) => b.name.length - a.name.length);
+
+  const CORP_SUFFIXES = /\s+(co\.?|inc\.?|ltd\.?|corp\.?|llc\.?|co\b)$/i;
+  const APOS_RE = /[\u0027\u2018\u2019\u0060]/g; // ', ', ', `
+  function normalizeForMatch(s) {
+    return s.toLowerCase().trim().replace(APOS_RE, '');
+  }
+
+  function tryAutoMap(asin, title) {
+    if (!title) return false;
+    const t = normalizeForMatch(title);
+    for (const brand of realBrands) {
+      const bn = normalizeForMatch(brand.name);
+      const bnShort = bn.replace(CORP_SUFFIXES, '').trim();
+      for (const name of [...new Set([bn, bnShort])]) {
+        if (!name) continue;
+        // Primary: title starts with brand name
+        if (t.startsWith(name + ' ') || t.startsWith(name + ',') || t.startsWith(name + '-') || t.startsWith(name + '|') || t === name) {
+          if (!brand.asins.includes(asin)) {
+            brand.asins.push(asin);
+            brand.asinTitles = brand.asinTitles || {};
+            brand.asinTitles[asin] = title;
+          }
+          return brand.name;
+        }
+        // Secondary: brand name appears as a whole word in the first 60 chars of title
+        // (catches "Health Life Zellies..." → Zellies)
+        const head = t.slice(0, 60);
+        const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        if (new RegExp('\\b' + escaped + '\\b').test(head)) {
+          if (!brand.asins.includes(asin)) {
+            brand.asins.push(asin);
+            brand.asinTitles = brand.asinTitles || {};
+            brand.asinTitles[asin] = title;
+          }
+          return brand.name;
+        }
+      }
+    }
+    return false;
+  }
+
+  // 1. Re-check existing unknown-brand ASINs — some may now be mappable
+  let unknownBrand = brands.find(b => b.id === 'unknown-brand');
+  if (unknownBrand?.asins?.length > 0) {
+    const remapped = [], remaining = [];
+    for (const asin of unknownBrand.asins) {
+      const title = listingsData[asin]?.title || unknownBrand.asinTitles?.[asin] || '';
+      const matched = tryAutoMap(asin, title);
+      if (matched) remapped.push({ asin, brand: matched });
+      else remaining.push(asin);
+    }
+    if (remapped.length > 0) {
+      unknownBrand.asins = remaining;
+      console.log(`[Sync] Auto-mapped ${remapped.length} existing unknown-brand ASINs by title`);
+    }
+  }
+
+  // 2. Process newly unassigned ASINs (not in ANY brand yet)
+  const newUnassigned = unassigned.filter(a => !brands.flatMap(b => b.asins).includes(a));
+  const autoMapped = [], stillUnknown = [];
+
+  for (const asin of newUnassigned) {
+    const title = listingsData[asin]?.title || '';
+    const matched = tryAutoMap(asin, title);
+    if (matched) autoMapped.push({ asin, brand: matched });
+    else stillUnknown.push(asin);
+  }
+  if (autoMapped.length > 0)
+    console.log(`[Sync] Auto-mapped ${autoMapped.length} new ASINs by brand name in title`);
+
+  // 3. Fetch missing titles from Catalog API for anything still titleless
+  const needTitles = [...newUnassigned, ...(unknownBrand?.asins || [])]
+    .filter(a => !listingsData[a]?.title);
+  if (needTitles.length > 0) {
+    console.log(`[Sync] Fetching titles for ${needTitles.length} ASINs missing titles...`);
+    const catalogData = await getBrandsByAsin(needTitles, marketplaceIds, token);
+    for (const [asin, data] of Object.entries(catalogData)) {
+      if (!data.title) continue;
+      if (!listingsData[asin]) listingsData[asin] = { title: '', status: 'unknown', sellerSku: '', imageUrl: '', upc: '' };
+      listingsData[asin].title = data.title;
+      // Update any brand that already has this ASIN
+      for (const brand of brands) {
+        if (brand.asins.includes(asin)) {
+          brand.asinTitles = brand.asinTitles || {};
+          brand.asinTitles[asin] = data.title;
+        }
+      }
+      // Re-try auto-map now that we have a title
+      if (stillUnknown.includes(asin)) {
+        const matched = tryAutoMap(asin, data.title);
+        if (matched) {
+          stillUnknown.splice(stillUnknown.indexOf(asin), 1);
+          autoMapped.push({ asin, brand: matched });
+        }
+      }
+    }
+    console.log(`[Sync] Title fetch complete`);
+  }
+
+  // 3b. Backfill titles for brand ASINs missing titles from the listings report
+  const brandMissingTitles = brands
+    .filter(b => b.id !== 'unknown-brand')
+    .flatMap(b => b.asins.filter(a => !listingsData[a]?.title && !b.asinTitles?.[a]));
+  if (brandMissingTitles.length > 0) {
+    console.log(`[Sync] Backfilling titles for ${brandMissingTitles.length} brand ASINs via Catalog API...`);
+    const catalogData = await getBrandsByAsin([...new Set(brandMissingTitles)], marketplaceIds, token);
+    for (const [asin, data] of Object.entries(catalogData)) {
+      if (!data.title) continue;
+      if (!listingsData[asin]) listingsData[asin] = { title: '', status: 'unknown', sellerSku: '', imageUrl: '', upc: '' };
+      listingsData[asin].title = data.title;
+      for (const brand of brands) {
+        if (brand.asins.includes(asin)) {
+          brand.asinTitles = brand.asinTitles || {};
+          brand.asinTitles[asin] = data.title;
+        }
+      }
+    }
+    console.log(`[Sync] Brand title backfill complete`);
+  }
+
+  // 4. Fetch images for newly discovered ASINs (cap at 50 to keep sync time reasonable)
+  const needImages = newUnassigned.filter(a => !imageUrls[a]).slice(0, 50);
+  if (needImages.length > 0) {
+    console.log(`[Sync] Fetching images for ${needImages.length} newly discovered ASINs...`);
+    const newImages = await getAsinImages(needImages, marketplaceIds, token);
+    Object.assign(imageUrls, newImages);
+    console.log(`[Sync] Got ${Object.keys(newImages).length} new images`);
+  }
+
+  // 5. Backfill images for brand ASINs still missing them (cap at 50 per sync)
+  const missingImages = brands
+    .filter(b => b.id !== 'unknown-brand')
+    .flatMap(b => b.asins)
+    .filter(a => !imageUrls[a])
+    .slice(0, 50);
+  if (missingImages.length > 0) {
+    console.log(`[Sync] Backfilling images for ${missingImages.length} brand ASINs missing images...`);
+    const backfilled = await getAsinImages(missingImages, marketplaceIds, token);
+    Object.assign(imageUrls, backfilled);
+    console.log(`[Sync] Backfilled ${Object.keys(backfilled).length} images`);
+  }
+
+  // 6. Dump truly unassigned into Unknown Brand
+  if (stillUnknown.length > 0) {
     if (!unknownBrand) {
-      unknownBrand = { id: 'unknown-brand', name: 'Unknown Brand', marketplace: 'CA', color: '#94a3b8', asins: [], asinTitles: {} };
+      unknownBrand = { id: 'unknown-brand', name: 'Unknown Brand', marketplace: 'CA', color: '#f59e0b', asins: [], asinTitles: {} };
       brands.push(unknownBrand);
     }
-    for (const asin of unassigned) {
+    for (const asin of stillUnknown) {
       if (!unknownBrand.asins.includes(asin)) {
         unknownBrand.asins.push(asin);
         const title = listingsData[asin]?.title;
         if (title) { unknownBrand.asinTitles = unknownBrand.asinTitles || {}; unknownBrand.asinTitles[asin] = title; }
       }
     }
-    console.log(`[Sync] Added ${unassigned.length} unassigned ASINs to Unknown Brand`);
+    console.log(`[Sync] ${stillUnknown.length} ASINs remain in Unknown Brand`);
+  }
+
+  // 7. Persist images to dedicated image cache (merge-only — never loses previous entries)
+  try {
+    let existing = {};
+    try { existing = JSON.parse(fs.readFileSync(IMAGE_CACHE_PATH, 'utf8')); } catch {}
+    const merged = { ...existing, ...imageUrls };
+    fs.writeFileSync(IMAGE_CACHE_PATH, JSON.stringify(merged));
+    console.log(`[Sync] Image cache saved: ${Object.keys(merged).length} total images`);
+  } catch (e) {
+    console.warn('[Sync] Could not save image cache:', e.message);
+  }
+
+  // Update listings cache titles so next sync benefits (imageUrls intentionally excluded — see IMAGE_CACHE_PATH)
+  try {
+    const cache = JSON.parse(fs.readFileSync(LISTINGS_CACHE_PATH, 'utf8'));
+    cache.listingsData = listingsData;
+    fs.writeFileSync(LISTINGS_CACHE_PATH, JSON.stringify(cache));
+  } catch (e) {
+    console.warn('[Sync] Could not update listings cache:', e.message);
   }
 
   // ── Build per-preset brand metrics ──────────────────────────────────────────
@@ -677,7 +1061,7 @@ async function syncBrandMetrics(brands) {
         CAD: { amazonFees: 0, refundAmount: 0, refundFees: 0, adSpend: 0 },
         USD: { amazonFees: 0, refundAmount: 0, refundFees: 0, adSpend: 0 }
       },
-      brands: buildPresetMetrics(brands, stDatasets, marketplaceIds, listingsData, inventory)
+      brands: buildPresetMetrics(brands, stDatasets, marketplaceIds, listingsData, inventory, imageUrls)
     };
   }
 
@@ -685,4 +1069,78 @@ async function syncBrandMetrics(brands) {
   return { presets: result, updatedBrands: brands };
 }
 
-module.exports = { syncBrandMetrics, importBrandsFromAmazon };
+// ─── UPC Scraper ─────────────────────────────────────────────────────────────
+
+function extractUpcFromIdentifiers(identifiers) {
+  const allIds = [];
+  for (const mp of (identifiers || [])) {
+    for (const id of (mp.identifiers || [])) allIds.push(id);
+  }
+  const priority = ['UPC', 'EAN', 'GTIN'];
+  for (const type of priority) {
+    const match = allIds.find(id => id.identifierType === type);
+    if (match) {
+      let val = match.identifier;
+      if (type === 'GTIN' && val.length === 14 && val.startsWith('00')) val = val.slice(2);
+      return val;
+    }
+  }
+  return null;
+}
+
+async function fetchUpcsForAsins(asins) {
+  const token = await getAccessToken();
+  const marketplaceIds = getMarketplaceIds();
+  const batchSize = 20;
+  const result = {}; // asin → upc string
+
+  // Pass 1: batch queries per marketplace
+  for (const marketplaceId of marketplaceIds) {
+    const remaining = asins.filter(a => !result[a]);
+    if (remaining.length === 0) break;
+
+    for (let i = 0; i < remaining.length; i += batchSize) {
+      const batch = remaining.slice(i, i + batchSize);
+      const identifiers = batch.map(a => `identifiers=${encodeURIComponent(a)}`).join('&');
+      const path = `/catalog/2022-04-01/items?marketplaceIds=${marketplaceId}&${identifiers}&identifiersType=ASIN&includedData=identifiers`;
+
+      try {
+        const res = await spRequest('GET', path, token);
+        if (res.status !== 200) continue;
+        for (const item of (res.body.items || [])) {
+          if (!item.asin || result[item.asin]) continue;
+          const upc = extractUpcFromIdentifiers(item.identifiers);
+          if (upc) result[item.asin] = upc;
+        }
+      } catch (e) {
+        console.warn('[UPC] batch error:', e.message);
+      }
+
+      if (i + batchSize < remaining.length) await sleep(600);
+    }
+  }
+
+  // Pass 2: individual lookups for anything the batch missed
+  const stillMissing = asins.filter(a => !result[a]);
+  if (stillMissing.length > 0) {
+    console.log(`[UPC] Batch missed ${stillMissing.length} ASINs — trying individual lookups`);
+    const mpParam = marketplaceIds.join(',');
+    for (const asin of stillMissing) {
+      try {
+        const path = `/catalog/2022-04-01/items/${asin}?marketplaceIds=${mpParam}&includedData=identifiers`;
+        const res = await spRequest('GET', path, token);
+        if (res.status === 200) {
+          const upc = extractUpcFromIdentifiers(res.body.identifiers);
+          if (upc) { result[asin] = upc; console.log(`[UPC] ${asin} → ${upc} (individual)`); }
+        }
+      } catch (e) {
+        console.warn(`[UPC] individual lookup failed for ${asin}:`, e.message);
+      }
+      await sleep(300);
+    }
+  }
+
+  return result;
+}
+
+module.exports = { syncBrandMetrics, importBrandsFromAmazon, fetchUpcsForAsins };

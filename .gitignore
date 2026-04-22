@@ -2,5 +2,6 @@ node_modules/
 .env
 data/fx.json
 data/listings-cache.json
+data/image-cache.json
 data/live-metrics.json
 data/metrics.json

@@ -1,0 +1,877 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Products — RMC Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body class="min-h-screen">
+
+  <!-- Nav -->
+  <nav class="rmc-nav">
+    <div class="max-w-screen-xl mx-auto px-8 py-5 flex items-center justify-between">
+      <div class="flex items-center gap-6">
+        <a href="/" class="nav-logo">
+          <img src="/rmc-logo.png" alt="RMC" />
+        </a>
+        <div class="flex gap-1">
+          <a href="/" class="nav-link">Dashboard</a>
+          <a href="/brands.html" class="nav-link">Brands</a>
+          <a href="/products.html" class="nav-link active">Products</a>
+          <a href="/po.html" class="nav-link">PO Builder</a>
+        </div>
+      </div>
+      <div class="flex items-center gap-3">
+        <div class="cur-toggle">
+          <button id="toggleCAD" onclick="setCurrency('CAD')" class="cur-btn">CA$</button>
+          <button id="toggleUSD" onclick="setCurrency('USD')" class="cur-btn">US$</button>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <div class="max-w-screen-xl mx-auto px-6 py-6">
+
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-4">
+      <div>
+        <h1 class="text-lg font-semibold" style="color:var(--text)">Products</h1>
+        <p class="text-xs mt-0.5" style="color:var(--text-3)" id="pageSubtitle">All ASINs across all brands — performance metrics.</p>
+      </div>
+      <div class="flex gap-1" id="presetButtons">
+        <button onclick="setPreset('yesterday')"  id="preset-yesterday"  class="preset-btn">Yesterday</button>
+        <button onclick="setPreset('last30d')"    id="preset-last30d"    class="preset-btn">Last 30d</button>
+        <button onclick="setPreset('thisMonth')"  id="preset-thisMonth"  class="preset-btn">This Month</button>
+        <button onclick="setPreset('lastMonth')"  id="preset-lastMonth"  class="preset-btn">Last Month</button>
+      </div>
+    </div>
+
+    <!-- Tab switcher -->
+    <div class="flex gap-0 mb-4" style="border-bottom:1px solid var(--border)">
+      <button id="tab-performance" onclick="setTab('performance')"
+        class="px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px"
+        style="border-color:var(--brand);color:var(--brand)">Performance</button>
+      <button id="tab-data" onclick="setTab('data')"
+        class="px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px"
+        style="border-color:transparent;color:var(--text-3)">Product Data</button>
+    </div>
+
+    <!-- Search + filter bar (shared) -->
+    <div class="flex items-center gap-3 mb-5">
+      <div class="relative flex-1 max-w-sm">
+        <svg class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 pointer-events-none" style="color:var(--text-3)" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z"/>
+        </svg>
+        <input id="searchInput" type="text" placeholder="Search by ASIN, SKU, or title…"
+          class="rmc-input w-full pl-8"
+          oninput="onFilterChange()" />
+      </div>
+      <select id="brandFilter" class="rmc-select" style="width:auto;min-width:160px" onchange="onFilterChange()">
+        <option value="">All Brands</option>
+      </select>
+      <button id="clearFiltersBtn" onclick="clearFilters()" class="btn-ghost hidden" style="font-size:12px;padding:6px 12px;">Clear</button>
+    </div>
+
+    <!-- Performance tab -->
+    <div id="view-performance">
+      <div class="rmc-card overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="rmc-table">
+            <thead>
+              <tr>
+                <th class="sortable-th text-left cursor-pointer select-none hover:text-white" onclick="sortBy('product')" style="padding-left:20px;min-width:280px">Product <span class="sort-ind" data-col="product"></span></th>
+                <th class="sortable-th text-left cursor-pointer select-none hover:text-white" onclick="sortBy('status')">Status <span class="sort-ind" data-col="status"></span></th>
+                <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('revenue')">Revenue <span class="sort-ind" data-col="revenue"></span></th>
+                <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('units')">Units <span class="sort-ind" data-col="units"></span></th>
+                <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('buyBox')">Buy Box <span class="sort-ind" data-col="buyBox"></span></th>
+                <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('cvr')">CVR <span class="sort-ind" data-col="cvr"></span></th>
+                <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('adSpend')">Ad Spend <span class="sort-ind" data-col="adSpend"></span></th>
+                <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('acos')">ACOS <span class="sort-ind" data-col="acos"></span></th>
+                <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('inventory')">Inventory <span class="sort-ind" data-col="inventory"></span></th>
+                <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('velocity')">Velocity <span class="sort-ind" data-col="velocity"></span></th>
+                <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('daysLeft')">Days Left <span class="sort-ind" data-col="daysLeft"></span></th>
+                <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('leadTime')" style="min-width:90px">Lead Time <span class="sort-ind" data-col="leadTime"></span></th>
+              </tr>
+            </thead>
+            <tbody id="productTableBody">
+              <tr><td colspan="12" class="text-center py-8" style="color:var(--text-3)">Loading...</td></tr>
+            </tbody>
+          </table>
+          <div id="productPagination"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Product Data tab -->
+    <div id="view-data" class="hidden">
+      <div class="rmc-card overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="rmc-table">
+            <thead>
+              <tr>
+                <th class="text-left" style="padding-left:20px;min-width:280px">Product</th>
+                <th class="text-left" style="min-width:160px">Brand</th>
+                <th class="text-left" style="min-width:180px">Supplier Product Name</th>
+                <th class="text-left" style="min-width:120px">Stock #</th>
+                <th class="text-left" style="min-width:140px">UPC</th>
+                <th class="text-center" style="min-width:90px">Case Pack</th>
+                <th class="text-center" style="min-width:90px">Type</th>
+                <th class="text-right" style="min-width:100px">COGS</th>
+              </tr>
+            </thead>
+            <tbody id="dataTableBody">
+              <tr><td colspan="7" class="text-center py-8" style="color:var(--text-3)">Loading...</td></tr>
+            </tbody>
+          </table>
+          <div id="dataPagination"></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    let brandsData = [];
+    let presetMetrics = {};
+    let currency = localStorage.getItem('currency') || 'CAD';
+    let fxRate = { usdToCad: 1.38, cadToUsd: 0.724 };
+    let activePreset = localStorage.getItem('productsPreset') || 'last30d';
+    let activeTab = localStorage.getItem('productsTab') || 'performance';
+    let sortCol = 'revenue';
+    let sortDir = -1;
+    let currentPage = 1;
+    let pageSize = parseInt(localStorage.getItem('pageSize') || '20');
+    let dataPage = 1;
+    let searchQuery = '';
+    let brandFilterId = '';
+
+    // ── Tab switcher ─────────────────────────────────────────────────────────────
+    function setTab(tab) {
+      activeTab = tab;
+      localStorage.setItem('productsTab', tab);
+      document.getElementById('view-performance').classList.toggle('hidden', tab !== 'performance');
+      document.getElementById('view-data').classList.toggle('hidden', tab !== 'data');
+      document.getElementById('presetButtons').classList.toggle('hidden', tab !== 'performance');
+      document.getElementById('pageSubtitle').textContent = tab === 'performance'
+        ? 'All ASINs across all brands — performance metrics.'
+        : 'Manage product data for clean PO generation — brand, stock #, UPC, case pack, type, COGS.';
+
+      const perfBtn = document.getElementById('tab-performance');
+      const dataBtn = document.getElementById('tab-data');
+      perfBtn.style.borderColor = tab === 'performance' ? 'var(--brand)' : 'transparent';
+      perfBtn.style.color = tab === 'performance' ? 'var(--brand)' : 'var(--text-3)';
+      dataBtn.style.borderColor = tab === 'data' ? 'var(--brand)' : 'transparent';
+      dataBtn.style.color = tab === 'data' ? 'var(--brand)' : 'var(--text-3)';
+
+      if (tab === 'data') renderDataTable();
+      else render();
+    }
+
+    // ── Formatting ──────────────────────────────────────────────────────────────
+    function fmt(cad, usd = 0) {
+      if (currency === 'CAD') {
+        const t = (cad || 0) + (usd || 0) * fxRate.usdToCad;
+        return 'CA$' + t.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      }
+      const t = (usd || 0) + (cad || 0) * fxRate.cadToUsd;
+      return 'US$' + t.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function getNum(cad, usd = 0) {
+      if (currency === 'CAD') return (cad || 0) + (usd || 0) * fxRate.usdToCad;
+      return (usd || 0) + (cad || 0) * fxRate.cadToUsd;
+    }
+
+    // ── Velocity (same logic as brand.html) ─────────────────────────────────────
+    function calcVelocity(asin, brandId) {
+      for (const { key, days } of [{ key: 'last30d', days: 30 }, { key: 'thisMonth', days: null }, { key: 'lastMonth', days: null }]) {
+        const preset = presetMetrics.presets?.[key];
+        if (!preset) continue;
+        const sku = preset.brands?.[brandId]?.skus?.find(s => s.asin === asin);
+        if (!sku?.units) continue;
+        const d = days || (Math.round((new Date(preset.endDate) - new Date(preset.startDate)) / 86400000) + 1);
+        return sku.units / d;
+      }
+      return null;
+    }
+
+    // ── Build flat product list ──────────────────────────────────────────────────
+    function buildProductList() {
+      const preset = presetMetrics.presets?.[activePreset];
+      const rows = [];
+      for (const brand of brandsData) {
+        const bm = preset?.brands?.[brand.id];
+        const skuMap = Object.fromEntries((bm?.skus || []).map(s => [s.asin, s]));
+        for (const asin of brand.asins) {
+          const s = skuMap[asin];
+          const inv = s?.inventory ?? {};
+          const onHand = inv.onHand ?? 0;
+          const inbound = inv.inbound ?? 0;
+          const inventory = onHand + inbound + (inv.reserved ?? 0) + (inv.researching ?? 0) + (inv.unfulfillable ?? 0);
+          const velocity = calcVelocity(asin, brand.id);
+          const leadTime = brand.leadTimes?.[asin] ?? null;
+          const daysLeft = velocity > 0 ? Math.round((onHand + inbound) / velocity) : null;
+          const cfg = brand.asinConfig?.[asin] || {};
+          const invRaw = s?.inventory ?? {};
+          rows.push({
+            asin,
+            brandId: brand.id,
+            brandName: brand.name,
+            brandColor: brand.color,
+            marketplace: brand.marketplace,
+            title: s?.title || brand.asinTitles?.[asin] || asin,
+            sellerSku: s?.sellerSku || '',
+            imageUrl: s?.imageUrl || null,
+            status: s?.status || null,
+            revenue: s ? getNum(s.revenueCad, s.revenueUsd) : 0,
+            revenueCad: s?.revenueCad || 0,
+            revenueUsd: s?.revenueUsd || 0,
+            units: s?.units || 0,
+            buyBox: s?.buyBox ?? null,
+            cvr: s?.cvr ?? null,
+            spendCad: s?.spendCad || 0,
+            spendUsd: s?.spendUsd || 0,
+            acos: s?.acos ?? null,
+            inventory,
+            velocity,
+            daysLeft,
+            leadTime,
+            invRaw,
+            cogs: brand.cogs?.[asin] ?? null,
+            upc: brand.upcs?.[asin] ?? '',
+            casePack: brand.casePacks?.[asin] ?? null,
+            stockNumber: cfg.stockNumber || '',
+            supplierName: cfg.supplierName || '',
+            cfgType: cfg.type || 'single',
+            cfg
+          });
+        }
+      }
+      return rows;
+    }
+
+    // ── Search / filter ─────────────────────────────────────────────────────────
+    function onFilterChange() {
+      searchQuery = document.getElementById('searchInput').value.trim().toLowerCase();
+      brandFilterId = document.getElementById('brandFilter').value;
+      document.getElementById('clearFiltersBtn').classList.toggle('hidden', !searchQuery && !brandFilterId);
+      currentPage = 1; dataPage = 1;
+      if (activeTab === 'data') renderDataTable(); else render();
+    }
+
+    function clearFilters() {
+      searchQuery = '';
+      brandFilterId = '';
+      document.getElementById('searchInput').value = '';
+      document.getElementById('brandFilter').value = '';
+      document.getElementById('clearFiltersBtn').classList.add('hidden');
+      currentPage = 1; dataPage = 1;
+      if (activeTab === 'data') renderDataTable(); else render();
+    }
+
+    function populateBrandFilter() {
+      const sel = document.getElementById('brandFilter');
+      const current = sel.value;
+      // remove all non-placeholder options
+      while (sel.options.length > 1) sel.remove(1);
+      for (const brand of brandsData) {
+        const opt = document.createElement('option');
+        opt.value = brand.id;
+        opt.textContent = brand.name;
+        sel.appendChild(opt);
+      }
+      sel.value = current;
+    }
+
+    // ── Sort ────────────────────────────────────────────────────────────────────
+    function sortBy(col) {
+      if (sortCol === col) sortDir *= -1;
+      else { sortCol = col; sortDir = -1; }
+      currentPage = 1;
+      render();
+    }
+
+    function updateSortIndicators() {
+      document.querySelectorAll('.sort-ind').forEach(el => {
+        el.textContent = el.dataset.col === sortCol ? (sortDir === -1 ? '↓' : '↑') : '';
+      });
+      document.querySelectorAll('.sortable-th').forEach(th => {
+        const col = th.querySelector('.sort-ind')?.dataset.col;
+        th.classList.toggle('text-white', col === sortCol);
+        th.classList.toggle('text-slate-400', col !== sortCol);
+      });
+    }
+
+    // ── Pagination ──────────────────────────────────────────────────────────────
+    function setPage(p) { currentPage = p; render(); }
+    function setPageSize(n) {
+      pageSize = n;
+      localStorage.setItem('pageSize', n);
+      currentPage = 1;
+      render();
+    }
+
+    function renderPagination(totalPages) {
+      const el = document.getElementById('productPagination');
+      if (!el) return;
+      const range = new Set([1, totalPages, currentPage - 1, currentPage, currentPage + 1].filter(p => p >= 1 && p <= totalPages));
+      const pages = [...range].sort((a, b) => a - b);
+      let pageBtns = '', prev = null;
+      for (const p of pages) {
+        if (prev !== null && p > prev + 1) pageBtns += `<span class="text-xs px-0.5" style="color:var(--text-3)">…</span>`;
+        const active = p === currentPage;
+        pageBtns += `<button onclick="setPage(${p})" class="text-xs px-2.5 py-1 rounded transition-colors" style="${active ? 'background:var(--brand);color:#060d05;font-weight:600' : 'color:var(--text-2)'}">${p}</button>`;
+        prev = p;
+      }
+      const prevDis = currentPage <= 1, nextDis = currentPage >= totalPages;
+      const ns = dis => dis ? 'color:var(--text-3);cursor:not-allowed' : 'color:var(--text-2)';
+      const sizeBtns = [10, 20, 50, 100].map(n =>
+        `<button onclick="setPageSize(${n})" class="text-xs px-2 py-1 rounded transition-colors" style="${n === pageSize ? 'background:var(--brand-tint);color:var(--brand);font-weight:600' : 'color:var(--text-3)'}">${n}</button>`
+      ).join('');
+      el.innerHTML = `
+        <div class="flex items-center justify-between px-5 py-3" style="border-top:1px solid var(--border)">
+          <div class="flex items-center gap-1">
+            ${totalPages > 1 ? `<button onclick="setPage(${currentPage - 1})" ${prevDis ? 'disabled' : ''} class="text-xs px-2.5 py-1 rounded transition-colors" style="${ns(prevDis)}">← Prev</button>` : ''}
+            ${pageBtns}
+            ${totalPages > 1 ? `<button onclick="setPage(${currentPage + 1})" ${nextDis ? 'disabled' : ''} class="text-xs px-2.5 py-1 rounded transition-colors" style="${ns(nextDis)}">Next →</button>` : ''}
+          </div>
+          <div class="flex items-center gap-1">
+            <span class="text-xs mr-1" style="color:var(--text-3)">Rows:</span>
+            ${sizeBtns}
+          </div>
+        </div>`;
+    }
+
+    // ── Render ──────────────────────────────────────────────────────────────────
+    function render() {
+      const tbody = document.getElementById('productTableBody');
+      const rows = buildProductList();
+
+      if (!rows.length) {
+        tbody.innerHTML = `<tr><td colspan="12" class="text-center py-10" style="color:var(--text-3)">No products — run a sync first</td></tr>`;
+        document.getElementById('productPagination').innerHTML = '';
+        updateSortIndicators();
+        return;
+      }
+
+      // Apply search + brand filter
+      const filtered = rows.filter(r => {
+        if (brandFilterId && r.brandId !== brandFilterId) return false;
+        if (searchQuery) {
+          const q = searchQuery;
+          if (!r.asin.toLowerCase().includes(q) &&
+              !r.sellerSku.toLowerCase().includes(q) &&
+              !r.title.toLowerCase().includes(q)) return false;
+        }
+        return true;
+      });
+
+      if (!filtered.length) {
+        tbody.innerHTML = `<tr><td colspan="12" class="text-center py-10" style="color:var(--text-3)">No products match your search</td></tr>`;
+        document.getElementById('productPagination').innerHTML = '';
+        updateSortIndicators();
+        return;
+      }
+
+      const getVal = r => {
+        switch (sortCol) {
+          case 'product':   return r.title.toLowerCase();
+          case 'status':    return r.status || '';
+          case 'revenue':   return r.revenue;
+          case 'units':     return r.units;
+          case 'buyBox':    return r.buyBox ?? -1;
+          case 'cvr':       return r.cvr ?? -1;
+          case 'adSpend':   return getNum(r.spendCad, r.spendUsd);
+          case 'acos':      return r.acos ?? -1;
+          case 'inventory': return r.inventory;
+          case 'velocity':  return r.velocity ?? -1;
+          case 'daysLeft':  return r.daysLeft ?? -1;
+          case 'leadTime':  return r.leadTime ?? -1;
+          case 'cogs':      return r.cogs ?? -1;
+          default:          return 0;
+        }
+      };
+
+      const sorted = [...filtered].sort((a, b) => {
+        const av = getVal(a), bv = getVal(b);
+        if (typeof av === 'string') return sortDir * av.localeCompare(bv);
+        return sortDir * (av < bv ? -1 : av > bv ? 1 : 0);
+      });
+
+      const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
+      if (currentPage > totalPages) currentPage = totalPages;
+      const paginated = sorted.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
+      tbody.innerHTML = paginated.map(r => buildRow(r)).join('');
+      renderPagination(totalPages);
+      updateSortIndicators();
+    }
+
+    function buildRow(r) {
+      const statusColor = r.status === 'active' ? 'bg-emerald-900/40 text-emerald-400'
+        : (r.status === 'suppressed' || r.status === 'inactive') ? 'bg-red-900/40 text-red-400'
+        : 'bg-slate-700 text-slate-400';
+      const bbColor = r.buyBox == null ? 'text-slate-500'
+        : r.buyBox >= 90 ? 'text-emerald-400' : r.buyBox >= 70 ? 'text-amber-400' : 'text-red-400';
+
+      let daysColor = '';
+      let daysStyle = 'color:var(--text-2)';
+      if (r.daysLeft != null && r.leadTime != null) {
+        if (r.daysLeft < r.leadTime) { daysColor = 'font-semibold'; daysStyle = 'color:var(--neg)'; }
+        else if (r.daysLeft < r.leadTime * 1.5) { daysColor = 'font-semibold'; daysStyle = 'color:var(--warn)'; }
+        else daysStyle = 'color:var(--pos)';
+      }
+
+      const titleEsc = r.title.replace(/"/g, '&quot;');
+      const skuEsc   = r.sellerSku.replace(/"/g, '&quot;');
+
+      return `<tr class="border-b last:border-0" style="border-color:rgba(255,255,255,0.04)">
+        <td class="px-5 py-2.5">
+          <div class="flex items-center gap-3">
+            <div class="w-9 h-9 rounded flex-shrink-0 relative flex items-center justify-center" style="background:rgba(255,255,255,0.05)">
+              <div class="w-1.5 h-1.5 rounded-full" style="background:${r.brandColor}"></div>
+              <img src="${r.imageUrl || `https://images-na.ssl-images-amazon.com/images/P/${r.asin}.01._SX100_.jpg`}" loading="lazy" onerror="this.style.display='none'" class="w-9 h-9 object-contain rounded absolute inset-0" />
+            </div>
+            <div class="min-w-0">
+              <div class="flex items-center gap-2">
+                <a href="${r.marketplace === 'US' ? 'https://www.amazon.com' : 'https://www.amazon.ca'}/dp/${r.asin}" target="_blank" rel="noopener" class="font-mono text-xs hover:underline" style="color:var(--text-3)">${r.asin}</a>
+                ${r.sellerSku ? `<a href="${r.marketplace === 'US' ? 'https://sellercentral.amazon.com' : 'https://sellercentral.amazon.ca'}/inventory?searchSKU=${encodeURIComponent(r.sellerSku)}" target="_blank" rel="noopener" class="font-mono text-xs truncate max-w-[140px] hover:underline" style="color:var(--text-3)" title="${skuEsc}">${skuEsc}</a>` : ''}
+              </div>
+              <div class="text-xs mt-0.5 max-w-xs truncate" style="color:var(--text-2)" title="${titleEsc}">${r.title}</div>
+              <div class="flex items-center gap-1.5 mt-0.5">
+                <div class="w-1.5 h-1.5 rounded-full flex-shrink-0" style="background:${r.brandColor}"></div>
+                <span class="text-xs" style="color:var(--text-3)">${r.brandName}</span>
+              </div>
+            </div>
+          </div>
+        </td>
+        <td class="px-4 py-3">
+          ${r.status ? `<span class="text-xs px-2 py-0.5 rounded-full font-medium ${statusColor}">${r.status}</span>` : `<span style="color:var(--text-3)">—</span>`}
+        </td>
+        <td class="px-4 py-3 text-right font-medium" style="color:var(--text)">${r.revenue > 0 ? fmt(r.revenueCad, r.revenueUsd) : '—'}</td>
+        <td class="px-4 py-3 text-right" style="color:var(--text-2)">${r.units > 0 ? r.units.toLocaleString() : '—'}</td>
+        <td class="px-4 py-3 text-right font-medium ${bbColor}">${r.buyBox != null ? r.buyBox.toFixed(1) + '%' : '—'}</td>
+        <td class="px-4 py-3 text-right" style="color:var(--text-2)">${r.cvr != null ? r.cvr.toFixed(2) + '%' : '—'}</td>
+        <td class="px-4 py-3 text-right ${(r.spendCad > 0 || r.spendUsd > 0) ? 'text-red-400' : ''}" style="${(r.spendCad === 0 && r.spendUsd === 0) ? 'color:var(--text-3)' : ''}">${(r.spendCad > 0 || r.spendUsd > 0) ? fmt(r.spendCad, r.spendUsd) : '—'}</td>
+        <td class="px-4 py-3 text-right font-medium ${r.acos != null ? (r.acos > 30 ? 'text-red-400' : r.acos > 20 ? 'text-amber-400' : 'text-emerald-400') : ''}" style="${r.acos == null ? 'color:var(--text-3)' : ''}">${r.acos != null ? r.acos.toFixed(1) + '%' : '—'}</td>
+        <td class="px-4 py-3 text-right cursor-pointer underline decoration-dotted decoration-slate-600" style="color:var(--text-2)"
+            onmouseenter="showInventoryPopup(event,${JSON.stringify(r.invRaw).replace(/"/g,'&quot;')})"
+            onmouseleave="hideInventoryPopup()">${r.inventory.toLocaleString()}</td>
+        <td class="px-4 py-3 text-right text-xs" style="color:var(--text-3)">${r.velocity != null ? r.velocity.toFixed(1) + ' u/d' : '—'}</td>
+        <td class="px-4 py-3 text-right ${daysColor}" style="${daysStyle}">${r.daysLeft != null ? r.daysLeft + 'd' : '—'}</td>
+        <td class="px-4 py-3 text-right">
+          <input type="number" min="0" value="${r.leadTime ?? ''}" placeholder="—"
+            class="rmc-input w-14 text-right" style="font-size:11px;padding:3px 6px"
+            onchange="saveLeadTime('${r.brandId}','${r.asin}',this.value)" />
+        </td>
+      </tr>`;
+    }
+
+    // ── Preset ──────────────────────────────────────────────────────────────────
+    function setPreset(key) {
+      activePreset = key;
+      localStorage.setItem('productsPreset', key);
+      document.querySelectorAll('.preset-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.id === `preset-${key}`);
+      });
+      currentPage = 1;
+      render();
+    }
+
+    // ── Currency ─────────────────────────────────────────────────────────────────
+    function updateToggleUI() {
+      document.getElementById('toggleCAD').classList.toggle('active', currency === 'CAD');
+      document.getElementById('toggleUSD').classList.toggle('active', currency === 'USD');
+    }
+
+    function setCurrency(c) {
+      currency = c;
+      localStorage.setItem('currency', c);
+      updateToggleUI();
+      render();
+    }
+
+    // ── Save helpers ──────────────────────────────────────────────────────────────
+    function patchBrand(brandId, field, asin, value) {
+      const brand = brandsData.find(b => b.id === brandId);
+      if (brand) { brand[field] = brand[field] || {}; brand[field][asin] = value; }
+    }
+
+    async function saveLeadTime(brandId, asin, value) {
+      const days = Number(value);
+      if (isNaN(days)) return;
+      await fetch(`/api/brands/${brandId}/asins/${asin}/leadtime`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ days })
+      });
+      patchBrand(brandId, 'leadTimes', asin, days);
+    }
+
+    async function saveCogs(brandId, asin, value) {
+      const cost = parseFloat(value);
+      if (isNaN(cost) || cost < 0) return;
+      await fetch(`/api/brands/${brandId}/asins/${asin}/cogs`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cost })
+      });
+      patchBrand(brandId, 'cogs', asin, cost);
+    }
+
+    async function saveUpc(brandId, asin, upc) {
+      await fetch(`/api/brands/${brandId}/asins/${asin}/upc`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ upc })
+      });
+      patchBrand(brandId, 'upcs', asin, upc);
+    }
+
+    async function saveSupplierName(brandId, asin, value) {
+      await fetch(`/api/brands/${brandId}/asins/${asin}/suppliername`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ supplierName: value })
+      });
+      const brand = brandsData.find(b => b.id === brandId);
+      if (brand) { brand.asinConfig = brand.asinConfig || {}; brand.asinConfig[asin] = brand.asinConfig[asin] || {}; brand.asinConfig[asin].supplierName = value; }
+    }
+
+    async function saveCasePack(brandId, asin, value) {
+      const size = Number(value);
+      if (!size || size < 1) return;
+      await fetch(`/api/brands/${brandId}/asins/${asin}/casepack`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ size })
+      });
+      patchBrand(brandId, 'casePacks', asin, size);
+    }
+
+    // ── ASIN Config Modal ─────────────────────────────────────────────────────
+    let cfgBrandId = null, cfgAsin = null, cfgComponents = [];
+
+    function openAsinConfig(brandId, asin) {
+      cfgBrandId = brandId; cfgAsin = asin;
+      const brand = brandsData.find(b => b.id === brandId);
+      const cfg = brand?.asinConfig?.[asin] || {};
+      document.getElementById('cfgAsinLabel').textContent = asin;
+      const type = cfg.type || 'single';
+      document.querySelectorAll('[name=cfgType]').forEach(r => { r.checked = r.value === type; });
+      document.getElementById('cfgUnitsPerPack').value = cfg.unitsPerPack || '';
+      cfgComponents = (cfg.components || []).map(c => ({ ...c }));
+      showCfgSections(type);
+      renderCfgComponents();
+      document.getElementById('asinConfigModal').classList.remove('hidden');
+    }
+
+    function showCfgSections(type) {
+      document.getElementById('cfgMultipackSection').classList.toggle('hidden', type !== 'multipack');
+      document.getElementById('cfgBundleSection').classList.toggle('hidden', type !== 'bundle');
+    }
+
+    function renderCfgComponents() {
+      const el = document.getElementById('cfgComponents');
+      if (!cfgComponents.length) {
+        el.innerHTML = '<p class="text-xs py-1 px-1" style="color:var(--text-3)">No components yet — click Add.</p>';
+        return;
+      }
+      el.innerHTML = cfgComponents.map((c, i) => `
+        <div class="grid grid-cols-12 gap-1 items-center">
+          <input type="text" value="${(c.description||'').replace(/"/g,'&quot;')}" placeholder="Description"
+            class="col-span-5 rmc-input" style="font-size:12px;padding:4px 8px"
+            oninput="cfgComponents[${i}].description=this.value" />
+          <input type="text" value="${(c.upc||'').replace(/"/g,'&quot;')}" placeholder="UPC"
+            class="col-span-4 rmc-input" style="font-size:12px;padding:4px 8px"
+            oninput="cfgComponents[${i}].upc=this.value" />
+          <input type="number" min="1" value="${c.qtyPerBundle||1}"
+            class="col-span-2 rmc-input text-center" style="font-size:12px;padding:4px 8px"
+            oninput="cfgComponents[${i}].qtyPerBundle=Number(this.value)" />
+          <button onclick="removeCfgComponent(${i})" class="col-span-1 text-center transition-colors hover:text-red-400" style="color:var(--text-3)">×</button>
+        </div>`).join('');
+    }
+
+    function addBundleComponent() { cfgComponents.push({ description: '', upc: '', qtyPerBundle: 1 }); renderCfgComponents(); }
+    function removeCfgComponent(i) { cfgComponents.splice(i, 1); renderCfgComponents(); }
+
+    async function saveAsinConfig() {
+      const type = document.querySelector('[name=cfgType]:checked')?.value || 'single';
+      const unitsPerPack = type === 'multipack' ? Number(document.getElementById('cfgUnitsPerPack').value) || null : null;
+      const components = type === 'bundle' ? cfgComponents : [];
+      await fetch(`/api/brands/${cfgBrandId}/asins/${cfgAsin}/config`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type, unitsPerPack, components })
+      });
+      const brand = brandsData.find(b => b.id === cfgBrandId);
+      if (brand) { brand.asinConfig = brand.asinConfig || {}; brand.asinConfig[cfgAsin] = { type, unitsPerPack, components }; }
+      closeCfgModal();
+      render();
+    }
+
+    function closeCfgModal() {
+      document.getElementById('asinConfigModal').classList.add('hidden');
+      cfgBrandId = null; cfgAsin = null; cfgComponents = [];
+    }
+
+    // ── Inventory popup ──────────────────────────────────────────────────────────
+    function showInventoryPopup(e, inv) {
+      const popup = document.getElementById('inventoryPopup');
+      const rows = [
+        { label: 'On-Hand',       value: (inv.onHand ?? 0) + (inv.researching ?? 0), alert: false },
+        { label: 'Inbound',       value: inv.inbound       ?? 0, alert: false },
+        { label: 'Reserved',      value: inv.reserved      ?? 0, alert: false },
+        { label: 'Unfulfillable', value: inv.unfulfillable ?? 0, alert: (inv.unfulfillable ?? 0) > 0 }
+      ];
+      popup.innerHTML = `
+        <div class="text-xs font-semibold mb-2" style="color:var(--text)">Inventory Breakdown</div>
+        <table class="w-full text-xs">
+          <tbody>
+            ${rows.map(r => `
+              <tr style="border-bottom:1px solid var(--border)">
+                <td class="py-1.5" style="color:var(--text-2)">${r.label}</td>
+                <td class="py-1.5 text-right font-medium pl-6" style="color:${r.alert ? 'var(--neg)' : 'var(--text)'}">${r.value.toLocaleString()}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>`;
+      popup.style.display = 'block';
+      popup.style.opacity = '1';
+      positionPopup(e, popup);
+    }
+
+    function hideInventoryPopup() {
+      const popup = document.getElementById('inventoryPopup');
+      popup.style.opacity = '0';
+      setTimeout(() => { popup.style.display = 'none'; }, 100);
+    }
+
+    function positionPopup(e, popup) {
+      popup.style.display = 'block';
+      const w = popup.offsetWidth, h = popup.offsetHeight;
+      const left = Math.max(8, e.clientX - w - 12);
+      const top  = Math.max(8, Math.min(e.clientY - h / 2, window.innerHeight - h - 8));
+      popup.style.left = left + 'px';
+      popup.style.top  = top  + 'px';
+    }
+
+    // ── Product Data tab ─────────────────────────────────────────────────────────
+
+    function renderDataTable() {
+      const tbody = document.getElementById('dataTableBody');
+      let rows = buildProductList();
+
+      // Apply search + brand filter
+      rows = rows.filter(r => {
+        if (brandFilterId && r.brandId !== brandFilterId) return false;
+        if (searchQuery) {
+          const q = searchQuery;
+          if (!r.asin.toLowerCase().includes(q) && !r.title.toLowerCase().includes(q) && !r.sellerSku.toLowerCase().includes(q)) return false;
+        }
+        return true;
+      });
+
+      rows.sort((a, b) => a.brandName.localeCompare(b.brandName) || a.title.localeCompare(b.title));
+
+      const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+      if (dataPage > totalPages) dataPage = 1;
+      const paginated = rows.slice((dataPage - 1) * pageSize, dataPage * pageSize);
+
+      if (!paginated.length) {
+        tbody.innerHTML = `<tr><td colspan="7" class="text-center py-10" style="color:var(--text-3)">No products found</td></tr>`;
+        document.getElementById('dataPagination').innerHTML = '';
+        return;
+      }
+
+      const brandOptions = brandsData.map(b => `<option value="${b.id}">${b.name}</option>`).join('');
+
+      tbody.innerHTML = paginated.map(r => {
+        const titleEsc = r.title.replace(/"/g, '&quot;');
+        const upcVal = (r.upc || '').replace(/"/g, '&quot;');
+        const snVal  = (r.stockNumber || '').replace(/"/g, '&quot;');
+        const curSym = r.marketplace === 'US' ? 'US$' : 'CA$';
+        const typeLabel = r.cfgType === 'multipack' ? (r.cfg.unitsPerPack || '?') + '-Pack'
+          : r.cfgType === 'bundle' ? 'Bundle' : 'Single';
+        const typeColor = r.cfgType === 'multipack' ? 'color:var(--warn)'
+          : r.cfgType === 'bundle' ? 'color:#818cf8' : 'color:var(--text-3)';
+
+        return `<tr class="border-b last:border-0" style="border-color:rgba(255,255,255,0.04)">
+          <td class="px-5 py-2.5">
+            <div class="flex items-center gap-3">
+              <div class="w-9 h-9 rounded flex-shrink-0 relative flex items-center justify-center" style="background:rgba(255,255,255,0.05)">
+              <div class="w-1.5 h-1.5 rounded-full" style="background:${r.brandColor}"></div>
+              <img src="${r.imageUrl || `https://images-na.ssl-images-amazon.com/images/P/${r.asin}.01._SX100_.jpg`}" loading="lazy" onerror="this.style.display='none'" class="w-9 h-9 object-contain rounded absolute inset-0" />
+            </div>
+              <div class="min-w-0">
+                <div class="font-mono text-xs" style="color:var(--text-3)">${r.asin}</div>
+                <div class="text-xs mt-0.5 max-w-xs truncate" style="color:var(--text-2)" title="${titleEsc}">${r.title}</div>
+              </div>
+            </div>
+          </td>
+          <td class="px-4 py-2.5">
+            <select class="rmc-select" style="font-size:11px;padding:4px 8px"
+              onchange="reassignAsin('${r.brandId}','${r.asin}',this.value)">
+              ${brandsData.map(b => `<option value="${b.id}"${b.id===r.brandId?' selected':''}>${b.name}</option>`).join('')}
+            </select>
+          </td>
+          <td class="px-4 py-2.5">
+            <input type="text" value="${(r.supplierName||'').replace(/"/g,'&quot;')}" placeholder="Amazon title"
+              class="rmc-input w-full" style="font-size:11px;padding:3px 6px;min-width:150px"
+              onchange="saveSupplierName('${r.brandId}','${r.asin}',this.value)" />
+          </td>
+          <td class="px-4 py-2.5">
+            <input type="text" value="${snVal}" placeholder="—"
+              class="rmc-input w-28" style="font-size:11px;padding:3px 6px"
+              onchange="saveStockNumber('${r.brandId}','${r.asin}',this.value)" />
+          </td>
+          <td class="px-4 py-2.5">
+            <input type="text" value="${upcVal}" placeholder="—"
+              class="rmc-input w-32" style="font-size:11px;padding:3px 6px"
+              onchange="saveUpc('${r.brandId}','${r.asin}',this.value)" />
+          </td>
+          <td class="px-4 py-2.5 text-center">
+            <input type="number" min="1" value="${r.casePack ?? ''}" placeholder="—"
+              class="rmc-input w-14 text-center" style="font-size:11px;padding:3px 6px"
+              onchange="saveCasePack('${r.brandId}','${r.asin}',this.value)" />
+          </td>
+          <td class="px-4 py-2.5 text-center">
+            <button onclick="openAsinConfig('${r.brandId}','${r.asin}')"
+              class="text-xs hover:text-white underline decoration-dotted transition-colors" style="${typeColor}">${typeLabel}</button>
+          </td>
+          <td class="px-4 py-2.5 text-right">
+            <div class="flex items-center justify-end gap-1">
+              <span class="text-xs" style="color:var(--text-3)">${curSym}</span>
+              <input type="number" min="0" step="0.01" value="${r.cogs ?? ''}" placeholder="—"
+                class="rmc-input w-20 text-right" style="font-size:11px;padding:3px 6px"
+                onchange="saveCogs('${r.brandId}','${r.asin}',this.value)" />
+            </div>
+          </td>
+        </tr>`;
+      }).join('');
+
+      // Reuse same pagination logic
+      const paginationEl = document.getElementById('dataPagination');
+      const range = new Set([1, totalPages, dataPage-1, dataPage, dataPage+1].filter(p => p>=1 && p<=totalPages));
+      const pages = [...range].sort((a,b) => a-b);
+      let pageBtns = '', prev = null;
+      for (const p of pages) {
+        if (prev !== null && p > prev+1) pageBtns += `<span class="text-xs px-0.5" style="color:var(--text-3)">…</span>`;
+        const active = p === dataPage;
+        pageBtns += `<button onclick="dataPage=${p};renderDataTable()" class="text-xs px-2.5 py-1 rounded" style="${active?'background:var(--brand);color:#060d05;font-weight:600':'color:var(--text-2)'}">${p}</button>`;
+        prev = p;
+      }
+      const sizeBtns = [10,20,50,100].map(n => `<button onclick="pageSize=${n};localStorage.setItem('pageSize',${n});dataPage=1;renderDataTable()" class="text-xs px-2 py-1 rounded" style="${n===pageSize?'background:var(--brand-tint);color:var(--brand);font-weight:600':'color:var(--text-3)'}">${n}</button>`).join('');
+      paginationEl.innerHTML = `<div class="flex items-center justify-between px-5 py-3" style="border-top:1px solid var(--border)"><div class="flex items-center gap-1">${pageBtns}</div><div class="flex items-center gap-1"><span class="text-xs mr-1" style="color:var(--text-3)">Rows:</span>${sizeBtns}</div></div>`;
+    }
+
+    async function saveStockNumber(brandId, asin, value) {
+      await fetch(`/api/brands/${brandId}/asins/${asin}/stocknumber`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stockNumber: value })
+      });
+      const brand = brandsData.find(b => b.id === brandId);
+      if (brand) { brand.asinConfig = brand.asinConfig || {}; brand.asinConfig[asin] = brand.asinConfig[asin] || {}; brand.asinConfig[asin].stockNumber = value; }
+    }
+
+    async function reassignAsin(fromBrandId, asin, toBrandId) {
+      if (fromBrandId === toBrandId) return;
+      const res = await fetch(`/api/brands/${fromBrandId}/asins/${asin}/move`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ toBrandId })
+      });
+      if (!res.ok) { alert('Reassign failed'); return; }
+      // Update local state
+      const fromBrand = brandsData.find(b => b.id === fromBrandId);
+      const toBrand   = brandsData.find(b => b.id === toBrandId);
+      if (fromBrand) fromBrand.asins = fromBrand.asins.filter(a => a !== asin);
+      if (toBrand && !toBrand.asins.includes(asin)) toBrand.asins.push(asin);
+      renderDataTable();
+    }
+
+    // ── Boot ─────────────────────────────────────────────────────────────────────
+    async function load() {
+      const [brandsRes, pmRes, fxRes] = await Promise.all([
+        fetch('/api/brands').then(r => r.json()),
+        fetch('/api/preset-metrics').then(r => r.json()),
+        fetch('/api/fx').then(r => r.json())
+      ]);
+      fxRate = fxRes;
+      presetMetrics = pmRes;
+      brandsData = (brandsRes.brands || []).filter(b => b.asins.length > 0);
+      updateToggleUI();
+      populateBrandFilter();
+      setPreset(activePreset);
+      setTab(activeTab);
+    }
+
+    load();
+  </script>
+
+  <!-- ASIN Config Modal -->
+  <div id="asinConfigModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 rmc-modal-backdrop"
+       onclick="if(event.target===this)closeCfgModal()">
+    <div class="rmc-modal w-full max-w-lg p-6">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <h2 class="text-base font-semibold" style="color:var(--text)">ASIN Config</h2>
+          <p id="cfgAsinLabel" class="text-xs font-mono mt-0.5" style="color:var(--text-2)"></p>
+        </div>
+        <button onclick="closeCfgModal()" class="transition-colors hover:opacity-80" style="color:var(--text-3)">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="mb-4">
+        <p class="text-xs font-medium uppercase tracking-wide mb-2" style="color:var(--text-2)">Type</p>
+        <div class="flex gap-3">
+          <label class="flex items-center gap-2 cursor-pointer px-3 py-2 rounded-lg transition-colors" style="border:1px solid var(--border)">
+            <input type="radio" name="cfgType" value="single" onchange="showCfgSections('single')" />
+            <span class="text-sm" style="color:var(--text)">Single</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer px-3 py-2 rounded-lg transition-colors" style="border:1px solid var(--border)">
+            <input type="radio" name="cfgType" value="multipack" onchange="showCfgSections('multipack')" />
+            <span class="text-sm" style="color:var(--text)">Multi-pack</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer px-3 py-2 rounded-lg transition-colors" style="border:1px solid var(--border)">
+            <input type="radio" name="cfgType" value="bundle" onchange="showCfgSections('bundle')" />
+            <span class="text-sm" style="color:var(--text)">Bundle</span>
+          </label>
+        </div>
+      </div>
+
+      <div id="cfgMultipackSection" class="hidden mb-4 p-3 rounded-lg" style="background:var(--bg-well);border:1px solid var(--border)">
+        <label class="text-xs block mb-1" style="color:var(--text-2)">Units per pack</label>
+        <input id="cfgUnitsPerPack" type="number" min="1" placeholder="e.g. 3" class="w-32 rmc-input" />
+        <p class="text-xs mt-1.5" style="color:var(--text-3)">Velocity tracks packs sold. Ordering stays in packs.</p>
+      </div>
+
+      <div id="cfgBundleSection" class="hidden mb-4 p-3 rounded-lg" style="background:var(--bg-well);border:1px solid var(--border)">
+        <div class="flex items-center justify-between mb-2">
+          <p class="text-xs" style="color:var(--text-2)">Components — each becomes a separate PO line item</p>
+          <button onclick="addBundleComponent()" class="btn-ghost" style="font-size:11px;padding:4px 10px;">+ Add</button>
+        </div>
+        <div class="space-y-1.5 mb-1">
+          <div class="grid grid-cols-12 gap-1 text-xs px-1" style="color:var(--text-3)">
+            <span class="col-span-5">Description</span>
+            <span class="col-span-4">UPC</span>
+            <span class="col-span-2 text-center">Qty/bundle</span>
+            <span class="col-span-1"></span>
+          </div>
+          <div id="cfgComponents" class="space-y-1"></div>
+        </div>
+        <p class="text-xs mt-1" style="color:var(--text-3)">Qty/bundle = how many of this component per bundle unit ordered.</p>
+      </div>
+
+      <div class="flex gap-3 mt-2">
+        <button onclick="closeCfgModal()" class="btn-ghost flex-1">Cancel</button>
+        <button onclick="saveAsinConfig()" class="btn-primary flex-1 justify-center">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Inventory popup -->
+  <div id="inventoryPopup" class="fixed z-50 px-4 py-3 w-52"
+       style="display:none;opacity:0;pointer-events:none;transition:opacity 0.1s ease;background:var(--bg-surface);border:1px solid var(--border-hi);border-radius:var(--r-sm);box-shadow:0 8px 32px rgba(0,0,0,0.5)"></div>
+
+</body>
+</html>

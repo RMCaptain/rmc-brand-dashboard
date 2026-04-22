@@ -7,31 +7,33 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/style.css" />
   <style>
-    body { font-family: 'Inter', sans-serif; }
     #salesPopup, #inventoryPopup { pointer-events: none; transition: opacity 0.1s ease; }
   </style>
 </head>
-<body class="bg-slate-50 min-h-screen">
+<body class="min-h-screen">
 
   <!-- Nav -->
-  <nav class="bg-white border-b border-slate-200 sticky top-0 z-10">
-    <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+  <nav class="rmc-nav">
+    <div class="max-w-7xl mx-auto px-8 py-5 flex items-center justify-between">
       <div class="flex items-center gap-6">
-        <span class="font-bold text-slate-900 text-base tracking-tight">RMC Dashboard</span>
+        <a href="/" class="nav-logo">
+          <img src="/rmc-logo.png" alt="RMC" />
+        </a>
         <div class="flex gap-1">
-          <a href="/" class="px-3 py-1.5 text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-md">Brands</a>
-          <a href="/admin.html" class="px-3 py-1.5 text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-md">ASIN Mapping</a>
+          <a href="/" class="nav-link">Dashboard</a>
+          <a href="/brands.html" class="nav-link active">Brands</a>
+          <a href="/products.html" class="nav-link">Products</a>
+          <a href="/po.html" class="nav-link">PO Builder</a>
         </div>
       </div>
       <div class="flex items-center gap-3">
-        <div class="flex items-center gap-0.5 bg-slate-100 rounded-lg p-0.5">
-          <button id="toggleCAD" onclick="setCurrency('CAD')"
-            class="text-xs px-3 py-1 rounded-md font-medium transition-colors">CA$</button>
-          <button id="toggleUSD" onclick="setCurrency('USD')"
-            class="text-xs px-3 py-1 rounded-md font-medium transition-colors">US$</button>
+        <div class="cur-toggle">
+          <button id="toggleCAD" onclick="setCurrency('CAD')" class="cur-btn">CA$</button>
+          <button id="toggleUSD" onclick="setCurrency('USD')" class="cur-btn">US$</button>
         </div>
-        <span id="syncBadge" class="text-xs px-2.5 py-1 rounded-full font-medium"></span>
+        <span id="syncBadge" class="text-xs px-2 py-0.5 rounded-full font-medium"></span>
       </div>
     </div>
   </nav>
@@ -40,30 +42,31 @@
 
     <!-- Back + header -->
     <div class="flex items-center gap-3 mb-6">
-      <a href="/" class="text-sm text-slate-500 hover:text-slate-900 flex items-center gap-1">
+      <a href="/" class="text-sm text-slate-400 hover:text-white flex items-center gap-1 transition-colors">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
         </svg>
         All Brands
       </a>
-      <span class="text-slate-300">/</span>
+      <span class="text-slate-600">/</span>
       <div class="flex items-center gap-2">
         <div id="brandColorDot" class="w-3 h-3 rounded-full"></div>
-        <h1 id="brandName" class="text-lg font-semibold text-slate-900">—</h1>
-        <span id="brandMarketplace" class="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full"></span>
+        <h1 id="brandName" class="text-lg font-semibold text-white">—</h1>
+        <span id="brandMarketplace" class="text-xs text-slate-400 bg-slate-700 px-2 py-0.5 rounded-full"></span>
       </div>
-      <div class="ml-auto">
-        <a id="editMappingLink" href="#" class="text-sm text-blue-600 hover:text-blue-800 font-medium">Edit ASIN Mapping →</a>
+      <div class="ml-auto flex items-center gap-3">
+        <button id="scrapeUpcBtn" onclick="scrapeUpcs()" class="btn-ghost" style="font-size:11px;padding:5px 12px;">Scrape UPCs</button>
+        <a id="editMappingLink" href="#" class="text-sm font-medium transition-colors" style="color:var(--brand)">Edit ASIN Mapping →</a>
       </div>
     </div>
 
     <!-- Date Range Picker -->
     <div class="flex items-center justify-between mb-6">
       <div class="flex items-center gap-1 flex-wrap">
-        <button onclick="setPreset('yesterday')" id="preset-yesterday" class="preset-btn px-3 py-1.5 text-sm rounded-lg border border-slate-200 text-slate-600 hover:border-indigo-400 hover:text-indigo-600 transition-colors">Yesterday</button>
-        <button onclick="setPreset('last30d')" id="preset-last30d" class="preset-btn px-3 py-1.5 text-sm rounded-lg border border-slate-200 text-slate-600 hover:border-indigo-400 hover:text-indigo-600 transition-colors">Last 30 Days</button>
-        <button onclick="setPreset('thisMonth')" id="preset-thisMonth" class="preset-btn px-3 py-1.5 text-sm rounded-lg border border-slate-200 text-slate-600 hover:border-indigo-400 hover:text-indigo-600 transition-colors">This Month</button>
-        <button onclick="setPreset('lastMonth')" id="preset-lastMonth" class="preset-btn px-3 py-1.5 text-sm rounded-lg border border-slate-200 text-slate-600 hover:border-indigo-400 hover:text-indigo-600 transition-colors">Last Month</button>
+        <button onclick="setPreset('yesterday')" id="preset-yesterday" class="preset-btn">Yesterday</button>
+        <button onclick="setPreset('last30d')" id="preset-last30d" class="preset-btn">Last 30 Days</button>
+        <button onclick="setPreset('thisMonth')" id="preset-thisMonth" class="preset-btn">This Month</button>
+        <button onclick="setPreset('lastMonth')" id="preset-lastMonth" class="preset-btn">Last Month</button>
       </div>
       <p id="dateRangeLabel" class="text-sm text-slate-500 ml-4 whitespace-nowrap"></p>
     </div>
@@ -77,28 +80,33 @@
     <div id="alertsRow" class="hidden mb-6 flex gap-3"></div>
 
     <!-- SKU table -->
-    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-      <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
-        <h2 class="text-sm font-semibold text-slate-900">ASINs <span id="asinCount" class="text-slate-400 font-normal"></span></h2>
-        <span class="text-xs text-slate-400">Last 7 days</span>
+    <div class="rmc-card overflow-hidden">
+      <div class="px-5 py-4 flex items-center justify-between" style="border-bottom:1px solid var(--border)">
+        <h2 class="text-sm font-semibold" style="color:var(--text)">ASINs <span id="asinCount" class="font-normal" style="color:var(--text-2)"></span></h2>
+        <span class="text-xs" style="color:var(--text-3)">Selected period</span>
       </div>
       <div class="overflow-x-auto">
-        <table class="w-full text-sm">
+        <table class="rmc-table">
           <thead>
-            <tr class="bg-slate-50 border-b border-slate-100">
-              <th class="text-left px-5 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">ASIN</th>
-              <th class="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Product</th>
-              <th class="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Status</th>
-              <th class="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Revenue</th>
-              <th class="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Units</th>
-              <th class="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Sessions</th>
-              <th class="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Buy Box</th>
-              <th class="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">CVR</th>
-              <th class="text-right px-5 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Inventory</th>
-              <th class="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Velocity</th>
-              <th class="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Days Left</th>
-              <th class="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">Lead Time</th>
-              <th class="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">COGS/unit</th>
+            <tr>
+              <th class="sortable-asin-th text-left cursor-pointer select-none hover:text-white" onclick="sortAsinBy('asin')" style="padding-left:20px">ASIN / SKU <span class="sort-asin-ind" data-col="asin"></span></th>
+              <th class="sortable-asin-th text-left cursor-pointer select-none hover:text-white" onclick="sortAsinBy('title')">Product <span class="sort-asin-ind" data-col="title"></span></th>
+              <th class="sortable-asin-th text-left cursor-pointer select-none hover:text-white" onclick="sortAsinBy('status')">Status <span class="sort-asin-ind" data-col="status"></span></th>
+              <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('revenue')">Revenue <span class="sort-asin-ind" data-col="revenue"></span></th>
+              <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('units')">Units <span class="sort-asin-ind" data-col="units"></span></th>
+              <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('buyBox')">Buy Box <span class="sort-asin-ind" data-col="buyBox"></span></th>
+              <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('cvr')">CVR <span class="sort-asin-ind" data-col="cvr"></span></th>
+              <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('adSpend')">Ad Spend <span class="sort-asin-ind" data-col="adSpend"></span></th>
+              <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('acos')">ACOS <span class="sort-asin-ind" data-col="acos"></span></th>
+              <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('inventory')">Inventory <span class="sort-asin-ind" data-col="inventory"></span></th>
+              <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('velocity')">Velocity <span class="sort-asin-ind" data-col="velocity"></span></th>
+              <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('daysLeft')">Days Left <span class="sort-asin-ind" data-col="daysLeft"></span></th>
+              <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('leadTime')">Lead Time <span class="sort-asin-ind" data-col="leadTime"></span></th>
+              <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('cogs')">COGS <span class="sort-asin-ind" data-col="cogs"></span></th>
+              <th class="text-right">UPC</th>
+              <th class="text-right">Case Pack</th>
+              <th class="text-center">Type</th>
+              <th class="text-right"><a href="/products.html" class="text-xs hover:underline" style="color:var(--text-3)">Edit in Product Data →</a></th>
             </tr>
           </thead>
           <tbody id="skuTable">
@@ -109,13 +117,13 @@
 
       <!-- No data state -->
       <div id="noDataState" class="hidden px-5 py-12 text-center">
-        <p class="text-slate-400 text-sm">No SKU data available yet — sync pending.</p>
+        <p class="text-sm" style="color:var(--text-3)">No SKU data available yet — sync pending.</p>
       </div>
 
       <!-- No ASINs state -->
       <div id="noAsinState" class="hidden px-5 py-12 text-center">
-        <p class="text-slate-500 text-sm mb-2">No ASINs mapped to this brand yet.</p>
-        <a id="addAsinLink" href="#" class="text-sm font-medium text-blue-600 hover:text-blue-800">Add ASINs in mapping →</a>
+        <p class="text-sm mb-2" style="color:var(--text-2)">No ASINs mapped to this brand yet.</p>
+        <a id="addAsinLink" href="#" class="text-sm font-medium" style="color:var(--brand)">Add ASINs in mapping →</a>
       </div>
     </div>
 
@@ -127,6 +135,8 @@
     let brandCache = null;
     let presetMetrics = {};
     let activePreset = 'last7d';
+    let asinSortCol = null;
+    let asinSortDir = -1;
 
     function fmt(cad, usd) {
       if (currency === 'CAD') {
@@ -139,7 +149,6 @@
     }
 
     function calcVelocity(asin, brandId) {
-      // Prefer last30d (30 days), then thisMonth, then lastMonth
       const candidates = [
         { key: 'last30d', days: 30 },
         { key: 'thisMonth', days: null },
@@ -154,6 +163,69 @@
         return sku.units / d;
       }
       return null;
+    }
+
+    function sortAsinBy(col) {
+      if (asinSortCol === col) asinSortDir *= -1;
+      else { asinSortCol = col; asinSortDir = -1; }
+      if (brandCache) renderBrand({ ...brandCache, metrics: presetMetrics.presets?.[activePreset]?.brands?.[brandCache.id] || null });
+    }
+
+    function updateAsinSortIndicators() {
+      document.querySelectorAll('.sort-asin-ind').forEach(el => {
+        const col = el.dataset.col;
+        el.textContent = col === asinSortCol ? (asinSortDir === -1 ? '↓' : '↑') : '';
+      });
+      document.querySelectorAll('.sortable-asin-th').forEach(th => {
+        const col = th.querySelector('.sort-asin-ind')?.dataset.col;
+        th.classList.toggle('text-white', col === asinSortCol);
+        th.classList.toggle('text-slate-400', col !== asinSortCol);
+      });
+    }
+
+    function getSortedAsins(brand, skuMap) {
+      if (!asinSortCol) return [...brand.asins];
+      return [...brand.asins].sort((a, b) => {
+        const sa = skuMap[a], sb = skuMap[b];
+        let av, bv;
+        if (asinSortCol === 'asin') { av = a; bv = b; }
+        else if (asinSortCol === 'title') { av = sa?.title || ''; bv = sb?.title || ''; }
+        else if (asinSortCol === 'status') { av = sa?.status || ''; bv = sb?.status || ''; }
+        else if (asinSortCol === 'revenue') {
+          av = sa ? (sa.revenueCad || 0) + (sa.revenueUsd || 0) * fxRate.usdToCad : 0;
+          bv = sb ? (sb.revenueCad || 0) + (sb.revenueUsd || 0) * fxRate.usdToCad : 0;
+        }
+        else if (asinSortCol === 'units') { av = sa?.units ?? 0; bv = sb?.units ?? 0; }
+        else if (asinSortCol === 'sessions') { av = sa?.sessions ?? 0; bv = sb?.sessions ?? 0; }
+        else if (asinSortCol === 'pageViews') { av = sa?.pageViews ?? 0; bv = sb?.pageViews ?? 0; }
+        else if (asinSortCol === 'buyBox') { av = sa?.buyBox ?? -1; bv = sb?.buyBox ?? -1; }
+        else if (asinSortCol === 'cvr') { av = sa?.cvr ?? -1; bv = sb?.cvr ?? -1; }
+        else if (asinSortCol === 'inventory') {
+          av = sa ? ((sa.inventory?.onHand ?? 0) + (sa.inventory?.inbound ?? 0)) : 0;
+          bv = sb ? ((sb.inventory?.onHand ?? 0) + (sb.inventory?.inbound ?? 0)) : 0;
+        }
+        else if (asinSortCol === 'velocity') {
+          av = calcVelocity(a, brand.id) ?? -1;
+          bv = calcVelocity(b, brand.id) ?? -1;
+        }
+        else if (asinSortCol === 'daysLeft') {
+          const va = calcVelocity(a, brand.id), vb = calcVelocity(b, brand.id);
+          const ia = sa ? ((sa.inventory?.onHand ?? 0) + (sa.inventory?.inbound ?? 0)) : 0;
+          const ib = sb ? ((sb.inventory?.onHand ?? 0) + (sb.inventory?.inbound ?? 0)) : 0;
+          av = va > 0 ? Math.round(ia / va) : -1;
+          bv = vb > 0 ? Math.round(ib / vb) : -1;
+        }
+        else if (asinSortCol === 'leadTime') { av = brand.leadTimes?.[a] ?? -1; bv = brand.leadTimes?.[b] ?? -1; }
+        else if (asinSortCol === 'cogs') { av = brand.cogs?.[a] ?? -1; bv = brand.cogs?.[b] ?? -1; }
+        else if (asinSortCol === 'adSpend') {
+          av = currency === 'CAD' ? (sa?.spendCad || 0) + (sa?.spendUsd || 0) * fxRate.usdToCad : (sa?.spendUsd || 0) + (sa?.spendCad || 0) * fxRate.cadToUsd;
+          bv = currency === 'CAD' ? (sb?.spendCad || 0) + (sb?.spendUsd || 0) * fxRate.usdToCad : (sb?.spendUsd || 0) + (sb?.spendCad || 0) * fxRate.cadToUsd;
+        }
+        else if (asinSortCol === 'acos') { av = sa?.acos ?? -1; bv = sb?.acos ?? -1; }
+        else { av = 0; bv = 0; }
+        if (typeof av === 'string') return asinSortDir * av.localeCompare(bv);
+        return asinSortDir * (av < bv ? -1 : av > bv ? 1 : 0);
+      });
     }
 
     async function saveCogs(brandId, asin, cost) {
@@ -174,18 +246,41 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ days: Number(days) })
       });
-      // Update local cache
       if (brandCache) {
         brandCache.leadTimes = brandCache.leadTimes || {};
         brandCache.leadTimes[asin] = Number(days);
       }
     }
 
+    async function saveUpc(brandId, asin, upc) {
+      await fetch(`/api/brands/${brandId}/asins/${asin}/upc`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ upc })
+      });
+      if (brandCache) {
+        brandCache.upcs = brandCache.upcs || {};
+        brandCache.upcs[asin] = upc;
+      }
+    }
+
+    async function saveCasePack(brandId, asin, size) {
+      const parsed = Number(size);
+      if (!parsed || parsed < 1) return;
+      await fetch(`/api/brands/${brandId}/asins/${asin}/casepack`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ size: parsed })
+      });
+      if (brandCache) {
+        brandCache.casePacks = brandCache.casePacks || {};
+        brandCache.casePacks[asin] = parsed;
+      }
+    }
+
     function updateToggleUI() {
-      const active = 'text-xs px-3 py-1 rounded-md font-medium bg-white text-slate-900 shadow-sm';
-      const inactive = 'text-xs px-3 py-1 rounded-md font-medium text-slate-500 hover:text-slate-700';
-      document.getElementById('toggleCAD').className = currency === 'CAD' ? active : inactive;
-      document.getElementById('toggleUSD').className = currency === 'USD' ? active : inactive;
+      document.getElementById('toggleCAD').classList.toggle('active', currency === 'CAD');
+      document.getElementById('toggleUSD').classList.toggle('active', currency === 'USD');
     }
 
     function setCurrency(c) {
@@ -200,12 +295,7 @@
       localStorage.setItem('dashboardPreset', key);
 
       document.querySelectorAll('.preset-btn').forEach(btn => {
-        const isActive = btn.id === `preset-${key}`;
-        btn.classList.toggle('bg-indigo-600', isActive);
-        btn.classList.toggle('text-white', isActive);
-        btn.classList.toggle('border-indigo-600', isActive);
-        btn.classList.toggle('text-slate-600', !isActive);
-        btn.classList.toggle('border-slate-200', !isActive);
+        btn.classList.toggle('active', btn.id === `preset-${key}`);
       });
 
       const meta = presetMetrics.presets?.[key];
@@ -234,27 +324,38 @@
 
       activePreset = localStorage.getItem('dashboardPreset') || 'last30d';
 
-      const [brandRes, pmRes, fxRes] = await Promise.all([
-        fetch(`/api/brands/${id}`).then(r => r.json()),
-        fetch('/api/preset-metrics').then(r => r.json()),
-        fetch('/api/fx').then(r => r.json())
-      ]);
+      try {
+        const [brandRes, pmRes, fxRes] = await Promise.all([
+          fetch(`/api/brands/${id}`).then(r => r.json()),
+          fetch('/api/preset-metrics').then(r => r.json()),
+          fetch('/api/fx').then(r => r.json())
+        ]);
 
-      fxRate = fxRes;
-      updateToggleUI();
-      presetMetrics = pmRes;
-      brandCache = brandRes;
+        fxRate = fxRes;
+        updateToggleUI();
+        presetMetrics = pmRes;
+        brandCache = brandRes;
 
-      // Fall back to first available preset if stored one no longer exists
-      const availablePresets = Object.keys(presetMetrics.presets || {});
-      if (!availablePresets.includes(activePreset) && availablePresets.length > 0) {
-        activePreset = availablePresets[0];
+        const availablePresets = Object.keys(presetMetrics.presets || {});
+        if (!availablePresets.includes(activePreset) && availablePresets.length > 0) {
+          activePreset = availablePresets[0];
+        }
+
+        setPreset(activePreset);
+      } catch(e) {
+        document.getElementById('brandName').textContent = 'Load error: ' + e.message;
+        console.error('loadBrand error:', e);
       }
-
-      setPreset(activePreset);
     }
 
     function renderBrand(brand) {
+      try { _renderBrand(brand); } catch(e) {
+        document.getElementById('brandName').textContent = 'Render error: ' + e.message;
+        console.error('renderBrand error:', e);
+      }
+    }
+
+    function _renderBrand(brand) {
 
       // Header
       document.title = `${brand.name} — RMC Dashboard`;
@@ -264,31 +365,83 @@
       document.getElementById('editMappingLink').href = `/admin.html?brand=${brand.id}`;
       document.getElementById('addAsinLink').href = `/admin.html?brand=${brand.id}`;
 
-      const m = brand.metrics ? brand.metrics.summary : null;
+      const m  = brand.metrics ? brand.metrics.summary : null;
+      const ad = brand.metrics ? brand.metrics.adSummary : null;
 
-      // Summary tiles
-      const tiles = [
-        { label: 'Revenue', value: m ? fmt(m.revenueCad, m.revenueUsd) : '—' },
-        { label: 'Units', value: m ? (m.units || 0).toLocaleString() : '—' },
-        { label: 'Sessions', value: m ? (m.sessions || 0).toLocaleString() : '—' },
-        { label: 'Margin', value: m && m.margin != null ? m.margin.toFixed(1) + '%' : '—' }
-      ];
-      document.getElementById('summaryTiles').innerHTML = tiles.map(t => `
-        <div class="bg-white rounded-xl border border-slate-200 p-4">
-          <p class="text-xs text-slate-500 mb-1">${t.label}</p>
-          <p class="text-2xl font-bold text-slate-900">${t.value}</p>
-        </div>`).join('');
+      // Build summary tile data
+      const adSpendDisp = ad && (ad.spendCad > 0 || ad.spendUsd > 0)
+        ? fmt(ad.spendCad, ad.spendUsd) : '—';
+      const acosDisp = ad?.acos != null ? ad.acos.toFixed(1) + '%' : '—';
+      const roasDisp = ad?.roas != null ? ad.roas.toFixed(2) + 'x' : '—';
+      const acosColor = ad?.acos != null
+        ? (ad.acos > 30 ? '#f87171' : ad.acos > 20 ? '#fbbf24' : '#34d399')
+        : 'var(--text-3)';
+
+      const tile = (lbl, val, sub, valColor) => `
+        <div class="rmc-card p-4">
+          <p class="text-xs mb-1" style="color:var(--text-3)">${lbl}</p>
+          <p class="text-xl font-bold" style="color:${valColor || 'var(--text)'}">${val}</p>
+          ${sub ? `<p class="text-xs mt-0.5" style="color:var(--text-3)">${sub}</p>` : ''}
+        </div>`;
+
+      document.getElementById('summaryTiles').innerHTML = [
+        tile('Revenue',  m ? fmt(m.revenueCad, m.revenueUsd) : '—', m ? (m.units || 0).toLocaleString() + ' units' : null),
+        tile('Sessions', m ? (m.sessions || 0).toLocaleString() : '—', m?.avgCvr != null ? 'CVR ' + m.avgCvr.toFixed(2) + '%' : null),
+        tile('Ad Spend', adSpendDisp, ad?.clicks ? ad.clicks.toLocaleString() + ' clicks' : null, ad && (ad.spendCad > 0 || ad.spendUsd > 0) ? '#f87171' : undefined),
+        tile('ACOS',     acosDisp,    ad?.roas != null ? 'ROAS ' + roasDisp : null, acosColor),
+      ].join('');
+
+      // Ad metrics card (show only when ad data exists, hide otherwise)
+      const existingAdCard = document.getElementById('adMetricsCard');
+      if (ad && (ad.spendCad > 0 || ad.spendUsd > 0)) {
+        const adCard = existingAdCard || (() => {
+          const el = document.createElement('div');
+          el.id = 'adMetricsCard';
+          el.className = 'rmc-card p-4 mb-6';
+          document.getElementById('summaryTiles').insertAdjacentElement('afterend', el);
+          return el;
+        })();
+        adCard.style.display = '';
+        const stat = (lbl, val) => `<div><p class="text-xs mb-0.5" style="color:var(--text-3)">${lbl}</p><p class="text-sm font-semibold" style="color:var(--text)">${val}</p></div>`;
+        adCard.innerHTML = `
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-xs font-semibold" style="color:var(--text-2)">Advertising Performance</h3>
+            <span class="text-xs" style="color:var(--text-3)">Sponsored Products · 14d attribution</span>
+          </div>
+          <div class="grid grid-cols-3 md:grid-cols-6 gap-4">
+            ${stat('Ad Spend',    adSpendDisp)}
+            ${stat('Attr. Sales', fmt(ad.attributedSalesCad, ad.attributedSalesUsd))}
+            ${stat('ACOS',        acosDisp)}
+            ${stat('ROAS',        roasDisp)}
+            ${stat('CTR',         ad.ctr != null ? ad.ctr.toFixed(3) + '%' : '—')}
+            ${stat('Ad CVR',      ad.adCvr != null ? ad.adCvr.toFixed(1) + '%' : '—')}
+          </div>`;
+      } else if (existingAdCard) {
+        existingAdCard.style.display = 'none';
+      }
 
       // Alerts
       if (m && (m.alerts.suppressedListings > 0 || m.alerts.lostBuyBox > 0)) {
         const row = document.getElementById('alertsRow');
         row.classList.remove('hidden');
+        const isCA = brand.marketplace !== 'US';
+        const scBase = isCA ? 'https://sellercentral.amazon.ca' : 'https://sellercentral.amazon.com';
         row.innerHTML = [
           m.alerts.suppressedListings > 0
-            ? `<div class="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-4 py-2 text-sm text-red-700"><span class="font-semibold">${m.alerts.suppressedListings}</span> suppressed listing${m.alerts.suppressedListings > 1 ? 's' : ''}</div>`
+            ? `<a href="${scBase}/fixyourproducts" target="_blank" rel="noopener"
+                class="flex items-center gap-2 bg-red-900/30 border border-red-800 rounded-lg px-4 py-2 text-sm text-red-400 hover:bg-red-900/50 transition-colors">
+                <span class="font-semibold">${m.alerts.suppressedListings}</span>
+                suppressed listing${m.alerts.suppressedListings > 1 ? 's' : ''}
+                <span class="text-red-600 text-xs ml-1">— current snapshot · Fix in Seller Central →</span>
+              </a>`
             : '',
           m.alerts.lostBuyBox > 0
-            ? `<div class="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 text-sm text-amber-700"><span class="font-semibold">${m.alerts.lostBuyBox}</span> ASIN${m.alerts.lostBuyBox > 1 ? 's' : ''} with lost Buy Box</div>`
+            ? `<a href="/brand.html?id=${brand.id}"
+                class="flex items-center gap-2 bg-amber-900/30 border border-amber-800 rounded-lg px-4 py-2 text-sm text-amber-400 hover:bg-amber-900/50 transition-colors">
+                <span class="font-semibold">${m.alerts.lostBuyBox}</span>
+                ASIN${m.alerts.lostBuyBox > 1 ? 's' : ''} with Buy Box &lt; 80%
+                <span class="text-amber-600 text-xs ml-1">— avg over selected period · See ASINs below ↓</span>
+              </a>`
             : ''
         ].join('');
       }
@@ -303,85 +456,89 @@
 
       const skus = brand.metrics ? brand.metrics.skus : null;
       if (!skus || skus.length === 0) {
-        // Show ASINs without metrics
         document.getElementById('noDataState').classList.remove('hidden');
         document.getElementById('skuTable').innerHTML = brand.asins.map(asin => `
-          <tr class="border-b border-slate-50 last:border-0">
-            <td class="px-5 py-3 font-mono text-xs text-slate-600">${asin}</td>
-            <td class="px-4 py-3 text-slate-400 text-xs" colspan="8">No data yet</td>
+          <tr class="border-b border-slate-700/40 last:border-0">
+            <td class="px-5 py-3 font-mono text-xs text-slate-400">${asin}</td>
+            <td class="px-4 py-3 text-slate-500 text-xs" colspan="17">No data yet</td>
           </tr>`).join('');
         return;
       }
 
-      // Map ASINs without metrics too
       const skuMap = Object.fromEntries(skus.map(s => [s.asin, s]));
+      const sortedAsins = getSortedAsins(brand, skuMap);
+      document.getElementById('skuTable').innerHTML = sortedAsins.map(asin => buildSkuRow(brand, skuMap[asin], asin)).join('');
+      updateAsinSortIndicators();
+    }
 
-      document.getElementById('skuTable').innerHTML = brand.asins.map(asin => {
-        const s = skuMap[asin];
-        if (!s) return `
-          <tr class="border-b border-slate-50 last:border-0">
-            <td class="px-5 py-3 font-mono text-xs text-slate-600">${asin}</td>
-            <td class="px-4 py-3 text-slate-400 text-xs" colspan="8">No data yet</td>
-          </tr>`;
+    function buildSkuRow(brand, s, asin) {
+      if (!s) return '<tr class="border-b border-slate-700/40 last:border-0">' +
+        '<td class="px-5 py-3 font-mono text-xs text-slate-400">' + asin + '</td>' +
+        '<td class="px-4 py-3 text-slate-500 text-xs" colspan="17">No data yet</td></tr>';
 
-        const statusColor = s.status === 'active'
-          ? 'bg-emerald-100 text-emerald-700'
-          : s.status === 'suppressed'
-          ? 'bg-red-100 text-red-700'
-          : 'bg-slate-100 text-slate-500';
+      const statusColor = s.status === 'active' ? 'bg-emerald-900/40 text-emerald-400'
+        : s.status === 'suppressed' ? 'bg-red-900/40 text-red-400' : 'bg-slate-700 text-slate-400';
+      const bbColor = s.buyBox == null ? 'text-slate-500' : s.buyBox >= 90 ? 'text-emerald-400' : s.buyBox >= 70 ? 'text-amber-400' : 'text-red-400';
 
-        const bbColor = s.buyBox == null ? 'text-slate-400' : s.buyBox >= 90 ? 'text-emerald-600' : s.buyBox >= 70 ? 'text-amber-600' : 'text-red-600';
+      const velocity = calcVelocity(s.asin, brand.id);
+      const leadTime = brand.leadTimes?.[s.asin] ?? null;
+      const available = (s.inventory?.onHand ?? 0) + (s.inventory?.inbound ?? 0);
+      const daysLeft = velocity > 0 ? Math.round(available / velocity) : null;
+      const velDisplay = velocity != null ? velocity.toFixed(1) : '—';
+      const daysDisplay = daysLeft != null ? daysLeft : '—';
+      let daysColor = 'text-slate-300';
+      if (daysLeft != null && leadTime != null) {
+        if (daysLeft < leadTime) daysColor = 'text-red-400 font-semibold';
+        else if (daysLeft < leadTime * 1.5) daysColor = 'text-amber-400 font-semibold';
+        else daysColor = 'text-emerald-400';
+      }
 
-        return `
-          <tr class="border-b border-slate-50 last:border-0 hover:bg-slate-50">
-            <td class="px-5 py-3 font-mono text-xs text-slate-600 whitespace-nowrap">${s.asin}</td>
-            <td class="px-4 py-3 text-slate-700 text-xs max-w-xs truncate" title="${s.title}">${s.title}</td>
-            <td class="px-4 py-3">
-              <span class="text-xs px-2 py-0.5 rounded-full font-medium ${statusColor}">${s.status}</span>
-            </td>
-            <td class="px-4 py-3 text-right font-medium text-slate-900 cursor-pointer underline decoration-dotted decoration-slate-400"
-                onmouseenter="showSalesPopup(event, '${s.asin}')"
-                onmouseleave="hideSalesPopup()">${fmt(s.revenueCad, s.revenueUsd)}</td>
-            <td class="px-4 py-3 text-right text-slate-700">${s.units}</td>
-            <td class="px-4 py-3 text-right text-slate-700">${(s.sessions || 0).toLocaleString()}</td>
-            <td class="px-4 py-3 text-right font-medium ${bbColor}">${s.buyBox != null ? s.buyBox.toFixed(1) + '%' : '—'}</td>
-            <td class="px-4 py-3 text-right text-slate-700">${s.cvr != null ? s.cvr.toFixed(2) + '%' : '—'}</td>
-            <td class="px-5 py-3 text-right text-slate-700 font-medium cursor-pointer underline decoration-dotted decoration-slate-400"
-                onmouseenter="showInventoryPopup(event, '${s.asin}', ${JSON.stringify(s.inventory ?? {}).replace(/"/g, '&quot;')})"
-                onmouseleave="hideInventoryPopup()">
-              ${((s.inventory?.onHand ?? 0) + (s.inventory?.inbound ?? 0) + (s.inventory?.reserved ?? 0) + (s.inventory?.researching ?? 0) + (s.inventory?.unfulfillable ?? 0)).toLocaleString()}
-            </td>
-            ${(() => {
-              const velocity = calcVelocity(s.asin, brand.id);
-              const leadTime = brand.leadTimes?.[s.asin] ?? null;
-              const available = (s.inventory?.onHand ?? 0) + (s.inventory?.inbound ?? 0);
-              const daysLeft = velocity > 0 ? Math.round(available / velocity) : null;
-              const velDisplay = velocity != null ? velocity.toFixed(1) : '—';
-              const daysDisplay = daysLeft != null ? daysLeft : '—';
-              let daysColor = 'text-slate-700';
-              if (daysLeft != null && leadTime != null) {
-                if (daysLeft < leadTime) daysColor = 'text-red-600 font-semibold';
-                else if (daysLeft < leadTime * 1.5) daysColor = 'text-amber-600 font-semibold';
-                else daysColor = 'text-emerald-600';
-              }
-              return `
-            <td class="px-4 py-3 text-right text-slate-500 text-xs">${velDisplay} u/d</td>
-            <td class="px-4 py-3 text-right ${daysColor}">${daysDisplay !== '—' ? daysDisplay + 'd' : '—'}</td>
-            <td class="px-4 py-3 text-right">
-              <input type="number" min="0" value="${leadTime ?? ''}" placeholder="—"
-                class="w-14 text-right text-xs border border-slate-200 rounded px-1.5 py-0.5 focus:outline-none focus:border-indigo-400"
-                onchange="saveLeadTime('${brand.id}', '${s.asin}', this.value)"
-                title="Lead time in days" />
-            </td>
-            <td class="px-4 py-3 text-right">
-              <input type="number" min="0" step="0.01" value="${brand.cogs?.[s.asin] ?? ''}" placeholder="—"
-                class="w-16 text-right text-xs border border-slate-200 rounded px-1.5 py-0.5 focus:outline-none focus:border-indigo-400"
-                onchange="saveCogs('${brand.id}', '${s.asin}', this.value)"
-                title="Cost per unit (in brand marketplace currency)" />
-            </td>`;
-            })()}
-          </tr>`;
-      }).join('');
+      const cfg = brand.asinConfig?.[s.asin] || {};
+      const cfgType = cfg.type || 'single';
+      const typeLabel = cfgType === 'multipack' ? (cfg.unitsPerPack || '?') + '-Pack' : cfgType === 'bundle' ? 'Bundle' : 'Single';
+      const typeColor = cfgType === 'multipack' ? 'text-amber-400' : cfgType === 'bundle' ? 'text-indigo-400' : 'text-slate-500';
+      const upcVal = (brand.upcs?.[s.asin] || '').replace(/"/g, '&quot;');
+      const upcCell = cfgType === 'bundle'
+        ? '<td class="px-4 py-3 text-right"><span class="text-xs text-slate-500 italic">' + (cfg.components||[]).length + ' component' + ((cfg.components||[]).length !== 1 ? 's' : '') + '</span></td>'
+        : '<td class="px-4 py-3 text-right"><input type="text" value="' + upcVal + '" placeholder="—" class="w-28 text-right text-xs bg-slate-700 border border-slate-600 text-white rounded px-1.5 py-0.5 focus:outline-none focus:border-indigo-500" onchange="saveUpc(\'' + brand.id + '\', \'' + s.asin + '\', this.value)" title="UPC / Barcode" /></td>';
+
+      const titleEsc = (s.title || '').replace(/"/g, '&quot;');
+      const skuEsc   = (s.sellerSku || '').replace(/"/g, '&quot;');
+      const invJson  = JSON.stringify(s.inventory ?? {}).replace(/"/g, '&quot;');
+      const invTotal = ((s.inventory?.onHand ?? 0) + (s.inventory?.inbound ?? 0) + (s.inventory?.reserved ?? 0) + (s.inventory?.researching ?? 0) + (s.inventory?.unfulfillable ?? 0)).toLocaleString();
+
+      return '<tr class="border-b border-slate-700/40 last:border-0 hover:bg-slate-700/20">' +
+        '<td class="px-5 py-3 whitespace-nowrap">' +
+          '<a href="' + (brand.marketplace === 'US' ? 'https://www.amazon.com' : 'https://www.amazon.ca') + '/dp/' + s.asin + '" target="_blank" rel="noopener" class="font-mono text-xs text-slate-400 hover:underline">' + s.asin + '</a>' +
+          (s.sellerSku ? '<a href="' + (brand.marketplace === 'US' ? 'https://sellercentral.amazon.com' : 'https://sellercentral.amazon.ca') + '/inventory?searchSKU=' + encodeURIComponent(s.sellerSku) + '" target="_blank" rel="noopener" class="font-mono text-xs text-slate-500 mt-0.5 max-w-[160px] truncate hover:underline block" title="' + skuEsc + '">' + skuEsc + '</a>' : '') +
+        '</td>' +
+        '<td class="px-4 py-3 text-slate-300 text-xs max-w-xs truncate" title="' + titleEsc + '">' + titleEsc + '</td>' +
+        '<td class="px-4 py-3"><span class="text-xs px-2 py-0.5 rounded-full font-medium ' + statusColor + '">' + s.status + '</span></td>' +
+        '<td class="px-4 py-3 text-right font-medium text-slate-100 cursor-pointer underline decoration-dotted decoration-slate-600" onmouseenter="showSalesPopup(event, \'' + s.asin + '\')" onmouseleave="hideSalesPopup()">' + fmt(s.revenueCad, s.revenueUsd) + '</td>' +
+        '<td class="px-4 py-3 text-right text-slate-300">' + s.units + '</td>' +
+        '<td class="px-4 py-3 text-right font-medium ' + bbColor + '">' + (s.buyBox != null ? s.buyBox.toFixed(1) + '%' : '—') + '</td>' +
+        '<td class="px-4 py-3 text-right text-slate-300">' + (s.cvr != null ? s.cvr.toFixed(2) + '%' : '—') + '</td>' +
+        (function() {
+          const hasSpend = (s.spendCad > 0 || s.spendUsd > 0);
+          const spendDisp = hasSpend
+            ? (currency === 'CAD'
+                ? 'CA$' + ((s.spendCad || 0) + (s.spendUsd || 0) * fxRate.usdToCad).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                : 'US$' + ((s.spendUsd || 0) + (s.spendCad || 0) * fxRate.cadToUsd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
+            : '—';
+          const acosColor = s.acos != null ? (s.acos > 30 ? 'text-red-400' : s.acos > 20 ? 'text-amber-400' : 'text-emerald-400') : 'text-slate-500';
+          return '<td class="px-4 py-3 text-right ' + (hasSpend ? 'text-red-400' : 'text-slate-500') + '">' + spendDisp + '</td>' +
+                 '<td class="px-4 py-3 text-right font-medium ' + acosColor + '">' + (s.acos != null ? s.acos.toFixed(1) + '%' : '—') + '</td>';
+        })() +
+        '<td class="px-5 py-3 text-right text-slate-300 font-medium cursor-pointer underline decoration-dotted decoration-slate-600" onmouseenter="showInventoryPopup(event, \'' + s.asin + '\', ' + invJson + ')" onmouseleave="hideInventoryPopup()">' + invTotal + '</td>' +
+        '<td class="px-4 py-3 text-right text-slate-500 text-xs">' + velDisplay + ' u/d</td>' +
+        '<td class="px-4 py-3 text-right ' + daysColor + '">' + (daysDisplay !== '—' ? daysDisplay + 'd' : '—') + '</td>' +
+        '<td class="px-4 py-3 text-right text-xs" style="color:var(--text-2)">' + (leadTime != null ? leadTime + 'd' : '—') + '</td>' +
+        '<td class="px-4 py-3 text-right text-xs" style="color:var(--text-2)">' + (brand.cogs?.[s.asin] != null ? '$' + Number(brand.cogs[s.asin]).toFixed(2) : '—') + '</td>' +
+        '<td class="px-4 py-3 text-right text-xs font-mono" style="color:var(--text-2)">' + (brand.upcs?.[s.asin] || '—') + '</td>' +
+        '<td class="px-4 py-3 text-right text-xs" style="color:var(--text-2)">' + (brand.casePacks?.[s.asin] ?? '—') + '</td>' +
+        '<td class="px-4 py-3 text-center text-xs ' + typeColor + '">' + typeLabel + '</td>' +
+        '<td></td>' +
+        '</tr>';
     }
 
     // ── Inventory popup ────────────────────────────────────────────────────────
@@ -395,13 +552,13 @@
         { label: 'Unfulfillable', value: inv.unfulfillable ?? 0, alert: (inv.unfulfillable ?? 0) > 0 }
       ];
       popup.innerHTML = `
-        <div class="text-xs font-semibold text-slate-700 mb-2">Inventory Breakdown</div>
+        <div class="text-xs font-semibold text-slate-200 mb-2">Inventory Breakdown</div>
         <table class="w-full text-xs">
           <tbody>
             ${rows.map(r => `
-              <tr class="border-b border-slate-50 last:border-0">
-                <td class="py-1.5 text-slate-500">${r.label}</td>
-                <td class="py-1.5 text-right font-medium pl-6 ${r.alert ? 'text-red-500' : 'text-slate-900'}">${r.value.toLocaleString()}</td>
+              <tr class="border-b border-slate-700 last:border-0">
+                <td class="py-1.5 text-slate-400">${r.label}</td>
+                <td class="py-1.5 text-right font-medium pl-6 ${r.alert ? 'text-red-400' : 'text-slate-100'}">${r.value.toLocaleString()}</td>
               </tr>`).join('')}
           </tbody>
         </table>`;
@@ -449,10 +606,10 @@
       const rows = getAsinPresetData(asin);
 
       popup.innerHTML = `
-        <div class="text-xs font-semibold text-slate-700 mb-2">Sales Summary</div>
+        <div class="text-xs font-semibold text-slate-200 mb-2">Sales Summary</div>
         <table class="w-full text-xs">
           <thead>
-            <tr class="text-slate-400 border-b border-slate-100">
+            <tr class="text-slate-500 border-b border-slate-700">
               <th class="text-left pb-1.5 font-medium">Period</th>
               <th class="text-right pb-1.5 font-medium">Revenue</th>
               <th class="text-right pb-1.5 font-medium pl-4">Units</th>
@@ -460,10 +617,10 @@
           </thead>
           <tbody>
             ${rows.map(r => `
-              <tr class="border-b border-slate-50 last:border-0">
-                <td class="py-1.5 text-slate-600">${r.label}</td>
-                <td class="py-1.5 text-right font-medium text-slate-900">${r.revenueCad !== null ? fmt(r.revenueCad, r.revenueUsd) : '—'}</td>
-                <td class="py-1.5 text-right text-slate-700 pl-4">${r.units !== null ? r.units.toLocaleString() : '—'}</td>
+              <tr class="border-b border-slate-700 last:border-0">
+                <td class="py-1.5 text-slate-400">${r.label}</td>
+                <td class="py-1.5 text-right font-medium text-slate-100">${r.revenueCad !== null ? fmt(r.revenueCad, r.revenueUsd) : '—'}</td>
+                <td class="py-1.5 text-right text-slate-300 pl-4">${r.units !== null ? r.units.toLocaleString() : '—'}</td>
               </tr>`).join('')}
           </tbody>
         </table>`;
@@ -488,15 +645,188 @@
       setTimeout(() => { popup.style.display = 'none'; }, 100);
     }
 
+    // ── ASIN Config Modal ──────────────────────────────────────────────────────
+
+    let cfgBrandId = null, cfgAsin = null, cfgComponents = [];
+
+    function openAsinConfig(brandId, asin) {
+      cfgBrandId = brandId;
+      cfgAsin = asin;
+      const cfg = brandCache?.asinConfig?.[asin] || {};
+      document.getElementById('cfgAsinLabel').textContent = asin;
+      const type = cfg.type || 'single';
+      document.querySelectorAll('[name=cfgType]').forEach(r => { r.checked = r.value === type; });
+      document.getElementById('cfgUnitsPerPack').value = cfg.unitsPerPack || '';
+      cfgComponents = (cfg.components || []).map(c => ({ ...c }));
+      showCfgSections(type);
+      renderCfgComponents();
+      document.getElementById('asinConfigModal').classList.remove('hidden');
+    }
+
+    function showCfgSections(type) {
+      document.getElementById('cfgMultipackSection').classList.toggle('hidden', type !== 'multipack');
+      document.getElementById('cfgBundleSection').classList.toggle('hidden', type !== 'bundle');
+    }
+
+    function renderCfgComponents() {
+      const el = document.getElementById('cfgComponents');
+      if (!cfgComponents.length) {
+        el.innerHTML = '<p class="text-xs text-slate-500 py-1 px-1">No components yet — click Add.</p>';
+        return;
+      }
+      el.innerHTML = cfgComponents.map((c, i) => `
+        <div class="grid grid-cols-12 gap-1 items-center">
+          <input type="text" value="${(c.description||'').replace(/"/g,'&quot;')}" placeholder="Description"
+            class="col-span-5 bg-slate-700 border border-slate-600 text-white rounded px-2 py-1 text-xs focus:outline-none focus:border-indigo-500"
+            oninput="cfgComponents[${i}].description = this.value" />
+          <input type="text" value="${(c.upc||'').replace(/"/g,'&quot;')}" placeholder="UPC"
+            class="col-span-4 bg-slate-700 border border-slate-600 text-white rounded px-2 py-1 text-xs focus:outline-none focus:border-indigo-500"
+            oninput="cfgComponents[${i}].upc = this.value" />
+          <input type="number" min="1" value="${c.qtyPerBundle || 1}"
+            class="col-span-2 bg-slate-700 border border-slate-600 text-white rounded px-2 py-1 text-xs text-center focus:outline-none focus:border-indigo-500"
+            oninput="cfgComponents[${i}].qtyPerBundle = Number(this.value)" title="Qty per bundle" />
+          <button onclick="removeCfgComponent(${i})" class="col-span-1 text-slate-600 hover:text-red-400 transition-colors text-center">×</button>
+        </div>`).join('');
+    }
+
+    function addBundleComponent() {
+      cfgComponents.push({ description: '', upc: '', qtyPerBundle: 1 });
+      renderCfgComponents();
+    }
+
+    function removeCfgComponent(i) {
+      cfgComponents.splice(i, 1);
+      renderCfgComponents();
+    }
+
+    async function saveAsinConfig() {
+      const type = document.querySelector('[name=cfgType]:checked')?.value || 'single';
+      const unitsPerPack = type === 'multipack' ? Number(document.getElementById('cfgUnitsPerPack').value) || null : null;
+      const components = type === 'bundle' ? cfgComponents : [];
+      await fetch(`/api/brands/${cfgBrandId}/asins/${cfgAsin}/config`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type, unitsPerPack, components })
+      });
+      if (brandCache) {
+        brandCache.asinConfig = brandCache.asinConfig || {};
+        brandCache.asinConfig[cfgAsin] = { type, unitsPerPack, components };
+        renderBrand(brandCache);
+      }
+      closeCfgModal();
+    }
+
+    function closeCfgModal() {
+      document.getElementById('asinConfigModal').classList.add('hidden');
+      cfgBrandId = null; cfgAsin = null; cfgComponents = [];
+    }
+
+    async function scrapeUpcs() {
+      const btn = document.getElementById('scrapeUpcBtn');
+      btn.textContent = 'Scraping…';
+      btn.disabled = true;
+      try {
+        const res = await fetch(`/api/brands/${brandId}/scrape-upcs`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        btn.textContent = data.updated > 0 ? `Got ${data.updated}/${data.total}` : 'No new UPCs';
+        if (data.updated > 0) {
+          // Reload brand data to reflect new UPCs
+          const freshBrand = await fetch(`/api/brands/${brandId}`).then(r => r.json());
+          brandCache = { ...brandCache, upcs: freshBrand.upcs };
+          renderBrand({ ...brandCache, metrics: presetMetrics.presets?.[activePreset]?.brands?.[brandId] || null });
+        }
+      } catch(e) {
+        btn.textContent = 'Error';
+        console.error(e);
+      } finally {
+        setTimeout(() => { btn.textContent = 'Scrape UPCs'; btn.disabled = false; }, 3000);
+      }
+    }
+
     loadBrand();
   </script>
 
+  <!-- ASIN Config Modal -->
+  <div id="asinConfigModal" class="hidden fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4" onclick="if(event.target===this)closeCfgModal()">
+    <div class="bg-slate-800 border border-slate-700 rounded-xl shadow-xl w-full max-w-lg p-6">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <h2 class="text-base font-semibold text-white">ASIN Config</h2>
+          <p id="cfgAsinLabel" class="text-xs font-mono text-slate-400 mt-0.5"></p>
+        </div>
+        <button onclick="closeCfgModal()" class="text-slate-500 hover:text-white transition-colors">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Type selector -->
+      <div class="mb-4">
+        <p class="text-xs font-medium text-slate-400 uppercase tracking-wide mb-2">Type</p>
+        <div class="flex gap-3">
+          <label class="flex items-center gap-2 cursor-pointer px-3 py-2 rounded-lg border border-slate-600 hover:border-slate-400 transition-colors">
+            <input type="radio" name="cfgType" value="single" onchange="showCfgSections('single')" class="text-indigo-500" />
+            <span class="text-sm text-slate-200">Single</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer px-3 py-2 rounded-lg border border-slate-600 hover:border-slate-400 transition-colors">
+            <input type="radio" name="cfgType" value="multipack" onchange="showCfgSections('multipack')" class="text-indigo-500" />
+            <span class="text-sm text-slate-200">Multi-pack</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer px-3 py-2 rounded-lg border border-slate-600 hover:border-slate-400 transition-colors">
+            <input type="radio" name="cfgType" value="bundle" onchange="showCfgSections('bundle')" class="text-indigo-500" />
+            <span class="text-sm text-slate-200">Bundle</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Multi-pack section -->
+      <div id="cfgMultipackSection" class="hidden mb-4 p-3 bg-slate-900/50 rounded-lg border border-slate-700">
+        <label class="text-xs text-slate-400 block mb-1">Units per pack</label>
+        <input id="cfgUnitsPerPack" type="number" min="1" placeholder="e.g. 3"
+          class="w-32 bg-slate-700 border border-slate-600 text-white rounded px-2 py-1.5 text-sm focus:outline-none focus:border-indigo-500" />
+        <p class="text-xs text-slate-500 mt-1.5">Velocity tracks packs sold. Ordering quantity stays in packs.</p>
+      </div>
+
+      <!-- Bundle section -->
+      <div id="cfgBundleSection" class="hidden mb-4 p-3 bg-slate-900/50 rounded-lg border border-slate-700">
+        <div class="flex items-center justify-between mb-2">
+          <p class="text-xs text-slate-400">Components — each becomes a separate PO line item</p>
+          <button onclick="addBundleComponent()"
+            class="text-xs px-2.5 py-1 bg-slate-700 text-slate-200 rounded hover:bg-slate-600 transition-colors">+ Add</button>
+        </div>
+        <div class="space-y-1.5 mb-1">
+          <div class="grid grid-cols-12 gap-1 text-xs text-slate-500 px-1">
+            <span class="col-span-5">Description</span>
+            <span class="col-span-4">UPC</span>
+            <span class="col-span-2 text-center">Qty/bundle</span>
+            <span class="col-span-1"></span>
+          </div>
+          <div id="cfgComponents"></div>
+        </div>
+        <p class="text-xs text-slate-500 mt-1">Qty/bundle = how many of this component per bundle unit ordered.</p>
+      </div>
+
+      <div class="flex gap-3 mt-2">
+        <button onclick="closeCfgModal()"
+          class="flex-1 px-4 py-2 text-sm font-medium text-slate-300 bg-slate-700 rounded-lg hover:bg-slate-600 transition-colors">
+          Cancel
+        </button>
+        <button onclick="saveAsinConfig()"
+          class="flex-1 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-500 transition-colors">
+          Save
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- Sales popup -->
-  <div id="salesPopup" class="hidden fixed z-50 bg-white border border-slate-200 rounded-xl shadow-lg px-4 py-3 w-64"
+  <div id="salesPopup" class="fixed z-50 bg-slate-800 border border-slate-700 rounded-xl shadow-xl px-4 py-3 w-64"
        style="opacity:0; display:none;"></div>
 
   <!-- Inventory popup -->
-  <div id="inventoryPopup" class="hidden fixed z-50 bg-white border border-slate-200 rounded-xl shadow-lg px-4 py-3 w-48"
+  <div id="inventoryPopup" class="fixed z-50 bg-slate-800 border border-slate-700 rounded-xl shadow-xl px-4 py-3 w-48"
        style="opacity:0; display:none;"></div>
 
 </body>

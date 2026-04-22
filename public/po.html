@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PO Builder — RMC Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body class="min-h-screen">
+
+  <!-- Nav -->
+  <nav class="rmc-nav">
+    <div class="max-w-screen-xl mx-auto px-8 py-5 flex items-center justify-between">
+      <div class="flex items-center gap-6">
+        <a href="/" class="nav-logo">
+          <img src="/rmc-logo.png" alt="RMC" />
+        </a>
+        <div class="flex gap-1">
+          <a href="/" class="nav-link">Dashboard</a>
+          <a href="/brands.html" class="nav-link">Brands</a>
+          <a href="/products.html" class="nav-link">Products</a>
+          <a href="/po.html" class="nav-link active">PO Builder</a>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <div class="max-w-screen-xl mx-auto px-6 py-6">
+
+    <div class="flex items-start justify-between mb-6 gap-4 flex-wrap">
+      <div>
+        <h1 class="text-lg font-semibold text-white">Purchase Order Builder</h1>
+        <p class="text-sm text-slate-400 mt-0.5">Generate POs pre-populated from brand velocity and inventory data.</p>
+      </div>
+
+      <!-- Split download button -->
+      <div class="flex" id="downloadBtnGroup">
+        <button onclick="generatePO()" class="btn-primary flex items-center gap-2" style="border-radius:8px 0 0 8px;padding-right:16px" id="mainDownloadBtn">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+          </svg>
+          <span id="mainDownloadLabel">Download PDF</span>
+        </button>
+        <button onclick="toggleFormatMenu(event)" class="btn-primary px-2" style="border-radius:0 8px 8px 0;border-left:1px solid rgba(255,255,255,0.2)" id="formatDropBtn" title="Switch format">
+          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+      <!-- Left: PO Setup -->
+      <div class="space-y-4">
+
+        <!-- Brand + PO info -->
+        <div class="rmc-card p-4">
+          <h2 class="text-sm font-semibold mb-3" style="color:var(--text)">PO Details</h2>
+          <div class="space-y-3">
+            <div>
+              <label class="text-xs text-slate-400 block mb-1">Brand</label>
+              <select id="brandSelect" onchange="onBrandChange()"
+                class="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500">
+                <option value="">— Select brand —</option>
+              </select>
+            </div>
+            <div class="flex gap-3">
+              <div class="flex-1">
+                <label class="text-xs text-slate-400 block mb-1">PO Number</label>
+                <input id="poNumber" type="number" placeholder="Auto"
+                  class="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500" />
+              </div>
+              <div class="flex-1">
+                <label class="text-xs text-slate-400 block mb-1">PO Status</label>
+                <select id="poStatus"
+                  class="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500">
+                  <option value="Working">Working</option>
+                  <option value="Submitted">Submitted</option>
+                  <option value="Discrepancy Reporting">Discrepancy Reporting</option>
+                  <option value="Complete">Complete</option>
+                </select>
+              </div>
+            </div>
+            <div>
+              <label class="text-xs text-slate-400 block mb-1">PO Date</label>
+              <input id="poDate" type="date"
+                class="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Optional columns -->
+        <div class="bg-slate-800 border border-slate-700 rounded-xl p-4">
+          <h2 class="text-sm font-semibold text-white mb-3">Optional Columns</h2>
+          <div class="space-y-2">
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" id="col_stockNumber" onchange="renderLines()"
+                class="w-4 h-4 rounded border-slate-600 text-indigo-500 cursor-pointer" />
+              <span class="text-sm text-slate-300">Stock Number</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" id="col_wholesalePrice" onchange="renderLines()"
+                class="w-4 h-4 rounded border-slate-600 text-indigo-500 cursor-pointer" />
+              <span class="text-sm text-slate-300">Wholesale Price</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" id="col_discountPct" onchange="renderLines()"
+                class="w-4 h-4 rounded border-slate-600 text-indigo-500 cursor-pointer" />
+              <span class="text-sm text-slate-300">Discount %</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" id="col_qtyPerCase" onchange="renderLines()"
+                class="w-4 h-4 rounded border-slate-600 text-indigo-500 cursor-pointer" />
+              <span class="text-sm text-slate-300">Qty / Case</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Notes -->
+        <div class="bg-slate-800 border border-slate-700 rounded-xl p-4">
+          <h2 class="text-sm font-semibold text-white mb-3">Comments / Notes</h2>
+          <textarea id="poNotes" rows="4" placeholder="Shipping instructions, special notes…"
+            class="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500 resize-y placeholder-slate-500"></textarea>
+        </div>
+
+        <!-- PO Settings (Bill To / Ship To) -->
+        <div class="bg-slate-800 border border-slate-700 rounded-xl p-4">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="text-sm font-semibold text-white">PO Settings</h2>
+            <button onclick="toggleSettings()" id="settingsToggleBtn"
+              class="text-xs text-indigo-400 hover:text-indigo-300 font-medium">Edit</button>
+          </div>
+          <div id="settingsView" class="space-y-2 text-xs text-slate-400">
+            <p id="settingsSummary">Loading…</p>
+          </div>
+          <div id="settingsEdit" class="hidden space-y-3">
+            <div>
+              <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">Bill To</p>
+              <div class="space-y-1.5">
+                <input id="billTo_name"    type="text" placeholder="Company name"   class="line-input" />
+                <input id="billTo_address" type="text" placeholder="Street address" class="line-input" />
+                <input id="billTo_city"    type="text" placeholder="City, Province, Postal" class="line-input" />
+                <input id="billTo_phone"   type="text" placeholder="Phone"          class="line-input" />
+                <input id="billTo_email"   type="text" placeholder="Email"          class="line-input" />
+              </div>
+            </div>
+            <div>
+              <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">Ship To</p>
+              <div class="space-y-1.5">
+                <input id="shipTo_name"    type="text" placeholder="Company name"   class="line-input" />
+                <input id="shipTo_address" type="text" placeholder="Street address" class="line-input" />
+                <input id="shipTo_city"    type="text" placeholder="City, Province, Postal" class="line-input" />
+                <input id="shipTo_phone"   type="text" placeholder="Phone"          class="line-input" />
+                <input id="shipTo_email"   type="text" placeholder="Email"          class="line-input" />
+              </div>
+            </div>
+            <button onclick="saveSettings()"
+              class="w-full mt-1 px-3 py-2 text-xs font-medium bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 transition-colors">
+              Save Settings
+            </button>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Right: Line items table -->
+      <div class="lg:col-span-2">
+        <div class="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
+          <div class="px-5 py-4 border-b border-slate-700 flex items-center justify-between">
+            <h2 class="text-sm font-semibold text-white">Line Items
+              <span id="lineCount" class="text-slate-400 font-normal text-xs ml-1"></span>
+            </h2>
+            <div class="flex items-center gap-3">
+              <span id="subtotalDisplay" class="text-sm font-semibold text-slate-100"></span>
+              <button onclick="addBlankLine()"
+                class="text-xs px-3 py-1.5 bg-slate-700 text-slate-200 rounded-lg hover:bg-slate-600 transition-colors">
+                + Add line
+              </button>
+            </div>
+          </div>
+
+          <div id="noDataBanner" class="hidden px-5 py-8 text-center">
+            <p class="text-sm text-slate-500">Select a brand to load ASINs.</p>
+          </div>
+
+          <div id="linesTableWrap" class="hidden overflow-x-auto">
+            <table class="w-full text-xs">
+              <thead>
+                <tr id="lineHeader" class="bg-slate-900 border-b border-slate-700 text-slate-400 uppercase tracking-wide">
+                  <!-- Rendered by JS -->
+                </tr>
+              </thead>
+              <tbody id="linesBody">
+                <!-- Rendered by JS -->
+              </tbody>
+            </table>
+          </div>
+
+          <div id="emptyLinesMsg" class="hidden px-5 py-8 text-center">
+            <p class="text-sm text-slate-500">No ASINs mapped to this brand. <a href="/admin.html" class="text-indigo-400">Add them →</a></p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <!-- Generating spinner overlay -->
+  <div id="generatingOverlay" class="hidden fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center">
+    <div class="bg-slate-800 border border-slate-700 rounded-xl p-8 text-center">
+      <div class="inline-block w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+      <p class="text-sm font-medium text-slate-200" id="generatingLabel">Generating…</p>
+    </div>
+  </div>
+
+  <script>
+    let brands = [];
+    let selectedBrand = null;
+    let lines = [];        // array of line objects
+    let presetMetrics = {};
+    let poSettings = {};
+
+    // ── Init ────────────────────────────────────────────────────────────────────
+
+    async function init() {
+      // Set today's date
+      const today = new Date().toISOString().split('T')[0];
+      document.getElementById('poDate').value = today;
+
+      const safeJson = r => r.ok ? r.json() : null;
+
+      const [brandsRes, pmRes, settingsRes] = await Promise.all([
+        fetch('/api/brands').then(safeJson).catch(() => null),
+        fetch('/api/preset-metrics').then(safeJson).catch(() => null),
+        fetch('/api/po/settings').then(safeJson).catch(() => null)
+      ]);
+
+      brands = brandsRes?.brands || [];
+      presetMetrics = pmRes || {};
+      poSettings = settingsRes || {};
+
+      // Populate brand dropdown
+      const sel = document.getElementById('brandSelect');
+      brands.filter(b => b.id !== 'unknown-brand').forEach(b => {
+        const opt = document.createElement('option');
+        opt.value = b.id;
+        opt.textContent = b.name;
+        sel.appendChild(opt);
+      });
+
+      renderSettingsSummary();
+      populateSettingsForm();
+      document.getElementById('noDataBanner').classList.remove('hidden');
+    }
+
+    // ── Brand change ────────────────────────────────────────────────────────────
+
+    async function onBrandChange() {
+      const id = document.getElementById('brandSelect').value;
+      if (!id) {
+        selectedBrand = null;
+        lines = [];
+        document.getElementById('noDataBanner').classList.remove('hidden');
+        document.getElementById('linesTableWrap').classList.add('hidden');
+        document.getElementById('emptyLinesMsg').classList.add('hidden');
+        updateSubtotal();
+        return;
+      }
+
+      // Load full brand data (includes upcs, casePacks, leadTimes, cogs, etc.)
+      const brandRes = await fetch(`/api/brands/${id}`).then(r => r.json());
+      selectedBrand = brandRes;
+
+      if (!selectedBrand.asins || selectedBrand.asins.length === 0) {
+        lines = [];
+        document.getElementById('noDataBanner').classList.add('hidden');
+        document.getElementById('linesTableWrap').classList.add('hidden');
+        document.getElementById('emptyLinesMsg').classList.remove('hidden');
+        updateSubtotal();
+        return;
+      }
+
+      buildLinesFromBrand();
+      document.getElementById('noDataBanner').classList.add('hidden');
+      document.getElementById('emptyLinesMsg').classList.add('hidden');
+      document.getElementById('linesTableWrap').classList.remove('hidden');
+      renderLines();
+    }
+
+    function buildLinesFromBrand() {
+      if (!selectedBrand) return;
+      const brand = selectedBrand;
+
+      // Get velocity data from last30d preset
+      const velocityPreset = presetMetrics.presets?.last30d || presetMetrics.presets?.lastMonth;
+      const brandPreset = velocityPreset?.brands?.[brand.id];
+
+      // Calculate velocity: units per day from 30d data
+      let velocityMap = {};
+      if (brandPreset?.skus) {
+        const days = velocityPreset.startDate && velocityPreset.endDate
+          ? Math.max(1, Math.round((new Date(velocityPreset.endDate) - new Date(velocityPreset.startDate)) / 86400000) + 1)
+          : 30;
+        brandPreset.skus.forEach(s => {
+          velocityMap[s.asin] = (s.units || 0) / days;
+        });
+      }
+
+      lines = [];
+
+      brand.asins.forEach(asin => {
+        const cfg = brand.asinConfig?.[asin] || { type: 'single' };
+        const title = cfg.supplierName || brand.asinTitles?.[asin] || asin;
+        const casePack = brand.casePacks?.[asin] || 1;
+        const leadTime = brand.leadTimes?.[asin] || 0;
+        const reorderBuffer = brand.reorderBuffer ?? 30;
+        const velocity = velocityMap[asin] || 0;
+
+        // Base qty in ASIN units, rounded to nearest case pack
+        const rawQty = velocity * (leadTime + reorderBuffer);
+        let qty = 0;
+        if (rawQty > 0 && casePack > 0) qty = Math.ceil(rawQty / casePack) * casePack;
+        const cases = casePack > 0 ? Math.ceil(qty / casePack) : 0;
+
+        const base = { stockNumber: '', wholesalePrice: '', discountPct: '',
+          _velocity: velocity, _leadTime: leadTime, _reorderBuffer: reorderBuffer };
+
+        if (cfg.type === 'bundle' && cfg.components?.length > 0) {
+          // Bundle: one PO line per component
+          cfg.components.forEach(comp => {
+            lines.push({
+              ...base,
+              asin,
+              description: comp.description || `Component of ${title}`,
+              upc: comp.upc || '',
+              price: 0,
+              casePack: comp.qtyPerBundle || 1,
+              quantity: qty * (comp.qtyPerBundle || 1),
+              cases: 0,
+              _bundleParent: title,
+              _isBundleComponent: true
+            });
+          });
+
+        } else if (cfg.type === 'multipack') {
+          const upp = cfg.unitsPerPack || 1;
+          // Velocity is in packs; qty is in packs
+          lines.push({
+            ...base,
+            asin,
+            description: upp > 1 ? `${title} (${upp}-Pack)` : title,
+            upc: brand.upcs?.[asin] || '',
+            price: brand.cogs?.[asin] || 0,
+            casePack,
+            quantity: qty,
+            cases,
+            _unitsPerPack: upp,
+            _totalUnits: qty * upp
+          });
+
+        } else {
+          // Single (default)
+          lines.push({
+            ...base,
+            asin,
+            description: title,
+            upc: brand.upcs?.[asin] || '',
+            price: brand.cogs?.[asin] || 0,
+            casePack,
+            quantity: qty,
+            cases
+          });
+        }
+      });
+    }
+
+    // ── Render lines table ──────────────────────────────────────────────────────
+
+    function getOptionalCols() {
+      return {
+        stockNumber:   document.getElementById('col_stockNumber').checked,
+        wholesalePrice: document.getElementById('col_wholesalePrice').checked,
+        discountPct:   document.getElementById('col_discountPct').checked,
+        qtyPerCase:    document.getElementById('col_qtyPerCase').checked
+      };
+    }
+
+    function renderLines() {
+      const opts = getOptionalCols();
+      const headers = buildHeaders(opts);
+      document.getElementById('lineHeader').innerHTML = headers.map(h =>
+        `<th class="text-left px-3 py-2.5 font-medium whitespace-nowrap">${h}</th>`
+      ).join('') + '<th class="px-3 py-2.5"></th>';
+
+      document.getElementById('linesBody').innerHTML = lines.map((line, i) =>
+        renderLineRow(line, i, opts)
+      ).join('');
+
+      document.getElementById('lineCount').textContent = `(${lines.length})`;
+      updateSubtotal();
+    }
+
+    function buildHeaders(opts) {
+      const h = ['Description', 'UPC'];
+      if (opts.stockNumber)   h.push('Stock #');
+      h.push('Cases', 'Price / unit');
+      if (opts.wholesalePrice) h.push('Wholesale Price');
+      if (opts.discountPct)    h.push('Discount %');
+      if (opts.qtyPerCase)     h.push('Qty / Case');
+      h.push('Quantity', 'Total');
+      return h;
+    }
+
+    function renderLineRow(line, i, opts) {
+      const total = (Number(line.quantity) || 0) * (Number(line.price) || 0);
+      const totalFmt = total > 0 ? '$' + total.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
+      const velocityHint = line._velocity > 0
+        ? `title="${line._velocity.toFixed(2)} u/d × (${line._leadTime}d lead + ${line._reorderBuffer}d buffer)"`
+        : '';
+
+      const rowBg = line._isBundleComponent ? 'bg-indigo-950/20' : '';
+
+      return `
+        <tr class="border-b border-slate-700/50 hover:bg-slate-700/20 ${rowBg}">
+          <td class="px-3 py-2">
+            ${line._bundleParent
+              ? `<div class="text-xs text-indigo-400/70 mb-0.5">↳ ${line._bundleParent}</div>`
+              : `<div class="font-mono text-slate-500 text-xs mb-0.5">${line.asin || ''}</div>`}
+            <input class="line-input" style="min-width:180px" type="text" value="${esc(line.description)}"
+              oninput="setLine(${i}, 'description', this.value)" />
+            ${line._totalUnits ? `<div class="text-xs text-slate-500 mt-0.5">${line._totalUnits.toLocaleString()} total units</div>` : ''}
+          </td>
+          <td class="px-3 py-2">
+            <input class="line-input" style="width:110px" type="text" value="${esc(line.upc)}"
+              oninput="setLine(${i}, 'upc', this.value)" />
+          </td>
+          ${opts.stockNumber ? `<td class="px-3 py-2">
+            <input class="line-input" style="width:90px" type="text" value="${esc(line.stockNumber)}"
+              oninput="setLine(${i}, 'stockNumber', this.value)" />
+          </td>` : ''}
+          <td class="px-3 py-2">
+            <input class="line-input" style="width:60px" type="number" min="0" value="${line.cases || ''}"
+              oninput="setCasesQty(${i}, 'cases', this.value)" ${velocityHint} />
+          </td>
+          <td class="px-3 py-2">
+            <input class="line-input" style="width:80px" type="number" min="0" step="0.01" value="${line.price || ''}"
+              oninput="setLineAndRefreshTotal(${i}, 'price', this.value)" />
+          </td>
+          ${opts.wholesalePrice ? `<td class="px-3 py-2">
+            <input class="line-input" style="width:80px" type="number" min="0" step="0.01" value="${line.wholesalePrice || ''}"
+              oninput="setLine(${i}, 'wholesalePrice', this.value)" />
+          </td>` : ''}
+          ${opts.discountPct ? `<td class="px-3 py-2">
+            <input class="line-input" style="width:70px" type="number" min="0" max="100" step="0.1" value="${line.discountPct || ''}"
+              oninput="setLine(${i}, 'discountPct', this.value)" />
+          </td>` : ''}
+          ${opts.qtyPerCase ? `<td class="px-3 py-2">
+            <input class="line-input" style="width:60px" type="number" min="1" value="${line.casePack || ''}"
+              oninput="setCasesQty(${i}, 'casePack', this.value)" />
+          </td>` : ''}
+          <td class="px-3 py-2">
+            <input class="line-input" style="width:70px" type="number" min="0" value="${line.quantity || ''}"
+              oninput="setCasesQty(${i}, 'quantity', this.value)" />
+          </td>
+          <td class="px-3 py-2 text-right font-medium text-slate-200 whitespace-nowrap">${totalFmt}</td>
+          <td class="px-3 py-2">
+            <button onclick="removeLine(${i})" class="text-slate-600 hover:text-red-400 transition-colors">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+              </svg>
+            </button>
+          </td>
+        </tr>`;
+    }
+
+    function esc(v) { return String(v || '').replace(/"/g, '&quot;'); }
+
+    function setLine(i, field, value) {
+      lines[i][field] = value;
+      updateSubtotal();
+    }
+
+    function setLineAndRefreshTotal(i, field, value) {
+      lines[i][field] = value;
+      // Refresh just the total cell without full re-render
+      updateSubtotal();
+      // Full re-render deferred — do it on blur instead via a flag
+      const row = document.getElementById('linesBody').children[i];
+      if (row) {
+        const totalCell = row.querySelector('td:nth-last-child(2)');
+        const total = (Number(lines[i].quantity) || 0) * (Number(value) || 0);
+        if (totalCell) totalCell.textContent = total > 0
+          ? '$' + total.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+          : '—';
+      }
+    }
+
+    function setCasesQty(i, field, value) {
+      const n = Number(value) || 0;
+      const cp = Number(lines[i].casePack) || 1;
+      lines[i][field] = n;
+      if (field === 'cases') {
+        lines[i].quantity = n * cp;
+      } else if (field === 'quantity') {
+        lines[i].cases = cp > 0 ? Math.ceil(n / cp) : 0;
+      } else if (field === 'casePack') {
+        lines[i].casePack = n || 1;
+        // Recompute cases from current qty
+        const qty = Number(lines[i].quantity) || 0;
+        lines[i].cases = n > 0 ? Math.ceil(qty / n) : 0;
+      }
+      updateSubtotal();
+    }
+
+    function addBlankLine() {
+      lines.push({ asin: '', description: '', upc: '', stockNumber: '', price: 0, wholesalePrice: '', discountPct: '', casePack: 1, quantity: 0, cases: 0 });
+      renderLines();
+    }
+
+    function removeLine(i) {
+      lines.splice(i, 1);
+      renderLines();
+    }
+
+    function updateSubtotal() {
+      const sub = lines.reduce((s, l) => s + (Number(l.quantity) || 0) * (Number(l.price) || 0), 0);
+      document.getElementById('subtotalDisplay').textContent = sub > 0
+        ? 'Subtotal: $' + sub.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+        : '';
+    }
+
+    // ── Settings ────────────────────────────────────────────────────────────────
+
+    function toggleSettings() {
+      const editEl = document.getElementById('settingsEdit');
+      const viewEl = document.getElementById('settingsView');
+      const btn    = document.getElementById('settingsToggleBtn');
+      const isHidden = editEl.classList.contains('hidden');
+      editEl.classList.toggle('hidden', !isHidden);
+      viewEl.classList.toggle('hidden', isHidden);
+      btn.textContent = isHidden ? 'Cancel' : 'Edit';
+    }
+
+    function renderSettingsSummary() {
+      const b = poSettings.billTo || {};
+      const s = poSettings.shipTo || {};
+      document.getElementById('settingsSummary').innerHTML =
+        `<span class="font-medium text-slate-300">Bill To:</span> ${b.name || '—'} · ${b.city || '—'}<br>` +
+        `<span class="font-medium text-slate-300">Ship To:</span> ${s.name || '—'} · ${s.city || '—'}`;
+    }
+
+    function populateSettingsForm() {
+      const b = poSettings.billTo || {};
+      const s = poSettings.shipTo || {};
+      ['name','address','city','phone','email'].forEach(f => {
+        const bEl = document.getElementById(`billTo_${f}`);
+        const sEl = document.getElementById(`shipTo_${f}`);
+        if (bEl) bEl.value = b[f] || '';
+        if (sEl) sEl.value = s[f] || '';
+      });
+    }
+
+    async function saveSettings() {
+      const billTo = {};
+      const shipTo = {};
+      ['name','address','city','phone','email'].forEach(f => {
+        billTo[f] = document.getElementById(`billTo_${f}`)?.value || '';
+        shipTo[f] = document.getElementById(`shipTo_${f}`)?.value || '';
+      });
+      const res = await fetch('/api/po/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ billTo, shipTo })
+      });
+      poSettings = await res.json();
+      renderSettingsSummary();
+      toggleSettings();
+    }
+
+    // ── Format switcher ──────────────────────────────────────────────────────────
+
+    let selectedFormat = 'pdf';
+
+    // Build menu once and attach to body so no parent can clip it
+    const _fmtMenu = document.createElement('div');
+    _fmtMenu.id = 'formatMenu';
+    _fmtMenu.style.cssText = 'display:none;position:fixed;background:#1e293b;border:1px solid #475569;border-radius:6px;box-shadow:0 8px 28px rgba(0,0,0,0.7);z-index:99999;width:168px';
+    _fmtMenu.innerHTML = `
+      <button data-fmt="pdf" style="display:flex;align-items:center;gap:10px;width:100%;padding:10px 16px;font-size:13px;color:#e2e8f0;background:none;border:none;cursor:pointer;font-family:inherit;text-align:left">
+        <span class="fmt-check" style="color:#4ade80;font-size:12px">✓</span>Download PDF
+      </button>
+      <button data-fmt="xlsx" style="display:flex;align-items:center;gap:10px;width:100%;padding:10px 16px;font-size:13px;color:#e2e8f0;background:none;border:none;cursor:pointer;font-family:inherit;text-align:left">
+        <span class="fmt-check" style="color:#4ade80;font-size:12px;visibility:hidden">✓</span>Download Excel
+      </button>`;
+    _fmtMenu.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('mouseenter', () => btn.style.background = '#334155');
+      btn.addEventListener('mouseleave', () => btn.style.background = 'none');
+      btn.addEventListener('click', () => selectFormat(btn.dataset.fmt));
+    });
+    document.body.appendChild(_fmtMenu);
+
+    function toggleFormatMenu(e) {
+      e.stopPropagation();
+      if (_fmtMenu.style.display !== 'none') { _fmtMenu.style.display = 'none'; return; }
+      const rect = document.getElementById('formatDropBtn').getBoundingClientRect();
+      _fmtMenu.style.top  = (rect.bottom + 6) + 'px';
+      _fmtMenu.style.left = (rect.right - 168) + 'px';
+      _fmtMenu.style.display = 'block';
+    }
+
+    function selectFormat(fmt) {
+      selectedFormat = fmt;
+      document.getElementById('mainDownloadLabel').textContent = fmt === 'pdf' ? 'Download PDF' : 'Download Excel';
+      _fmtMenu.querySelectorAll('.fmt-check').forEach(el => el.style.visibility = 'hidden');
+      _fmtMenu.querySelector(`button[data-fmt="${fmt}"] .fmt-check`).style.visibility = 'visible';
+      _fmtMenu.style.display = 'none';
+    }
+
+    document.addEventListener('click', e => {
+      if (!_fmtMenu.contains(e.target) && e.target !== document.getElementById('formatDropBtn')) {
+        _fmtMenu.style.display = 'none';
+      }
+    });
+
+    // ── Generate PO ─────────────────────────────────────────────────────────────
+
+    async function generatePO(fmt) {
+      if (!selectedBrand) { alert('Select a brand first.'); return; }
+      if (!lines.length)  { alert('No line items.'); return; }
+
+      const format = fmt || selectedFormat;
+      const opts = getOptionalCols();
+
+      const manualPoNum = document.getElementById('poNumber').value;
+      const payload = {
+        brandId:     selectedBrand.id,
+        poNumber:    manualPoNum ? Number(manualPoNum) : undefined,
+        status:      document.getElementById('poStatus').value,
+        date:        document.getElementById('poDate').value,
+        notes:       document.getElementById('poNotes').value,
+        optionalCols: opts,
+        lines: lines.map(l => ({
+          asin:          l.asin,
+          description:   l.description,
+          upc:           l.upc,
+          stockNumber:   l.stockNumber,
+          price:         Number(l.price) || 0,
+          wholesalePrice: Number(l.wholesalePrice) || 0,
+          discountPct:   l.discountPct !== '' ? Number(l.discountPct) : null,
+          casePack:      Number(l.casePack) || 1,
+          quantity:      Number(l.quantity) || 0,
+          cases:         Number(l.cases) || 0
+        })).filter(l => l.quantity > 0 || l.description)
+      };
+
+      document.getElementById('generatingLabel').textContent = format === 'pdf' ? 'Generating PDF…' : 'Generating Excel…';
+      document.getElementById('generatingOverlay').classList.remove('hidden');
+
+      try {
+        const endpoint = format === 'pdf' ? '/api/po/generate-pdf' : '/api/po/generate';
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || 'Generation failed');
+        }
+
+        const blob = await res.blob();
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement('a');
+        a.href     = url;
+        const defaultExt = format === 'pdf' ? 'PurchaseOrder.pdf' : 'PurchaseOrder.xlsx';
+        a.download = res.headers.get('Content-Disposition')?.match(/filename="(.+)"/)?.[1] || defaultExt;
+        a.click();
+        URL.revokeObjectURL(url);
+
+      } catch (err) {
+        alert('Error: ' + err.message);
+      } finally {
+        document.getElementById('generatingOverlay').classList.add('hidden');
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>

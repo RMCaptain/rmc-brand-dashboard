@@ -556,20 +556,14 @@
       "marketplace": "CA",
       "color": "#f59e0b",
       "asins": [
-        "B0CS4JZH2H",
         "B0C9V2DMF7",
         "B08QDQCYWN",
-        "B089WD943F",
-        "B005P0T12S",
-        "B0C5K42Z3F"
+        "B005P0T12S"
       ],
       "asinTitles": {
-        "B0CS4JZH2H": "Core Nutritionals ABC Advanced BCAA Supplement | Amino Acid Recovery Blend | with Glutamine, Beta Alanine, Citrulline Malate | 20 Servings (Lemon Drop)",
         "B0C9V2DMF7": "Anima Mundi Apothecary Relax Tonic Nervous System Support - Natural Calm Aid & Mood Enhancer - Achieve Stress Relief with Lemon Balm, Passionflower, Chamomile, Ashwagandha Root & Lavender (2 fl oz)",
         "B08QDQCYWN": "Anima Mundi Collagen Booster Face Oil Hydrating Organic Plant-Based Collagen Oil Rose Petals - Restore & Regenerate Collagen Receptors for Glowing Skin Complexion (1 Fl Oz)",
-        "B089WD943F": "Core Nutritionals Platinum Hard Advanced Recomposition and Hardening Agent, Reduces Cortisol Levels and Regulates Healthy Estrogen Production (84 Capsules)",
-        "B005P0T12S": "Calcium & Magnesium - Full Range Amino Acid Chelates in a Special Herb Base (90 Capsules)",
-        "B0C5K42Z3F": "Pacha Soap Coconut Papaya - 4 Ounce Bar - Natural"
+        "B005P0T12S": "Calcium & Magnesium - Full Range Amino Acid Chelates in a Special Herb Base (90 Capsules)"
       },
       "createdAt": "2026-03-27"
     },
@@ -657,10 +651,14 @@
       "marketplace": "CA",
       "color": "#84cc16",
       "asins": [
-        "B0CS4B5HTN"
+        "B0CS4B5HTN",
+        "B0CS4JZH2H",
+        "B089WD943F"
       ],
       "asinTitles": {
-        "B0CS4B5HTN": "Core Nutritionals ABC Advanced BCAA Supplement | Amino Acid Recovery Blend | with Glutamine, Beta Alanine, Citrulline Malate | 20 Servings (Patriot Pop)"
+        "B0CS4B5HTN": "Core Nutritionals ABC Advanced BCAA Supplement | Amino Acid Recovery Blend | with Glutamine, Beta Alanine, Citrulline Malate | 20 Servings (Patriot Pop)",
+        "B0CS4JZH2H": "Core Nutritionals ABC Advanced BCAA Supplement | Amino Acid Recovery Blend | with Glutamine, Beta Alanine, Citrulline Malate | 20 Servings (Lemon Drop)",
+        "B089WD943F": "Core Nutritionals Platinum Hard Advanced Recomposition and Hardening Agent, Reduces Cortisol Levels and Regulates Healthy Estrogen Production (84 Capsules)"
       },
       "createdAt": "2026-03-27"
     },
@@ -670,10 +668,12 @@
       "marketplace": "CA",
       "color": "#06b6d4",
       "asins": [
-        "B09CFT5WKW"
+        "B09CFT5WKW",
+        "B0C5K42Z3F"
       ],
       "asinTitles": {
-        "B09CFT5WKW": "PACHA SOAP Spearmint Lemongrass Bar Soap, 4 OZ"
+        "B09CFT5WKW": "PACHA SOAP Spearmint Lemongrass Bar Soap, 4 OZ",
+        "B0C5K42Z3F": "Pacha Soap Coconut Papaya - 4 Ounce Bar - Natural"
       },
       "createdAt": "2026-03-27"
     }

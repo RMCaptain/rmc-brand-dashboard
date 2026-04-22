@@ -7,104 +7,223 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    body { font-family: 'Inter', sans-serif; background: #0f172a; color: #f1f5f9; }
-    .brand-card:hover { transform: translateY(-1px); box-shadow: 0 8px 25px rgba(0,0,0,0.4); }
-    .brand-card { transition: transform 0.15s ease, box-shadow 0.15s ease; }
-  </style>
+  <link rel="stylesheet" href="/style.css" />
 </head>
 <body class="min-h-screen">
 
-  <nav class="bg-slate-900 border-b border-slate-700 sticky top-0 z-20">
-    <div class="max-w-screen-xl mx-auto px-6 py-3 flex items-center justify-between">
+  <nav class="rmc-nav">
+    <div class="max-w-screen-xl mx-auto px-8 py-5 flex items-center justify-between">
       <div class="flex items-center gap-6">
-        <span class="font-bold text-white text-sm tracking-tight">RMC Dashboard</span>
+        <a href="/" class="nav-logo">
+          <img src="/rmc-logo.png" alt="RMC" />
+        </a>
         <div class="flex gap-1">
-          <a href="/" class="px-3 py-1.5 text-sm font-medium text-slate-400 hover:text-white hover:bg-slate-700 rounded-md transition-colors">Dashboard</a>
-          <a href="/brands.html" class="px-3 py-1.5 text-sm font-medium text-white bg-slate-700 rounded-md">Brands</a>
-          <a href="/admin.html" class="px-3 py-1.5 text-sm font-medium text-slate-400 hover:text-white hover:bg-slate-700 rounded-md transition-colors">ASIN Mapping</a>
+          <a href="/" class="nav-link">Dashboard</a>
+          <a href="/brands.html" class="nav-link active">Brands</a>
+          <a href="/products.html" class="nav-link">Products</a>
+          <a href="/po.html" class="nav-link">PO Builder</a>
         </div>
       </div>
       <div class="flex items-center gap-3">
-        <div class="flex items-center gap-0.5 bg-slate-800 rounded-lg p-0.5">
-          <button id="toggleCAD" onclick="setCurrency('CAD')" class="text-xs px-3 py-1 rounded-md font-medium transition-colors">CA$</button>
-          <button id="toggleUSD" onclick="setCurrency('USD')" class="text-xs px-3 py-1 rounded-md font-medium transition-colors">US$</button>
+        <div class="cur-toggle">
+          <button id="toggleCAD" onclick="setCurrency('CAD')" class="cur-btn">CA$</button>
+          <button id="toggleUSD" onclick="setCurrency('USD')" class="cur-btn">US$</button>
         </div>
-        <span id="lastSyncText" class="text-xs text-slate-500"></span>
+        <span id="lastSyncText" class="text-xs" style="color:var(--text-3)"></span>
       </div>
     </div>
   </nav>
 
   <div class="max-w-screen-xl mx-auto px-6 py-6">
 
+    <!-- Page header -->
     <div class="flex items-center justify-between mb-5">
-      <div class="flex items-center gap-3">
+      <div class="flex items-center gap-3 flex-wrap">
         <h1 class="text-base font-semibold text-white">Brands <span id="brandCount" class="text-slate-500 font-normal text-sm"></span></h1>
-        <div class="flex gap-1">
-          <button onclick="setPreset('yesterday')" id="preset-yesterday" class="preset-btn text-xs px-2.5 py-1 rounded-md border border-slate-600 text-slate-400 hover:text-white hover:border-slate-400 transition-colors">Yesterday</button>
-          <button onclick="setPreset('last30d')"   id="preset-last30d"   class="preset-btn text-xs px-2.5 py-1 rounded-md border border-slate-600 text-slate-400 hover:text-white hover:border-slate-400 transition-colors">Last 30d</button>
-          <button onclick="setPreset('thisMonth')" id="preset-thisMonth" class="preset-btn text-xs px-2.5 py-1 rounded-md border border-slate-600 text-slate-400 hover:text-white hover:border-slate-400 transition-colors">This Month</button>
-          <button onclick="setPreset('lastMonth')" id="preset-lastMonth" class="preset-btn text-xs px-2.5 py-1 rounded-md border border-slate-600 text-slate-400 hover:text-white hover:border-slate-400 transition-colors">Last Month</button>
+        <!-- Preset buttons — performance view only -->
+        <div id="presetBtns" class="flex gap-1">
+          <button onclick="setPreset('yesterday')" id="preset-yesterday" class="preset-btn">Yesterday</button>
+          <button onclick="setPreset('last30d')"   id="preset-last30d"   class="preset-btn">Last 30d</button>
+          <button onclick="setPreset('thisMonth')" id="preset-thisMonth" class="preset-btn">This Month</button>
+          <button onclick="setPreset('lastMonth')" id="preset-lastMonth" class="preset-btn">Last Month</button>
         </div>
       </div>
-      <a href="/admin.html" class="text-sm text-indigo-400 hover:text-indigo-300 font-medium">+ Add brand</a>
+      <div class="flex items-center gap-2">
+        <!-- Mapping-only actions -->
+        <div id="mappingActions" class="hidden flex gap-2">
+          <button onclick="startImport()" class="btn-ghost text-xs">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+            </svg>
+            Import from Amazon
+          </button>
+          <button onclick="openAddBrand()" class="btn-primary" style="font-size:12px;padding:7px 14px;">+ Add Brand</button>
+        </div>
+        <!-- View tabs -->
+        <div class="view-tabs">
+          <button onclick="setView('performance')" id="view-performance" class="view-tab">Performance</button>
+          <button onclick="setView('mapping')"     id="view-mapping"     class="view-tab">Mapping</button>
+        </div>
+      </div>
     </div>
 
-    <div id="brandsGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-      <div class="col-span-3 text-center py-12 text-slate-500 text-sm">Loading...</div>
+    <!-- Performance view -->
+    <div id="performanceView">
+      <div id="brandsGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div class="col-span-3 text-center py-12 text-slate-500 text-sm">Loading...</div>
+      </div>
+    </div>
+
+    <!-- Mapping view -->
+    <div id="mappingView" class="hidden">
+      <div id="brandList" class="space-y-3"></div>
+      <div id="emptyState" class="hidden text-center py-16">
+        <p class="text-slate-500 text-sm mb-3">No brands yet.</p>
+        <button onclick="openAddBrand()" class="text-sm font-medium text-indigo-400 hover:text-indigo-300">Add your first brand →</button>
+      </div>
     </div>
 
   </div>
 
+  <!-- Add Brand Modal -->
+  <div id="addBrandModal" class="hidden fixed inset-0 rmc-modal-backdrop z-50 flex items-center justify-center p-4"
+       onclick="if(event.target===this)closeAddBrand()">
+    <div class="rmc-modal w-full max-w-md p-6">
+      <h2 class="text-base font-semibold mb-4" style="color:var(--text)">Add Brand</h2>
+      <div class="space-y-4">
+        <div>
+          <label class="block text-xs font-medium mb-1" style="color:var(--text-2)">Brand Name</label>
+          <input id="newBrandName" type="text" placeholder="e.g. Acure"
+            class="rmc-input w-full"
+            onkeydown="if(event.key==='Enter')saveBrand()" />
+        </div>
+        <div>
+          <label class="block text-xs font-medium mb-1" style="color:var(--text-2)">Marketplace</label>
+          <select id="newBrandMarketplace" class="rmc-select">
+            <option value="CA">Canada (CA)</option>
+            <option value="US">United States (US)</option>
+            <option value="UK">United Kingdom (UK)</option>
+            <option value="DE">Germany (DE)</option>
+          </select>
+        </div>
+        <div id="addBrandError" class="hidden text-sm text-red-400"></div>
+      </div>
+      <div class="flex gap-3 mt-6">
+        <button onclick="closeAddBrand()" class="btn-ghost flex-1 justify-center">Cancel</button>
+        <button onclick="saveBrand()" class="btn-primary flex-1 justify-center">Add Brand</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Import Modal -->
+  <div id="importModal" class="hidden fixed inset-0 rmc-modal-backdrop z-50 flex items-center justify-center p-4">
+    <div class="rmc-modal w-full max-w-sm p-8 text-center">
+      <div id="importLoading">
+        <div class="rmc-spinner w-8 h-8 mb-4" style="width:32px;height:32px;border-width:3px"></div>
+        <p class="text-sm font-medium" style="color:var(--text)">Importing from Amazon...</p>
+        <p class="text-xs mt-1" style="color:var(--text-2)">Pulling listings + catalog data. Takes ~1 minute.</p>
+      </div>
+      <div id="importError" class="hidden">
+        <p class="text-sm font-medium text-red-400 mb-2">Import failed</p>
+        <p id="importErrorMsg" class="text-xs mb-4" style="color:var(--text-2)"></p>
+        <button onclick="closeImport()" class="text-sm underline" style="color:var(--text-2)">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Rename Modal -->
+  <div id="renameModal" class="hidden fixed inset-0 rmc-modal-backdrop z-50 flex items-center justify-center p-4"
+       onclick="if(event.target===this)closeRename()">
+    <div class="rmc-modal w-full max-w-sm p-6">
+      <h2 class="text-base font-semibold mb-4" style="color:var(--text)">Rename Brand</h2>
+      <input id="renameInput" type="text" class="rmc-input w-full mb-2"
+        placeholder="Brand name"
+        onkeydown="if(event.key==='Enter')saveRename()" />
+      <div id="renameError" class="hidden text-sm text-red-400 mb-3"></div>
+      <div class="flex gap-3 mt-4">
+        <button onclick="closeRename()" class="btn-ghost flex-1 justify-center">Cancel</button>
+        <button onclick="saveRename()" class="btn-primary flex-1 justify-center">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delete Confirm Modal -->
+  <div id="deleteModal" class="hidden fixed inset-0 rmc-modal-backdrop z-50 flex items-center justify-center p-4"
+       onclick="if(event.target===this)closeDeleteModal()">
+    <div class="rmc-modal w-full max-w-sm p-6">
+      <h2 class="text-base font-semibold mb-2" style="color:var(--text)">Remove Brand?</h2>
+      <p class="text-sm mb-6" style="color:var(--text-2)">This removes the brand and all its ASIN assignments. No Amazon data is deleted.</p>
+      <div class="flex gap-3">
+        <button onclick="closeDeleteModal()" class="btn-ghost flex-1 justify-center">Cancel</button>
+        <button id="confirmDeleteBtn" class="flex-1 px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors">Remove</button>
+      </div>
+    </div>
+  </div>
+
   <script>
+    // ── State ─────────────────────────────────────────────────────────────────
     let brandsData = [];
     let presetMetrics = {};
     let activePreset = localStorage.getItem('brandPreset') || 'last30d';
     let currency = localStorage.getItem('currency') || 'CAD';
     let fxRate = { usdToCad: 1.38, cadToUsd: 0.724 };
+    let activeView = localStorage.getItem('brandsView') || 'performance';
+    let expandedBrands = new Set();
+    let selectedAsins = new Set();
 
+    const urlParams = new URLSearchParams(window.location.search);
+    const focusBrand = urlParams.get('brand');
+    if (focusBrand) { expandedBrands.add(focusBrand); activeView = 'mapping'; }
+
+    // ── Formatting ────────────────────────────────────────────────────────────
     function fmt(cad, usd = 0) {
-      if (currency === 'CAD') {
-        return 'CA$' + ((cad || 0) + (usd || 0) * fxRate.usdToCad).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      }
+      if (currency === 'CAD') return 'CA$' + ((cad || 0) + (usd || 0) * fxRate.usdToCad).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       return 'US$' + ((usd || 0) + (cad || 0) * fxRate.cadToUsd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
 
     function updateToggleUI() {
-      const active = 'text-xs px-3 py-1 rounded-md font-medium bg-white text-slate-900 shadow-sm';
-      const inactive = 'text-xs px-3 py-1 rounded-md font-medium text-slate-400 hover:text-white';
-      document.getElementById('toggleCAD').className = currency === 'CAD' ? active : inactive;
-      document.getElementById('toggleUSD').className = currency === 'USD' ? active : inactive;
+      document.getElementById('toggleCAD').classList.toggle('active', currency === 'CAD');
+      document.getElementById('toggleUSD').classList.toggle('active', currency === 'USD');
     }
 
     function setCurrency(c) {
       currency = c;
       localStorage.setItem('currency', c);
       updateToggleUI();
-      render();
+      renderPerformance();
     }
 
+    // ── View switching ────────────────────────────────────────────────────────
+    function setView(view) {
+      activeView = view;
+      localStorage.setItem('brandsView', view);
+      const isPerfActive = view === 'performance';
+      document.getElementById('performanceView').classList.toggle('hidden', !isPerfActive);
+      document.getElementById('mappingView').classList.toggle('hidden', isPerfActive);
+      document.getElementById('presetBtns').classList.toggle('hidden', !isPerfActive);
+      document.getElementById('mappingActions').classList.toggle('hidden', isPerfActive);
+      document.getElementById('view-performance').classList.toggle('active', isPerfActive);
+      document.getElementById('view-mapping').classList.toggle('active', !isPerfActive);
+      if (!isPerfActive) renderMapping();
+    }
+
+    // ── Performance view ──────────────────────────────────────────────────────
     function setPreset(key) {
       activePreset = key;
       localStorage.setItem('brandPreset', key);
       document.querySelectorAll('.preset-btn').forEach(btn => {
-        const active = btn.id === `preset-${key}`;
-        btn.classList.toggle('bg-slate-700', active);
-        btn.classList.toggle('text-white', active);
-        btn.classList.toggle('border-slate-500', active);
-        btn.classList.toggle('text-slate-400', !active);
-        btn.classList.toggle('border-slate-600', !active);
+        btn.classList.toggle('active', btn.id === `preset-${key}`);
       });
-      render();
+      renderPerformance();
     }
 
-    function render() {
+    function renderPerformance() {
       const presetBrandData = presetMetrics.presets?.[activePreset]?.brands || {};
       document.getElementById('brandCount').textContent = `(${brandsData.length})`;
 
       if (!brandsData.length) {
         document.getElementById('brandsGrid').innerHTML =
-          '<div class="col-span-3 text-center py-12 text-slate-500 text-sm">No brands — <a href="/admin.html" class="text-indigo-400">add one</a></div>';
+          '<div class="col-span-3 text-center py-12 text-slate-500 text-sm">No brands — switch to Mapping to add one</div>';
         return;
       }
 
@@ -119,41 +238,438 @@
         ].filter(Boolean).join('') : '';
 
         return `
-          <div class="brand-card bg-slate-800 border border-slate-700 rounded-xl overflow-hidden cursor-pointer shadow-md"
-               onclick="location.href='/brand.html?id=${brand.id}'">
-            <div class="h-1" style="background:${brand.color}"></div>
+          <div class="rmc-card brand-card overflow-hidden cursor-pointer"
+               onclick="location.href='/brand.html?id=${brand.id}'" style="border-top:3px solid ${brand.color}">
             <div class="p-5">
               <div class="flex items-start justify-between mb-3">
                 <div>
-                  <h3 class="font-semibold text-slate-100 text-sm">${brand.name}</h3>
-                  <span class="text-xs text-slate-500">${brand.marketplace} · ${brand.asins.length} ASINs</span>
+                  <h3 class="font-semibold text-sm" style="color:var(--text)">${brand.name}</h3>
+                  <span class="text-xs" style="color:var(--text-3)">${brand.marketplace} · ${brand.asins.length} ASINs</span>
                 </div>
                 <div class="flex flex-wrap gap-1 justify-end">${alertBadges}</div>
               </div>
               ${m ? `
               <div class="grid grid-cols-2 gap-3 mb-4">
-                <div><p class="text-xs text-slate-500">Revenue</p><p class="text-lg font-bold text-slate-100">${fmt(m.revenueCad, m.revenueUsd)}</p></div>
-                <div><p class="text-xs text-slate-500">Units</p><p class="text-lg font-bold text-slate-100">${(m.units || 0).toLocaleString()}</p></div>
-                <div><p class="text-xs text-slate-500">Sessions</p><p class="text-lg font-bold text-slate-100">${(m.sessions || 0).toLocaleString()}</p></div>
-                <div><p class="text-xs text-slate-500">CVR</p><p class="text-lg font-bold text-slate-100">${m.cvr != null ? m.cvr.toFixed(2) + '%' : '—'}</p></div>
+                <div><p class="text-xs mb-0.5" style="color:var(--text-3)">Revenue</p><p class="text-lg font-bold" style="color:var(--text)">${fmt(m.revenueCad, m.revenueUsd)}</p></div>
+                <div><p class="text-xs mb-0.5" style="color:var(--text-3)">Units</p><p class="text-lg font-bold" style="color:var(--text)">${(m.units || 0).toLocaleString()}</p></div>
+                <div><p class="text-xs mb-0.5" style="color:var(--text-3)">Sessions</p><p class="text-lg font-bold" style="color:var(--text)">${(m.sessions || 0).toLocaleString()}</p></div>
+                <div><p class="text-xs mb-0.5" style="color:var(--text-3)">Avg CVR</p><p class="text-lg font-bold" style="color:var(--text)">${m.avgCvr != null ? m.avgCvr.toFixed(2) + '%' : '—'}</p></div>
               </div>
               <div>
                 <div class="flex items-center justify-between mb-1">
-                  <span class="text-xs text-slate-500">Buy Box</span>
-                  <span class="text-xs font-medium text-slate-300">${buyBox != null ? buyBox.toFixed(1) + '%' : '—'}</span>
+                  <span class="text-xs" style="color:var(--text-3)">Buy Box</span>
+                  <span class="text-xs font-medium" style="color:var(--text-2)">${buyBox != null ? buyBox.toFixed(1) + '%' : '—'}</span>
                 </div>
-                <div class="w-full bg-slate-700 rounded-full h-1.5">
-                  <div class="${buyBoxColor} h-1.5 rounded-full" style="width:${buyBox || 0}%"></div>
+                <div class="w-full rounded-full h-1" style="background:rgba(255,255,255,0.08)">
+                  <div class="${buyBoxColor} h-1 rounded-full" style="width:${buyBox || 0}%"></div>
                 </div>
               </div>` : `
               <div class="py-4 text-center">
-                <p class="text-xs text-slate-600">No data — sync pending</p>
+                <p class="text-xs" style="color:var(--text-3)">No data — sync pending</p>
               </div>`}
             </div>
           </div>`;
       }).join('');
     }
 
+    // ── Mapping view ──────────────────────────────────────────────────────────
+    function renderMapping() {
+      const list = document.getElementById('brandList');
+      const empty = document.getElementById('emptyState');
+      if (!brandsData.length) { list.innerHTML = ''; empty.classList.remove('hidden'); return; }
+      empty.classList.add('hidden');
+      list.innerHTML = brandsData.map(b => brandRow(b)).join('');
+      if (focusBrand) {
+        const el = document.getElementById(`brand-${focusBrand}`);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+
+    function brandRow(brand) {
+      const isExpanded = expandedBrands.has(brand.id);
+      const isUnknown = brand.id === 'unknown-brand';
+      const selCount = [...selectedAsins].filter(k => k.startsWith(brand.id + ':')).length;
+      const allSelected = selCount === brand.asins.length && brand.asins.length > 0;
+
+      const unknownBadge = isUnknown && brand.asins.length > 0
+        ? `<span class="text-xs font-medium text-amber-400 bg-amber-900/30 border border-amber-700 px-2 py-0.5 rounded-full ml-1">⚠ ${brand.asins.length} need remapping</span>`
+        : '';
+
+      const vendorSection = isExpanded && !isUnknown ? `
+        <div class="border-t border-slate-700 px-4 py-3 bg-slate-900/40">
+          <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Brand Settings</p>
+          <div class="grid grid-cols-2 gap-2 mb-2">
+            <div>
+              <label class="text-xs text-slate-500 block mb-0.5">Vendor Name</label>
+              <input type="text" value="${(brand.vendor?.name||'').replace(/"/g,'&quot;')}" placeholder="Supplier name"
+                class="w-full bg-slate-700 border border-slate-600 text-white rounded px-2 py-1 text-xs focus:outline-none focus:border-indigo-500"
+                onblur="saveVendorField('${brand.id}', 'name', this.value)" />
+            </div>
+            <div>
+              <label class="text-xs text-slate-500 block mb-0.5">Vendor Phone</label>
+              <input type="text" value="${(brand.vendor?.phone||'').replace(/"/g,'&quot;')}" placeholder="Phone"
+                class="w-full bg-slate-700 border border-slate-600 text-white rounded px-2 py-1 text-xs focus:outline-none focus:border-indigo-500"
+                onblur="saveVendorField('${brand.id}', 'phone', this.value)" />
+            </div>
+            <div>
+              <label class="text-xs text-slate-500 block mb-0.5">Vendor Address</label>
+              <input type="text" value="${(brand.vendor?.address||'').replace(/"/g,'&quot;')}" placeholder="Street address"
+                class="w-full bg-slate-700 border border-slate-600 text-white rounded px-2 py-1 text-xs focus:outline-none focus:border-indigo-500"
+                onblur="saveVendorField('${brand.id}', 'address', this.value)" />
+            </div>
+            <div>
+              <label class="text-xs text-slate-500 block mb-0.5">City / Province / Postal</label>
+              <input type="text" value="${(brand.vendor?.city||'').replace(/"/g,'&quot;')}" placeholder="City, Province, Postal Code"
+                class="w-full bg-slate-700 border border-slate-600 text-white rounded px-2 py-1 text-xs focus:outline-none focus:border-indigo-500"
+                onblur="saveVendorField('${brand.id}', 'city', this.value)" />
+            </div>
+          </div>
+          <div class="flex items-center gap-3 mt-1">
+            <label class="text-xs text-slate-500 whitespace-nowrap">Reorder buffer (days beyond lead time):</label>
+            <input type="number" min="0" value="${brand.reorderBuffer ?? 30}" placeholder="30"
+              class="w-20 bg-slate-700 border border-slate-600 text-white rounded px-2 py-1 text-xs focus:outline-none focus:border-indigo-500"
+              style="-moz-appearance:textfield"
+              onblur="saveReorderBuffer('${brand.id}', this.value)" />
+          </div>
+        </div>` : '';
+
+      const asinSection = isExpanded ? `
+        <div class="border-t ${isUnknown ? 'border-amber-800/40' : 'border-slate-700'} pb-4">
+          <div id="bulk-bar-${brand.id}">${bulkActionBar(brand.id)}</div>
+          <div class="flex items-center gap-2 px-4 py-2 border-b border-slate-700/50">
+            <input type="checkbox" id="select-all-${brand.id}"
+              class="w-3.5 h-3.5 rounded border-slate-600 text-indigo-500 cursor-pointer"
+              ${allSelected ? 'checked' : ''}
+              onchange="toggleSelectAll('${brand.id}', this.checked)" />
+            <span class="text-xs text-slate-500">Select all</span>
+          </div>
+          <div class="px-2 pt-1 mb-3" id="asinList-${brand.id}">
+            ${brand.asins.length === 0
+              ? '<p class="text-xs text-slate-500 py-2 px-2">No ASINs assigned yet.</p>'
+              : brand.asins.map(asin => asinRow(brand.id, asin)).join('')}
+          </div>
+          <div class="flex gap-2 px-4 mt-2">
+            <input id="asinInput-${brand.id}" type="text" placeholder="Enter ASIN (e.g. B003Z4UKGM)" maxlength="10"
+              class="flex-1 bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-1.5 text-xs font-mono uppercase focus:outline-none focus:border-indigo-500 placeholder-slate-500"
+              onkeydown="if(event.key==='Enter') addAsin('${brand.id}')"
+              oninput="this.value=this.value.toUpperCase()" />
+            <button onclick="addAsin('${brand.id}')"
+              class="px-3 py-1.5 text-xs font-medium bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 transition-colors">
+              Add
+            </button>
+          </div>
+          <div id="asinError-${brand.id}" class="hidden text-xs text-red-400 mt-1.5 px-4"></div>
+        </div>` : '';
+
+      return `
+        <div id="brand-${brand.id}" class="bg-slate-800 rounded-xl border ${isUnknown && brand.asins.length > 0 ? 'border-amber-700/50' : 'border-slate-700'} overflow-hidden">
+          <div class="flex items-center gap-3 px-4 py-3.5 cursor-pointer hover:bg-slate-700/30 transition-colors"
+               onclick="toggleBrand('${brand.id}')">
+            <div class="w-3 h-3 rounded-full flex-shrink-0" style="background:${brand.color}"></div>
+            <div class="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
+              <span class="font-medium text-white text-sm">${brand.name}</span>
+              <span class="text-xs text-slate-500">${brand.marketplace} &bull; ${brand.asins.length} ASIN${brand.asins.length !== 1 ? 's' : ''}</span>
+              ${unknownBadge}
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <a href="/brand.html?id=${brand.id}" onclick="event.stopPropagation()"
+                class="text-xs text-indigo-400 hover:text-indigo-300 font-medium px-2 py-1 hover:bg-slate-700 rounded transition-colors">
+                View →
+              </a>
+              <button onclick="event.stopPropagation(); openRename('${brand.id}', '${brand.name.replace(/'/g, "\\'")}')"
+                class="p-1 text-slate-600 hover:text-slate-300 transition-colors rounded" title="Rename">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                </svg>
+              </button>
+              <button onclick="event.stopPropagation(); confirmDelete('${brand.id}', '${brand.name}')"
+                class="p-1 text-slate-600 hover:text-red-400 transition-colors rounded">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                </svg>
+              </button>
+              <svg class="w-4 h-4 text-slate-500 transition-transform ${isExpanded ? 'rotate-180' : ''}"
+                fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+              </svg>
+            </div>
+          </div>
+          ${vendorSection}
+          ${asinSection}
+        </div>`;
+    }
+
+    function bulkActionBar(brandId) {
+      const selected = [...selectedAsins].filter(k => k.startsWith(brandId + ':'));
+      if (selected.length === 0) return '';
+      const otherBrands = brandsData.filter(b => b.id !== brandId);
+      const opts = otherBrands.map(b => `<option value="${b.id}">${b.name}</option>`).join('');
+      return `
+        <div class="flex items-center gap-2 px-4 py-2.5 bg-indigo-900/30 border-b border-indigo-800/50">
+          <span class="text-xs font-medium text-indigo-300">${selected.length} selected</span>
+          <select id="bulkTarget-${brandId}"
+            class="text-xs bg-slate-700 border border-slate-600 text-slate-200 rounded px-2 py-1 focus:outline-none focus:border-indigo-500">
+            <option value="" disabled selected>Move to…</option>
+            ${opts}
+          </select>
+          <button onclick="bulkMove('${brandId}')"
+            class="text-xs font-medium px-3 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-500 transition-colors">
+            Apply
+          </button>
+          <button onclick="clearSelection('${brandId}')" class="text-xs text-slate-400 hover:text-white transition-colors">Clear</button>
+        </div>`;
+    }
+
+    function asinRow(brandId, asin) {
+      const brand = brandsData.find(b => b.id === brandId);
+      const title = brand?.asinTitles?.[asin] || '';
+      const titleDisplay = title.length > 60 ? title.slice(0, 60) + '…' : title;
+      const otherBrands = brandsData.filter(b => b.id !== brandId);
+      const opts = otherBrands.map(b => `<option value="${b.id}">${b.name}</option>`).join('');
+      const checked = selectedAsins.has(`${brandId}:${asin}`) ? 'checked' : '';
+      return `
+        <div class="flex items-center gap-2 py-1.5 px-2 rounded-lg hover:bg-slate-700/30">
+          <input type="checkbox" id="cb-${brandId}-${asin}"
+            class="w-3.5 h-3.5 rounded border-slate-600 text-indigo-500 cursor-pointer flex-shrink-0"
+            ${checked} onchange="toggleAsinSelect('${brandId}', '${asin}', this.checked)" />
+          <span class="font-mono text-xs text-slate-400 flex-shrink-0 w-24">${asin}</span>
+          <span class="text-xs text-slate-500 flex-1 truncate min-w-0" title="${title.replace(/"/g,'&quot;')}">${titleDisplay}</span>
+          <div class="flex items-center gap-1 flex-shrink-0">
+            ${otherBrands.length > 0 ? `
+            <select onchange="moveAsin('${brandId}','${asin}',this.value);this.value=''"
+              class="text-xs bg-slate-700 border border-slate-600 text-slate-300 rounded px-1 py-0.5 focus:outline-none focus:border-indigo-500 cursor-pointer">
+              <option value="" disabled selected>Move to…</option>
+              ${opts}
+            </select>` : ''}
+            <button onclick="removeAsin('${brandId}','${asin}')" class="text-slate-600 hover:text-red-400 transition-colors">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+              </svg>
+            </button>
+          </div>
+        </div>`;
+    }
+
+    // ── Selection ─────────────────────────────────────────────────────────────
+    function toggleAsinSelect(brandId, asin, checked) {
+      const key = `${brandId}:${asin}`;
+      if (checked) selectedAsins.add(key); else selectedAsins.delete(key);
+      refreshBulkBar(brandId);
+    }
+
+    function toggleSelectAll(brandId, checked) {
+      const brand = brandsData.find(b => b.id === brandId);
+      if (!brand) return;
+      brand.asins.forEach(asin => {
+        const key = `${brandId}:${asin}`;
+        if (checked) selectedAsins.add(key); else selectedAsins.delete(key);
+        const cb = document.getElementById(`cb-${brandId}-${asin}`);
+        if (cb) cb.checked = checked;
+      });
+      refreshBulkBar(brandId);
+    }
+
+    function clearSelection(brandId) {
+      [...selectedAsins].filter(k => k.startsWith(brandId + ':')).forEach(k => selectedAsins.delete(k));
+      const brand = brandsData.find(b => b.id === brandId);
+      brand?.asins.forEach(asin => {
+        const cb = document.getElementById(`cb-${brandId}-${asin}`);
+        if (cb) cb.checked = false;
+      });
+      const sa = document.getElementById(`select-all-${brandId}`);
+      if (sa) sa.checked = false;
+      refreshBulkBar(brandId);
+    }
+
+    function refreshBulkBar(brandId) {
+      const el = document.getElementById(`bulk-bar-${brandId}`);
+      if (el) el.innerHTML = bulkActionBar(brandId);
+    }
+
+    async function bulkMove(brandId) {
+      const target = document.getElementById(`bulkTarget-${brandId}`)?.value;
+      if (!target) return;
+      const asins = [...selectedAsins].filter(k => k.startsWith(brandId + ':')).map(k => k.slice(brandId.length + 1));
+      if (asins.length === 0) return;
+      const res = await fetch(`/api/brands/${brandId}/asins/bulk-move`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ asins, toBrandId: target })
+      });
+      const data = await res.json();
+      if (!res.ok) { alert(data.error); return; }
+      asins.forEach(asin => selectedAsins.delete(`${brandId}:${asin}`));
+      const fromIdx = brandsData.findIndex(b => b.id === brandId);
+      const toIdx = brandsData.findIndex(b => b.id === target);
+      if (fromIdx !== -1) brandsData[fromIdx] = data.from;
+      if (toIdx !== -1) brandsData[toIdx] = data.to;
+      renderMapping();
+    }
+
+    // ── Brand actions ─────────────────────────────────────────────────────────
+    function toggleBrand(id) {
+      if (expandedBrands.has(id)) expandedBrands.delete(id);
+      else expandedBrands.add(id);
+      renderMapping();
+    }
+
+    async function addAsin(brandId) {
+      const input = document.getElementById(`asinInput-${brandId}`);
+      const errEl = document.getElementById(`asinError-${brandId}`);
+      const asin = input.value.trim().toUpperCase();
+      errEl.classList.add('hidden');
+      if (!asin) return;
+      if (!/^[A-Z0-9]{10}$/.test(asin)) {
+        errEl.textContent = 'ASINs must be exactly 10 alphanumeric characters.';
+        errEl.classList.remove('hidden');
+        return;
+      }
+      const res = await fetch(`/api/brands/${brandId}/asins`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ asin })
+      });
+      const data = await res.json();
+      if (!res.ok) { errEl.textContent = data.error; errEl.classList.remove('hidden'); return; }
+      input.value = '';
+      const idx = brandsData.findIndex(b => b.id === brandId);
+      if (idx !== -1) brandsData[idx] = data;
+      renderMapping();
+    }
+
+    async function removeAsin(brandId, asin) {
+      const res = await fetch(`/api/brands/${brandId}/asins/${asin}`, { method: 'DELETE' });
+      const data = await res.json();
+      selectedAsins.delete(`${brandId}:${asin}`);
+      const idx = brandsData.findIndex(b => b.id === brandId);
+      if (idx !== -1) brandsData[idx] = data;
+      renderMapping();
+    }
+
+    async function moveAsin(fromBrandId, asin, toBrandId) {
+      if (!toBrandId) return;
+      const res = await fetch(`/api/brands/${fromBrandId}/asins/${asin}/move`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ toBrandId })
+      });
+      const data = await res.json();
+      if (!res.ok) { alert(data.error); return; }
+      selectedAsins.delete(`${fromBrandId}:${asin}`);
+      const fromIdx = brandsData.findIndex(b => b.id === fromBrandId);
+      const toIdx = brandsData.findIndex(b => b.id === toBrandId);
+      if (fromIdx !== -1) brandsData[fromIdx] = data.from;
+      if (toIdx !== -1) brandsData[toIdx] = data.to;
+      renderMapping();
+    }
+
+    // ── Add Brand modal ───────────────────────────────────────────────────────
+    function openAddBrand() {
+      document.getElementById('newBrandName').value = '';
+      document.getElementById('addBrandError').classList.add('hidden');
+      document.getElementById('addBrandModal').classList.remove('hidden');
+      setTimeout(() => document.getElementById('newBrandName').focus(), 50);
+    }
+    function closeAddBrand() { document.getElementById('addBrandModal').classList.add('hidden'); }
+
+    async function saveBrand() {
+      const name = document.getElementById('newBrandName').value.trim();
+      const marketplace = document.getElementById('newBrandMarketplace').value;
+      const errEl = document.getElementById('addBrandError');
+      errEl.classList.add('hidden');
+      if (!name) { errEl.textContent = 'Brand name is required.'; errEl.classList.remove('hidden'); return; }
+      const res = await fetch('/api/brands', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, marketplace })
+      });
+      const data = await res.json();
+      if (!res.ok) { errEl.textContent = data.error; errEl.classList.remove('hidden'); return; }
+      brandsData.push(data);
+      expandedBrands.add(data.id);
+      closeAddBrand();
+      setView('mapping');
+    }
+
+    // ── Rename modal ──────────────────────────────────────────────────────────
+    let pendingRenameId = null;
+    function openRename(id, currentName) {
+      pendingRenameId = id;
+      document.getElementById('renameInput').value = currentName;
+      document.getElementById('renameError').classList.add('hidden');
+      document.getElementById('renameModal').classList.remove('hidden');
+      setTimeout(() => document.getElementById('renameInput').select(), 50);
+    }
+    function closeRename() { document.getElementById('renameModal').classList.add('hidden'); pendingRenameId = null; }
+
+    async function saveRename() {
+      const name = document.getElementById('renameInput').value.trim();
+      const errEl = document.getElementById('renameError');
+      errEl.classList.add('hidden');
+      if (!name) { errEl.textContent = 'Name cannot be empty.'; errEl.classList.remove('hidden'); return; }
+      const res = await fetch(`/api/brands/${pendingRenameId}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name })
+      });
+      const data = await res.json();
+      if (!res.ok) { errEl.textContent = data.error || 'Failed to rename.'; errEl.classList.remove('hidden'); return; }
+      const idx = brandsData.findIndex(b => b.id === pendingRenameId);
+      if (idx !== -1) brandsData[idx].name = data.name;
+      closeRename();
+      renderMapping();
+    }
+
+    // ── Delete modal ──────────────────────────────────────────────────────────
+    let pendingDeleteId = null;
+    function confirmDelete(id) {
+      pendingDeleteId = id;
+      document.getElementById('deleteModal').classList.remove('hidden');
+      document.getElementById('confirmDeleteBtn').onclick = async () => {
+        await fetch(`/api/brands/${pendingDeleteId}`, { method: 'DELETE' });
+        brandsData = brandsData.filter(b => b.id !== pendingDeleteId);
+        expandedBrands.delete(pendingDeleteId);
+        closeDeleteModal();
+        renderMapping();
+      };
+    }
+    function closeDeleteModal() { document.getElementById('deleteModal').classList.add('hidden'); pendingDeleteId = null; }
+
+    // ── Vendor / settings ─────────────────────────────────────────────────────
+    async function saveVendorField(brandId, field, value) {
+      const brand = brandsData.find(b => b.id === brandId);
+      if (!brand) return;
+      const vendor = { name: brand.vendor?.name || '', address: brand.vendor?.address || '', city: brand.vendor?.city || '', phone: brand.vendor?.phone || '', [field]: value };
+      await fetch(`/api/brands/${brandId}/vendor`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(vendor)
+      });
+      const idx = brandsData.findIndex(b => b.id === brandId);
+      if (idx !== -1) brandsData[idx].vendor = vendor;
+    }
+
+    async function saveReorderBuffer(brandId, days) {
+      const parsed = parseInt(days);
+      if (isNaN(parsed) || parsed < 0) return;
+      await fetch(`/api/brands/${brandId}/reorder-buffer`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ days: parsed })
+      });
+      const idx = brandsData.findIndex(b => b.id === brandId);
+      if (idx !== -1) brandsData[idx].reorderBuffer = parsed;
+    }
+
+    // ── Import from Amazon ────────────────────────────────────────────────────
+    async function startImport() {
+      document.getElementById('importModal').classList.remove('hidden');
+      document.getElementById('importLoading').classList.remove('hidden');
+      document.getElementById('importError').classList.add('hidden');
+      try {
+        const res = await fetch('/api/import/all', { method: 'POST' });
+        const data = await res.json();
+        if (!data.success) throw new Error(data.message);
+        brandsData = data.brands;
+        const unknown = brandsData.find(b => b.id === 'unknown-brand');
+        if (unknown?.asins.length > 0) expandedBrands.add('unknown-brand');
+        closeImport();
+        renderMapping();
+      } catch (err) {
+        document.getElementById('importLoading').classList.add('hidden');
+        document.getElementById('importErrorMsg').textContent = err.message;
+        document.getElementById('importError').classList.remove('hidden');
+      }
+    }
+    function closeImport() { document.getElementById('importModal').classList.add('hidden'); }
+
+    // ── Load ──────────────────────────────────────────────────────────────────
     async function load() {
       const [brandsRes, pmRes, fxRes] = await Promise.all([
         fetch('/api/brands').then(r => r.json()),
@@ -163,6 +679,8 @@
       fxRate = fxRes;
       presetMetrics = pmRes;
       brandsData = brandsRes.brands || [];
+      const unknown = brandsData.find(b => b.id === 'unknown-brand');
+      if (unknown?.asins.length > 0) expandedBrands.add('unknown-brand');
       if (brandsRes.lastSync) {
         document.getElementById('lastSyncText').textContent = 'Synced ' + new Date(brandsRes.lastSync).toLocaleString();
       }
@@ -170,6 +688,7 @@
       if (!available.includes(activePreset) && available.length > 0) activePreset = available[0];
       updateToggleUI();
       setPreset(activePreset);
+      setView(activeView);
     }
 
     load();

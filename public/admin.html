@@ -7,18 +7,23 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
-  <style>body { font-family: 'Inter', sans-serif; }</style>
+  <link rel="stylesheet" href="/style.css" />
 </head>
-<body class="bg-slate-50 min-h-screen">
+<body class="min-h-screen">
 
   <!-- Nav -->
-  <nav class="bg-white border-b border-slate-200 sticky top-0 z-10">
-    <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+  <nav class="rmc-nav">
+    <div class="max-w-7xl mx-auto px-8 py-5 flex items-center justify-between">
       <div class="flex items-center gap-6">
-        <span class="font-bold text-slate-900 text-base tracking-tight">RMC Dashboard</span>
+        <a href="/" class="nav-logo">
+          <img src="/rmc-logo.png" alt="RMC" />
+        </a>
         <div class="flex gap-1">
-          <a href="/" class="px-3 py-1.5 text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-md">Brands</a>
-          <a href="/admin.html" class="px-3 py-1.5 text-sm font-medium text-blue-600 bg-blue-50 rounded-md">ASIN Mapping</a>
+          <a href="/" class="nav-link">Dashboard</a>
+          <a href="/brands.html" class="nav-link">Brands</a>
+          <a href="/admin.html" class="nav-link active">ASIN Mapping</a>
+          <a href="/products.html" class="nav-link">Products</a>
+          <a href="/po.html" class="nav-link">PO Builder</a>
         </div>
       </div>
     </div>
@@ -28,21 +33,17 @@
 
     <div class="flex items-center justify-between mb-6">
       <div>
-        <h1 class="text-lg font-semibold text-slate-900">Brand & ASIN Mapping</h1>
-        <p class="text-sm text-slate-500 mt-0.5">Assign ASINs to brands so data can be aggregated correctly.</p>
+        <h1 class="text-lg font-semibold text-white">Brand & ASIN Mapping</h1>
+        <p class="text-sm text-slate-400 mt-0.5">Assign ASINs to brands so data can be aggregated correctly.</p>
       </div>
       <div class="flex gap-2">
-        <button onclick="startImport()"
-          class="text-sm px-4 py-2 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 transition-colors flex items-center gap-2">
+        <button onclick="startImport()" class="btn-primary">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
           </svg>
           Import from Amazon
         </button>
-        <button onclick="openAddBrand()"
-          class="text-sm px-4 py-2 bg-slate-900 text-white rounded-md font-medium hover:bg-slate-700 transition-colors">
-          + Add Brand
-        </button>
+        <button onclick="openAddBrand()" class="btn-ghost">+ Add Brand</button>
       </div>
     </div>
 
@@ -53,40 +54,40 @@
 
     <div id="emptyState" class="hidden text-center py-16">
       <p class="text-slate-500 text-sm mb-3">No brands yet.</p>
-      <button onclick="openAddBrand()" class="text-sm font-medium text-blue-600 hover:text-blue-800">Add your first brand →</button>
+      <button onclick="openAddBrand()" class="text-sm font-medium text-indigo-400 hover:text-indigo-300">Add your first brand →</button>
     </div>
 
   </div>
 
   <!-- Add Brand Modal -->
-  <div id="addBrandModal" class="hidden fixed inset-0 bg-black bg-opacity-40 z-50 flex items-center justify-center p-4">
-    <div class="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
-      <h2 class="text-base font-semibold text-slate-900 mb-4">Add Brand</h2>
+  <div id="addBrandModal" class="hidden fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4">
+    <div class="bg-slate-800 border border-slate-700 rounded-xl shadow-xl w-full max-w-md p-6">
+      <h2 class="text-base font-semibold text-white mb-4">Add Brand</h2>
       <div class="space-y-4">
         <div>
-          <label class="block text-sm font-medium text-slate-700 mb-1">Brand Name</label>
+          <label class="block text-sm font-medium text-slate-300 mb-1">Brand Name</label>
           <input id="newBrandName" type="text" placeholder="e.g. Acure" autofocus
-            class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            class="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500 placeholder-slate-500" />
         </div>
         <div>
-          <label class="block text-sm font-medium text-slate-700 mb-1">Marketplace</label>
+          <label class="block text-sm font-medium text-slate-300 mb-1">Marketplace</label>
           <select id="newBrandMarketplace"
-            class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            class="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500">
             <option value="CA">Canada (CA)</option>
             <option value="US">United States (US)</option>
             <option value="UK">United Kingdom (UK)</option>
             <option value="DE">Germany (DE)</option>
           </select>
         </div>
-        <div id="addBrandError" class="hidden text-sm text-red-600"></div>
+        <div id="addBrandError" class="hidden text-sm text-red-400"></div>
       </div>
       <div class="flex gap-3 mt-6">
         <button onclick="closeAddBrand()"
-          class="flex-1 px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors">
+          class="flex-1 px-4 py-2 text-sm font-medium text-slate-300 bg-slate-700 rounded-lg hover:bg-slate-600 transition-colors">
           Cancel
         </button>
         <button onclick="saveBrand()"
-          class="flex-1 px-4 py-2 text-sm font-medium text-white bg-slate-900 rounded-lg hover:bg-slate-700 transition-colors">
+          class="flex-1 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-500 transition-colors">
           Add Brand
         </button>
       </div>
@@ -94,29 +95,50 @@
   </div>
 
   <!-- Import Modal -->
-  <div id="importModal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-    <div class="bg-white rounded-xl shadow-xl w-full max-w-sm p-8 text-center">
+  <div id="importModal" class="hidden fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4">
+    <div class="bg-slate-800 border border-slate-700 rounded-xl shadow-xl w-full max-w-sm p-8 text-center">
       <div id="importLoading">
-        <div class="inline-block w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div>
-        <p class="text-sm font-medium text-slate-700">Importing from Amazon...</p>
+        <div class="inline-block w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+        <p class="text-sm font-medium text-slate-200">Importing from Amazon...</p>
         <p class="text-xs text-slate-400 mt-1">Pulling listings + catalog data. Takes ~1 minute.</p>
       </div>
       <div id="importError" class="hidden">
-        <p class="text-sm font-medium text-red-600 mb-2">Import failed</p>
-        <p id="importErrorMsg" class="text-xs text-slate-500 mb-4"></p>
-        <button onclick="closeImport()" class="text-sm text-slate-600 underline">Close</button>
+        <p class="text-sm font-medium text-red-400 mb-2">Import failed</p>
+        <p id="importErrorMsg" class="text-xs text-slate-400 mb-4"></p>
+        <button onclick="closeImport()" class="text-sm text-slate-400 underline">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Rename Modal -->
+  <div id="renameModal" class="hidden fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4">
+    <div class="bg-slate-800 border border-slate-700 rounded-xl shadow-xl w-full max-w-sm p-6">
+      <h2 class="text-base font-semibold text-white mb-4">Rename Brand</h2>
+      <input id="renameInput" type="text"
+        class="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500 mb-2"
+        placeholder="Brand name" />
+      <div id="renameError" class="hidden text-sm text-red-400 mb-3"></div>
+      <div class="flex gap-3 mt-4">
+        <button onclick="closeRename()"
+          class="flex-1 px-4 py-2 text-sm font-medium text-slate-300 bg-slate-700 rounded-lg hover:bg-slate-600 transition-colors">
+          Cancel
+        </button>
+        <button onclick="saveRename()"
+          class="flex-1 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-500 transition-colors">
+          Save
+        </button>
       </div>
     </div>
   </div>
 
   <!-- Delete Confirm Modal -->
-  <div id="deleteModal" class="hidden fixed inset-0 bg-black bg-opacity-40 z-50 flex items-center justify-center p-4">
-    <div class="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
-      <h2 class="text-base font-semibold text-slate-900 mb-2">Remove Brand?</h2>
-      <p class="text-sm text-slate-500 mb-6">This removes the brand and all its ASIN assignments. No Amazon data is deleted.</p>
+  <div id="deleteModal" class="hidden fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4">
+    <div class="bg-slate-800 border border-slate-700 rounded-xl shadow-xl w-full max-w-sm p-6">
+      <h2 class="text-base font-semibold text-white mb-2">Remove Brand?</h2>
+      <p class="text-sm text-slate-400 mb-6">This removes the brand and all its ASIN assignments. No Amazon data is deleted.</p>
       <div class="flex gap-3">
         <button onclick="closeDeleteModal()"
-          class="flex-1 px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors">
+          class="flex-1 px-4 py-2 text-sm font-medium text-slate-300 bg-slate-700 rounded-lg hover:bg-slate-600 transition-colors">
           Cancel
         </button>
         <button id="confirmDeleteBtn"
@@ -130,7 +152,7 @@
   <script>
     let brands = [];
     let expandedBrands = new Set();
-    let selectedAsins = new Set(); // "brandId:asin" keys
+    let selectedAsins = new Set();
 
     const params = new URLSearchParams(window.location.search);
     const focusBrand = params.get('brand');
@@ -140,7 +162,6 @@
       const res = await fetch('/api/brands');
       const data = await res.json();
       brands = data.brands;
-      // Auto-expand Unknown Brand if it has ASINs
       const unknown = brands.find(b => b.id === 'unknown-brand');
       if (unknown?.asins.length > 0) expandedBrands.add('unknown-brand');
       render();
@@ -165,66 +186,111 @@
       const allSelected = selCount === brand.asins.length && brand.asins.length > 0;
 
       const unknownBadge = isUnknown && brand.asins.length > 0
-        ? `<span class="text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full ml-1">⚠ ${brand.asins.length} need remapping</span>`
+        ? `<span class="text-xs font-medium text-amber-400 bg-amber-900/30 border border-amber-700 px-2 py-0.5 rounded-full ml-1">⚠ ${brand.asins.length} need remapping</span>`
         : '';
 
+      const vendorSection = isExpanded && !isUnknown ? `
+        <div class="border-t border-slate-700 px-4 py-3 bg-slate-900/40">
+          <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Brand Settings</p>
+          <div class="grid grid-cols-2 gap-2 mb-2">
+            <div>
+              <label class="text-xs text-slate-500 block mb-0.5">Vendor Name</label>
+              <input type="text" value="${(brand.vendor?.name||'').replace(/"/g,'&quot;')}" placeholder="Supplier name"
+                class="w-full bg-slate-700 border border-slate-600 text-white rounded px-2 py-1 text-xs focus:outline-none focus:border-indigo-500"
+                onblur="saveVendorField('${brand.id}', 'name', this.value)" />
+            </div>
+            <div>
+              <label class="text-xs text-slate-500 block mb-0.5">Vendor Phone</label>
+              <input type="text" value="${(brand.vendor?.phone||'').replace(/"/g,'&quot;')}" placeholder="Phone"
+                class="w-full bg-slate-700 border border-slate-600 text-white rounded px-2 py-1 text-xs focus:outline-none focus:border-indigo-500"
+                onblur="saveVendorField('${brand.id}', 'phone', this.value)" />
+            </div>
+            <div>
+              <label class="text-xs text-slate-500 block mb-0.5">Vendor Address</label>
+              <input type="text" value="${(brand.vendor?.address||'').replace(/"/g,'&quot;')}" placeholder="Street address"
+                class="w-full bg-slate-700 border border-slate-600 text-white rounded px-2 py-1 text-xs focus:outline-none focus:border-indigo-500"
+                onblur="saveVendorField('${brand.id}', 'address', this.value)" />
+            </div>
+            <div>
+              <label class="text-xs text-slate-500 block mb-0.5">City / Province / Postal</label>
+              <input type="text" value="${(brand.vendor?.city||'').replace(/"/g,'&quot;')}" placeholder="City, Province, Postal Code"
+                class="w-full bg-slate-700 border border-slate-600 text-white rounded px-2 py-1 text-xs focus:outline-none focus:border-indigo-500"
+                onblur="saveVendorField('${brand.id}', 'city', this.value)" />
+            </div>
+          </div>
+          <div class="flex items-center gap-3 mt-1">
+            <label class="text-xs text-slate-500 whitespace-nowrap">Reorder buffer (days beyond lead time):</label>
+            <input type="number" min="0" value="${brand.reorderBuffer ?? 30}" placeholder="30"
+              class="w-20 bg-slate-700 border border-slate-600 text-white rounded px-2 py-1 text-xs focus:outline-none focus:border-indigo-500"
+              style="-moz-appearance:textfield"
+              onblur="saveReorderBuffer('${brand.id}', this.value)" />
+          </div>
+        </div>` : '';
+
       const asinSection = isExpanded ? `
-        <div class="border-t ${isUnknown ? 'border-amber-100' : 'border-slate-100'} pb-4">
+        <div class="border-t ${isUnknown ? 'border-amber-800/40' : 'border-slate-700'} pb-4">
           <div id="bulk-bar-${brand.id}">${bulkActionBar(brand.id)}</div>
-          <div class="flex items-center gap-2 px-4 py-2 border-b border-slate-50">
+          <div class="flex items-center gap-2 px-4 py-2 border-b border-slate-700/50">
             <input type="checkbox" id="select-all-${brand.id}"
-              class="w-3.5 h-3.5 rounded border-slate-300 text-blue-600 cursor-pointer"
+              class="w-3.5 h-3.5 rounded border-slate-600 text-indigo-500 cursor-pointer"
               ${allSelected ? 'checked' : ''}
               onchange="toggleSelectAll('${brand.id}', this.checked)" />
-            <span class="text-xs text-slate-400">Select all</span>
+            <span class="text-xs text-slate-500">Select all</span>
           </div>
           <div class="px-2 pt-1 mb-3" id="asinList-${brand.id}">
             ${brand.asins.length === 0
-              ? '<p class="text-xs text-slate-400 py-2 px-2">No ASINs assigned yet.</p>'
+              ? '<p class="text-xs text-slate-500 py-2 px-2">No ASINs assigned yet.</p>'
               : brand.asins.map(asin => asinRow(brand.id, asin)).join('')
             }
           </div>
           <div class="flex gap-2 px-4 mt-2">
             <input id="asinInput-${brand.id}" type="text" placeholder="Enter ASIN (e.g. B003Z4UKGM)" maxlength="10"
-              class="flex-1 border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-mono uppercase focus:outline-none focus:ring-2 focus:ring-blue-500"
+              class="flex-1 bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-1.5 text-xs font-mono uppercase focus:outline-none focus:border-indigo-500 placeholder-slate-500"
               onkeydown="if(event.key==='Enter') addAsin('${brand.id}')"
               oninput="this.value=this.value.toUpperCase()" />
             <button onclick="addAsin('${brand.id}')"
-              class="px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
+              class="px-3 py-1.5 text-xs font-medium bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 transition-colors">
               Add
             </button>
           </div>
-          <div id="asinError-${brand.id}" class="hidden text-xs text-red-600 mt-1.5 px-4"></div>
+          <div id="asinError-${brand.id}" class="hidden text-xs text-red-400 mt-1.5 px-4"></div>
         </div>` : '';
 
       return `
-        <div id="brand-${brand.id}" class="bg-white rounded-xl border ${isUnknown && brand.asins.length > 0 ? 'border-amber-200' : 'border-slate-200'} shadow-sm overflow-hidden">
-          <div class="flex items-center gap-3 px-4 py-3.5 cursor-pointer hover:bg-slate-50 transition-colors"
+        <div id="brand-${brand.id}" class="bg-slate-800 rounded-xl border ${isUnknown && brand.asins.length > 0 ? 'border-amber-700/50' : 'border-slate-700'} overflow-hidden">
+          <div class="flex items-center gap-3 px-4 py-3.5 cursor-pointer hover:bg-slate-700/30 transition-colors"
                onclick="toggleBrand('${brand.id}')">
             <div class="w-3 h-3 rounded-full flex-shrink-0" style="background:${brand.color}"></div>
             <div class="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
-              <span class="font-medium text-slate-900 text-sm">${brand.name}</span>
-              <span class="text-xs text-slate-400">${brand.marketplace} &bull; ${brand.asins.length} ASIN${brand.asins.length !== 1 ? 's' : ''}</span>
+              <span class="font-medium text-white text-sm">${brand.name}</span>
+              <span class="text-xs text-slate-500">${brand.marketplace} &bull; ${brand.asins.length} ASIN${brand.asins.length !== 1 ? 's' : ''}</span>
               ${unknownBadge}
             </div>
             <div class="flex items-center gap-2 flex-shrink-0">
               <a href="/brand.html?id=${brand.id}" onclick="event.stopPropagation()"
-                class="text-xs text-blue-600 hover:text-blue-800 font-medium px-2 py-1 hover:bg-blue-50 rounded">
+                class="text-xs text-indigo-400 hover:text-indigo-300 font-medium px-2 py-1 hover:bg-slate-700 rounded transition-colors">
                 View →
               </a>
+              <button onclick="event.stopPropagation(); openRename('${brand.id}', '${brand.name.replace(/'/g, "\\'")}')"
+                class="p-1 text-slate-600 hover:text-slate-300 transition-colors rounded" title="Rename">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                </svg>
+              </button>
               <button onclick="event.stopPropagation(); confirmDelete('${brand.id}', '${brand.name}')"
-                class="p-1 text-slate-300 hover:text-red-500 transition-colors rounded">
+                class="p-1 text-slate-600 hover:text-red-400 transition-colors rounded">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                     d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
                 </svg>
               </button>
-              <svg class="w-4 h-4 text-slate-400 transition-transform ${isExpanded ? 'rotate-180' : ''}"
+              <svg class="w-4 h-4 text-slate-500 transition-transform ${isExpanded ? 'rotate-180' : ''}"
                 fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
               </svg>
             </div>
           </div>
+          ${vendorSection}
           ${asinSection}
         </div>`;
     }
@@ -235,18 +301,18 @@
       const otherBrands = brands.filter(b => b.id !== brandId);
       const opts = otherBrands.map(b => `<option value="${b.id}">${b.name}</option>`).join('');
       return `
-        <div class="flex items-center gap-2 px-4 py-2.5 bg-blue-50 border-b border-blue-100">
-          <span class="text-xs font-medium text-blue-700">${selected.length} selected</span>
+        <div class="flex items-center gap-2 px-4 py-2.5 bg-indigo-900/30 border-b border-indigo-800/50">
+          <span class="text-xs font-medium text-indigo-300">${selected.length} selected</span>
           <select id="bulkTarget-${brandId}"
-            class="text-xs border border-blue-200 rounded px-2 py-1 text-slate-600 focus:outline-none focus:border-blue-400 bg-white">
+            class="text-xs bg-slate-700 border border-slate-600 text-slate-200 rounded px-2 py-1 focus:outline-none focus:border-indigo-500">
             <option value="" disabled selected>Move to…</option>
             ${opts}
           </select>
           <button onclick="bulkMove('${brandId}')"
-            class="text-xs font-medium px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors">
+            class="text-xs font-medium px-3 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-500 transition-colors">
             Apply
           </button>
-          <button onclick="clearSelection('${brandId}')" class="text-xs text-slate-500 hover:text-slate-700">Clear</button>
+          <button onclick="clearSelection('${brandId}')" class="text-xs text-slate-400 hover:text-white transition-colors">Clear</button>
         </div>`;
     }
 
@@ -259,20 +325,20 @@
       const checked = selectedAsins.has(`${brandId}:${asin}`) ? 'checked' : '';
 
       return `
-        <div class="flex items-center gap-2 py-1.5 px-2 rounded-lg hover:bg-slate-50">
+        <div class="flex items-center gap-2 py-1.5 px-2 rounded-lg hover:bg-slate-700/30">
           <input type="checkbox" id="cb-${brandId}-${asin}"
-            class="w-3.5 h-3.5 rounded border-slate-300 text-blue-600 cursor-pointer flex-shrink-0"
+            class="w-3.5 h-3.5 rounded border-slate-600 text-indigo-500 cursor-pointer flex-shrink-0"
             ${checked} onchange="toggleAsinSelect('${brandId}', '${asin}', this.checked)" />
-          <span class="font-mono text-xs text-slate-700 flex-shrink-0 w-24">${asin}</span>
-          <span class="text-xs text-slate-400 flex-1 truncate min-w-0" title="${title.replace(/"/g,'&quot;')}">${titleDisplay}</span>
+          <span class="font-mono text-xs text-slate-400 flex-shrink-0 w-24">${asin}</span>
+          <span class="text-xs text-slate-500 flex-1 truncate min-w-0" title="${title.replace(/"/g,'&quot;')}">${titleDisplay}</span>
           <div class="flex items-center gap-1 flex-shrink-0">
             ${otherBrands.length > 0 ? `
             <select onchange="moveAsin('${brandId}','${asin}',this.value);this.value=''"
-              class="text-xs border border-slate-200 rounded px-1 py-0.5 text-slate-500 focus:outline-none focus:border-blue-400 cursor-pointer bg-white">
+              class="text-xs bg-slate-700 border border-slate-600 text-slate-300 rounded px-1 py-0.5 focus:outline-none focus:border-indigo-500 cursor-pointer">
               <option value="" disabled selected>Move to…</option>
               ${opts}
             </select>` : ''}
-            <button onclick="removeAsin('${brandId}','${asin}')" class="text-slate-300 hover:text-red-500 transition-colors">
+            <button onclick="removeAsin('${brandId}','${asin}')" class="text-slate-600 hover:text-red-400 transition-colors">
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
               </svg>
@@ -421,6 +487,36 @@
       render();
     }
 
+    // ─── Rename modal ─────────────────────────────────────────────────────────
+
+    let pendingRenameId = null;
+    function openRename(id, currentName) {
+      pendingRenameId = id;
+      document.getElementById('renameInput').value = currentName;
+      document.getElementById('renameError').classList.add('hidden');
+      document.getElementById('renameModal').classList.remove('hidden');
+      setTimeout(() => document.getElementById('renameInput').select(), 50);
+    }
+    function closeRename() { document.getElementById('renameModal').classList.add('hidden'); pendingRenameId = null; }
+
+    async function saveRename() {
+      const name = document.getElementById('renameInput').value.trim();
+      const errEl = document.getElementById('renameError');
+      errEl.classList.add('hidden');
+      if (!name) { errEl.textContent = 'Name cannot be empty.'; errEl.classList.remove('hidden'); return; }
+      const res = await fetch(`/api/brands/${pendingRenameId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+      });
+      const data = await res.json();
+      if (!res.ok) { errEl.textContent = data.error || 'Failed to rename.'; errEl.classList.remove('hidden'); return; }
+      const idx = brands.findIndex(b => b.id === pendingRenameId);
+      if (idx !== -1) brands[idx].name = data.name;
+      closeRename();
+      render();
+    }
+
     // ─── Delete modal ─────────────────────────────────────────────────────────
 
     let pendingDeleteId = null;
@@ -439,9 +535,38 @@
 
     document.getElementById('addBrandModal').addEventListener('click', e => { if (e.target === e.currentTarget) closeAddBrand(); });
     document.getElementById('deleteModal').addEventListener('click', e => { if (e.target === e.currentTarget) closeDeleteModal(); });
+    document.getElementById('renameModal').addEventListener('click', e => { if (e.target === e.currentTarget) closeRename(); });
     document.getElementById('newBrandName').addEventListener('keydown', e => { if (e.key === 'Enter') saveBrand(); });
+    document.getElementById('renameInput').addEventListener('keydown', e => { if (e.key === 'Enter') saveRename(); });
 
     loadBrands();
+
+    // ─── Vendor / settings save ───────────────────────────────────────────────
+
+    async function saveVendorField(brandId, field, value) {
+      const brand = brands.find(b => b.id === brandId);
+      if (!brand) return;
+      const vendor = { name: brand.vendor?.name || '', address: brand.vendor?.address || '', city: brand.vendor?.city || '', phone: brand.vendor?.phone || '', [field]: value };
+      await fetch(`/api/brands/${brandId}/vendor`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(vendor)
+      });
+      const idx = brands.findIndex(b => b.id === brandId);
+      if (idx !== -1) brands[idx].vendor = vendor;
+    }
+
+    async function saveReorderBuffer(brandId, days) {
+      const parsed = parseInt(days);
+      if (isNaN(parsed) || parsed < 0) return;
+      await fetch(`/api/brands/${brandId}/reorder-buffer`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ days: parsed })
+      });
+      const idx = brands.findIndex(b => b.id === brandId);
+      if (idx !== -1) brands[idx].reorderBuffer = parsed;
+    }
 
     // ─── Import from Amazon ───────────────────────────────────────────────────
 

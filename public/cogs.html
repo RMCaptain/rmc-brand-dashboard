@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>COGS Entry — RMC Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body class="min-h-screen">
+
+  <!-- Nav -->
+  <nav class="rmc-nav">
+    <div class="max-w-5xl mx-auto px-8 py-5 flex items-center justify-between">
+      <div class="flex items-center gap-6">
+        <a href="/" class="nav-logo">
+          <img src="/rmc-logo.png" alt="RMC" />
+        </a>
+        <div class="flex gap-1">
+          <a href="/" class="nav-link">Dashboard</a>
+          <a href="/brands.html" class="nav-link">Brands</a>
+          <a href="/products.html" class="nav-link active">Products</a>
+          <a href="/po.html" class="nav-link">PO Builder</a>
+        </div>
+      </div>
+      <div id="saveStatus" class="text-xs" style="color:var(--text-3)"></div>
+    </div>
+  </nav>
+
+  <div class="max-w-5xl mx-auto px-6 py-6">
+
+    <div class="flex items-center justify-between mb-6">
+      <div>
+        <h1 class="text-lg font-semibold text-white">COGS Entry</h1>
+        <p class="text-sm text-slate-400 mt-0.5">Cost per unit in the brand's marketplace currency. Used to calculate gross profit.</p>
+      </div>
+      <button onclick="saveAll()" class="btn-primary" style="font-size:13px;padding:8px 16px;">Save All</button>
+    </div>
+
+    <div id="content">
+      <div class="text-slate-500 text-sm py-12 text-center">Loading...</div>
+    </div>
+
+  </div>
+
+  <script>
+    let brands = [];
+    let skuMap = {}; // { asin: sellerSku }
+    const dirty = {}; // { brandId: { asin: cost } }
+    const collapsed = new Set();
+
+    function toggleBrand(id) {
+      if (collapsed.has(id)) collapsed.delete(id);
+      else collapsed.add(id);
+      render();
+    }
+
+    async function load() {
+      const [brandsRes, pmRes] = await Promise.all([
+        fetch('/api/brands').then(r => r.json()),
+        fetch('/api/preset-metrics').then(r => r.json())
+      ]);
+      brands = brandsRes.brands.filter(b => b.id !== 'unknown-brand' && b.asins.length > 0);
+      // Build SKU map from any preset that has data
+      const presets = pmRes.presets || {};
+      for (const preset of Object.values(presets)) {
+        for (const bm of Object.values(preset.brands || {})) {
+          for (const sku of (bm.skus || [])) {
+            if (sku.sellerSku) skuMap[sku.asin] = sku.sellerSku;
+          }
+        }
+      }
+      render();
+    }
+
+    function render() {
+      const el = document.getElementById('content');
+      if (!brands.length) {
+        el.innerHTML = '<div class="text-slate-500 text-sm py-12 text-center">No brands with ASINs found.</div>';
+        return;
+      }
+
+      el.innerHTML = brands.map(brand => {
+        const currency = brand.marketplace === 'US' ? 'US$' : 'CA$';
+        const rows = brand.asins.map(asin => {
+          const title = brand.asinTitles?.[asin] || '';
+          const cost = brand.cogs?.[asin] ?? '';
+          const sku = skuMap[asin] || '';
+          return `
+            <tr class="border-b border-slate-700/50 hover:bg-slate-700/20">
+              <td class="px-4 py-2.5 whitespace-nowrap">
+                <div class="font-mono text-xs text-slate-400">${asin}</div>
+                ${sku ? `<div class="font-mono text-xs text-slate-500 mt-0.5 max-w-[200px] truncate" title="${sku}">${sku}</div>` : ''}
+              </td>
+              <td class="px-4 py-2.5 text-xs text-slate-300 max-w-xs truncate" title="${title}">${title || '—'}</td>
+              <td class="px-4 py-2.5 text-right">
+                <div class="flex items-center justify-end gap-1.5">
+                  <span class="text-xs text-slate-500">${currency}</span>
+                  <input type="number" min="0" step="0.01" placeholder="0.00"
+                    value="${cost}"
+                    data-brand="${brand.id}" data-asin="${asin}"
+                    class="w-24 text-right text-xs bg-slate-700 border border-slate-600 text-white rounded px-2 py-1 focus:outline-none focus:border-indigo-500"
+                    oninput="markDirty('${brand.id}', '${asin}', this.value)"
+                    onblur="saveSingle('${brand.id}', '${asin}', this.value)" />
+                </div>
+              </td>
+            </tr>`;
+        }).join('');
+
+        const isCollapsed = collapsed.has(brand.id);
+        return `
+          <div class="mb-6 bg-slate-800/50 rounded-xl border border-slate-700 overflow-hidden">
+            <div class="px-4 py-3 ${isCollapsed ? '' : 'border-b border-slate-700'} flex items-center gap-3 cursor-pointer hover:bg-slate-700/30 transition-colors select-none"
+                 onclick="toggleBrand('${brand.id}')">
+              <div class="w-2.5 h-2.5 rounded-full flex-shrink-0" style="background:${brand.color}"></div>
+              <span class="text-sm font-semibold text-white">${brand.name}</span>
+              <span class="text-xs text-slate-500">${brand.marketplace} · ${brand.asins.length} ASINs</span>
+              <svg class="w-4 h-4 text-slate-500 ml-auto transition-transform ${isCollapsed ? '' : 'rotate-180'}"
+                   fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+              </svg>
+            </div>
+            ${isCollapsed ? '' : `
+            <table class="w-full text-xs">
+              <thead>
+                <tr class="border-b border-slate-700 bg-slate-800">
+                  <th class="text-left px-4 py-2 text-slate-400 font-medium">ASIN / SKU</th>
+                  <th class="text-left px-4 py-2 text-slate-400 font-medium">Product</th>
+                  <th class="text-right px-4 py-2 text-slate-400 font-medium">Cost / Unit</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>`}
+          </div>`;
+      }).join('');
+    }
+
+    function markDirty(brandId, asin, value) {
+      if (!dirty[brandId]) dirty[brandId] = {};
+      dirty[brandId][asin] = value;
+      setStatus('Unsaved changes...');
+    }
+
+    async function saveSingle(brandId, asin, value) {
+      const cost = parseFloat(value);
+      if (isNaN(cost) || cost < 0) return;
+      await fetch(`/api/brands/${brandId}/asins/${asin}/cogs`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cost })
+      });
+      // Update local brand cache
+      const brand = brands.find(b => b.id === brandId);
+      if (brand) { brand.cogs = brand.cogs || {}; brand.cogs[asin] = cost; }
+      if (dirty[brandId]) delete dirty[brandId][asin];
+      setStatus('Saved');
+      setTimeout(() => setStatus(''), 2000);
+    }
+
+    async function saveAll() {
+      const entries = [];
+      document.querySelectorAll('input[data-brand]').forEach(input => {
+        const cost = parseFloat(input.value);
+        if (!isNaN(cost) && cost >= 0) {
+          entries.push({ brandId: input.dataset.brand, asin: input.dataset.asin, cost });
+        }
+      });
+
+      setStatus('Saving...');
+      await Promise.all(entries.map(({ brandId, asin, cost }) =>
+        fetch(`/api/brands/${brandId}/asins/${asin}/cogs`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cost })
+        })
+      ));
+      setStatus('All saved');
+      setTimeout(() => setStatus(''), 2000);
+    }
+
+    function setStatus(msg) {
+      document.getElementById('saveStatus').textContent = msg;
+    }
+
+    load();
+  </script>
+</body>
+</html>
