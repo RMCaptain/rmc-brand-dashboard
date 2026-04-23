@@ -820,6 +820,37 @@
     }
 
     loadDashboard();
+
+    // On load, check if a sync is already running (e.g. triggered server-side or via API)
+    (async function checkSyncOnLoad() {
+      try {
+        const s = await fetch('/api/sync/status').then(r => r.json());
+        if (s.status !== 'syncing') return;
+
+        const btn = document.getElementById('syncBtn');
+        btn.disabled = true;
+        btn.textContent = 'Syncing...';
+        document.getElementById('syncBar').classList.remove('hidden');
+
+        const poll = setInterval(async () => {
+          try {
+            const s2 = await fetch('/api/sync/status').then(r => r.json());
+            if (s2.status === 'done') {
+              clearInterval(poll);
+              document.getElementById('syncBar').classList.add('hidden');
+              btn.disabled = false;
+              btn.textContent = 'Sync Data';
+              await loadDashboard();
+            } else if (s2.status === 'error') {
+              clearInterval(poll);
+              document.getElementById('syncBar').classList.add('hidden');
+              btn.disabled = false;
+              btn.textContent = 'Sync Data';
+            }
+          } catch { clearInterval(poll); }
+        }, 5000);
+      } catch {}
+    })();
   </script>
 
 
