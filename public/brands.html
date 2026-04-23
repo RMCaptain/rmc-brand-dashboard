@@ -174,6 +174,7 @@
     const urlParams = new URLSearchParams(window.location.search);
     const focusBrand = urlParams.get('brand');
     if (focusBrand) { expandedBrands.add(focusBrand); activeView = 'mapping'; }
+    let focusBrandScrolled = false;
 
     // ── Formatting ────────────────────────────────────────────────────────────
     function fmt(cad, usd = 0) {
@@ -279,7 +280,8 @@
       if (!brandsData.length) { list.innerHTML = ''; empty.classList.remove('hidden'); return; }
       empty.classList.add('hidden');
       list.innerHTML = brandsData.map(b => brandRow(b)).join('');
-      if (focusBrand) {
+      if (focusBrand && !focusBrandScrolled) {
+        focusBrandScrolled = true;
         const el = document.getElementById(`brand-${focusBrand}`);
         if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
@@ -509,6 +511,8 @@
       if (expandedBrands.has(id)) expandedBrands.delete(id);
       else expandedBrands.add(id);
       renderMapping();
+      const el = document.getElementById(`brand-${id}`);
+      if (el) el.scrollIntoView({ behavior: 'instant', block: 'nearest' });
     }
 
     async function addAsin(brandId) {
