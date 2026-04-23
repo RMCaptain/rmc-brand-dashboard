@@ -797,7 +797,11 @@
 
         fxRate = fxRes;
         presetMetrics = pmRes;
-        brandsData = brandsRes.brands || [];
+        brandsData = (brandsRes.brands || []).sort((a, b) => {
+          if (a.id === 'unknown-brand') return 1;
+          if (b.id === 'unknown-brand') return -1;
+          return a.name.localeCompare(b.name);
+        });
 
         if (brandsRes.lastSync) {
           document.getElementById('lastSyncText').textContent =

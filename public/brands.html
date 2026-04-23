@@ -678,7 +678,11 @@
       ]);
       fxRate = fxRes;
       presetMetrics = pmRes;
-      brandsData = brandsRes.brands || [];
+      brandsData = (brandsRes.brands || []).sort((a, b) => {
+        if (a.id === 'unknown-brand') return 1;
+        if (b.id === 'unknown-brand') return -1;
+        return a.name.localeCompare(b.name);
+      });
       const unknown = brandsData.find(b => b.id === 'unknown-brand');
       if (unknown?.asins.length > 0) expandedBrands.add('unknown-brand');
       if (brandsRes.lastSync) {
