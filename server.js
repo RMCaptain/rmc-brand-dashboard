@@ -1393,9 +1393,26 @@ function scheduleDailySync() {
     })();
   }
 
-  // Schedule first run, then repeat every 24h
+  // On startup: run immediately if last sync was more than 23h ago
+  (async () => {
+    try {
+      const pm = await loadPresetMetrics();
+      const lastSyncTime = pm.lastSync ? new Date(pm.lastSync).getTime() : 0;
+      const hoursSince = (Date.now() - lastSyncTime) / (1000 * 60 * 60);
+      if (hoursSince >= 23) {
+        console.log(`[AutoSync] Data is ${Math.round(hoursSince)}h old — running catch-up sync now`);
+        setTimeout(runSync, 5000); // small delay to let server finish starting
+      } else {
+        console.log(`[AutoSync] Data is ${Math.round(hoursSince)}h old — no catch-up needed`);
+      }
+    } catch (e) {
+      console.warn('[AutoSync] Could not check last sync time:', e.message);
+    }
+  })();
+
+  // Schedule 6am daily sync, repeat every 24h
   const delay = msUntil6am();
-  console.log(`[AutoSync] Next sync in ${Math.round(delay / 60000)} minutes (6am)`);
+  console.log(`[AutoSync] Next scheduled sync in ${Math.round(delay / 60000)} minutes (6am)`);
   setTimeout(() => {
     runSync();
     setInterval(runSync, 24 * 60 * 60 * 1000);
