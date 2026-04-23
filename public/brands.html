@@ -251,7 +251,7 @@
               ${m ? `
               <div class="grid grid-cols-2 gap-3 mb-4">
                 <div><p class="text-xs mb-0.5" style="color:var(--text-3)">Revenue</p><p class="text-lg font-bold" style="color:var(--text)">${fmt(m.revenueCad, m.revenueUsd)}</p></div>
-                <div><p class="text-xs mb-0.5" style="color:var(--text-3)">Units</p><p class="text-lg font-bold" style="color:var(--text)">${(m.units || 0).toLocaleString()}</p></div>
+                <div><p class="text-xs mb-0.5" style="color:var(--text-3)">Units Sold</p><p class="text-lg font-bold" style="color:var(--text)">${(m.units || 0).toLocaleString()}</p></div>
                 <div><p class="text-xs mb-0.5" style="color:var(--text-3)">Sessions</p><p class="text-lg font-bold" style="color:var(--text)">${(m.sessions || 0).toLocaleString()}</p></div>
                 <div><p class="text-xs mb-0.5" style="color:var(--text-3)">Avg CVR</p><p class="text-lg font-bold" style="color:var(--text)">${m.avgCvr != null ? m.avgCvr.toFixed(2) + '%' : '—'}</p></div>
               </div>

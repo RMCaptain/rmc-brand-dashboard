@@ -76,7 +76,7 @@
           <thead>
             <tr>
               <th class="text-left min-w-64" style="padding-left:20px">Product</th>
-              <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('units')">Units <span class="sort-ind" data-col="units"></span></th>
+              <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('units')">Units Sold <span class="sort-ind" data-col="units"></span></th>
               <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('revenue')">Sales <span class="sort-ind" data-col="revenue"></span></th>
               <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('cvr')">CVR <span class="sort-ind" data-col="cvr"></span></th>
               <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('buyBox')">Buy Box <span class="sort-ind" data-col="buyBox"></span></th>
@@ -101,7 +101,7 @@
             <tr>
               <th class="sortable-brand-th text-left cursor-pointer select-none hover:text-white" onclick="sortBrandBy('name')" style="padding-left:20px">Brand <span class="sort-brand-ind" data-col="name"></span></th>
               <th class="sortable-brand-th text-right cursor-pointer select-none hover:text-white" onclick="sortBrandBy('revenue')">Revenue <span class="sort-brand-ind" data-col="revenue"></span></th>
-              <th class="sortable-brand-th text-right cursor-pointer select-none hover:text-white" onclick="sortBrandBy('units')">Units <span class="sort-brand-ind" data-col="units"></span></th>
+              <th class="sortable-brand-th text-right cursor-pointer select-none hover:text-white" onclick="sortBrandBy('units')">Units Sold <span class="sort-brand-ind" data-col="units"></span></th>
               <th class="sortable-brand-th text-right cursor-pointer select-none hover:text-white" onclick="sortBrandBy('cogs')">COGS <span class="sort-brand-ind" data-col="cogs"></span></th>
               <th class="sortable-brand-th text-right cursor-pointer select-none hover:text-white" onclick="sortBrandBy('grossProfit')">Gross Profit <span class="sort-brand-ind" data-col="grossProfit"></span></th>
               <th class="sortable-brand-th text-right cursor-pointer select-none hover:text-white" onclick="sortBrandBy('margin')">Margin <span class="sort-brand-ind" data-col="margin"></span></th>
@@ -328,7 +328,7 @@
             </div>
             <div class="grid grid-cols-2 gap-x-4 gap-y-3 pb-3">
               <div>
-                <div class="text-xs mb-0.5" style="color:var(--text-3)">Units</div>
+                <div class="text-xs mb-0.5" style="color:var(--text-3)">Units Sold</div>
                 <div class="text-sm font-semibold" style="color:var(--text)">${m.units.toLocaleString()}</div>
               </div>
               <div>
