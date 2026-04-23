@@ -58,6 +58,48 @@ async function savePresetMetrics(payload) {
     .eq('id', 'main');
 }
 
+// Reload the latest brands from Supabase and merge only what the sync produced.
+// This prevents a long-running sync from overwriting user changes made during it.
+async function saveSyncResults(syncBrands) {
+  const fresh = await loadBrands();
+
+  const syncById = {};
+  for (const b of syncBrands) syncById[b.id] = b;
+
+  // Merge asinTitles and upcs into the fresh brands (add-only, never overwrite)
+  for (const fb of fresh.brands) {
+    const sb = syncById[fb.id];
+    if (!sb) continue;
+    fb.asinTitles = fb.asinTitles || {};
+    fb.upcs = fb.upcs || {};
+    for (const asin of fb.asins) {
+      if (sb.asinTitles?.[asin] && !fb.asinTitles[asin]) fb.asinTitles[asin] = sb.asinTitles[asin];
+      if (asin in (sb.upcs || {}) && !(asin in fb.upcs)) fb.upcs[asin] = sb.upcs[asin];
+    }
+  }
+
+  // Merge unknown-brand: only add ASINs not already tracked anywhere in fresh data
+  const syncUnknown = syncById['unknown-brand'];
+  if (syncUnknown?.asins?.length) {
+    const allFreshAsins = new Set(fresh.brands.filter(b => b.id !== 'unknown-brand').flatMap(b => b.asins));
+    let freshUnknown = fresh.brands.find(b => b.id === 'unknown-brand');
+    if (!freshUnknown) {
+      freshUnknown = { id: 'unknown-brand', name: 'Unknown Brand', marketplace: 'CA', color: '#f59e0b', asins: [], asinTitles: {}, createdAt: new Date().toISOString().split('T')[0] };
+      fresh.brands.push(freshUnknown);
+    }
+    freshUnknown.asinTitles = freshUnknown.asinTitles || {};
+    for (const asin of syncUnknown.asins) {
+      if (!allFreshAsins.has(asin) && !freshUnknown.asins.includes(asin)) {
+        freshUnknown.asins.push(asin);
+        if (syncUnknown.asinTitles?.[asin]) freshUnknown.asinTitles[asin] = syncUnknown.asinTitles[asin];
+      }
+    }
+  }
+
+  await saveBrands(fresh);
+  return fresh;
+}
+
 // --- FX (still file-cached locally — avoids hammering external API) ---
 
 function loadFx() {
@@ -1117,8 +1159,7 @@ app.post('/api/sync', (req, res) => {
 
       // Phase 2: run SP-API sync while ad reports bake
       const { presets, updatedBrands } = await syncBrandMetrics(data.brands);
-      data.brands = updatedBrands;
-      await saveBrands(data);
+      await saveSyncResults(updatedBrands);
 
       // Phase 3: collect all ads results in parallel, merge into presets
       try {
@@ -1197,17 +1238,18 @@ app.post('/api/sync', (req, res) => {
       syncState = { status: 'done', lastSync, error: null };
 
       // Scrape UPCs for any ASINs not yet checked (never overwrites existing)
+      const freshForUpc = await loadBrands();
       const missingUpcs = [];
-      for (const b of data.brands) {
+      for (const b of freshForUpc.brands) {
         b.upcs = b.upcs || {};
         for (const asin of b.asins) { if (!(asin in b.upcs)) missingUpcs.push(asin); }
       }
       if (missingUpcs.length > 0) {
         const upcMap = await fetchUpcsForAsins([...new Set(missingUpcs)]);
-        for (const b of data.brands) {
+        for (const b of freshForUpc.brands) {
           for (const asin of b.asins) { if (!(asin in b.upcs)) b.upcs[asin] = upcMap[asin] || ''; }
         }
-        await saveBrands(data);
+        await saveBrands(freshForUpc);
         console.log(`[Sync] UPC scrape done — ${Object.values(upcMap).filter(Boolean).length} new UPCs`);
       }
     } catch (err) {
@@ -1292,8 +1334,7 @@ function scheduleDailySync() {
 
         // Phase 2: SP-API sync
         const { presets, updatedBrands } = await syncBrandMetrics(data.brands);
-        data.brands = updatedBrands;
-        await saveBrands(data);
+        await saveSyncResults(updatedBrands);
 
         // Phase 3: collect all ads results in parallel
         try {
@@ -1373,17 +1414,18 @@ function scheduleDailySync() {
         console.log('[AutoSync] Done:', lastSync);
 
         // Scrape UPCs for any new ASINs (never overwrites existing)
+        const freshForUpc = await loadBrands();
         const missingUpcs = [];
-        for (const b of data.brands) {
+        for (const b of freshForUpc.brands) {
           b.upcs = b.upcs || {};
           for (const asin of b.asins) { if (!(asin in b.upcs)) missingUpcs.push(asin); }
         }
         if (missingUpcs.length > 0) {
           const upcMap = await fetchUpcsForAsins([...new Set(missingUpcs)]);
-          for (const b of data.brands) {
+          for (const b of freshForUpc.brands) {
             for (const asin of b.asins) { if (!(asin in b.upcs)) b.upcs[asin] = upcMap[asin] || ''; }
           }
-          await saveBrands(data);
+          await saveBrands(freshForUpc);
           console.log(`[AutoSync] UPC scrape done — ${Object.values(upcMap).filter(Boolean).length} new UPCs`);
         }
       } catch (err) {
