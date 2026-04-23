@@ -886,20 +886,11 @@ async function syncBrandMetrics(brands) {
       const bnShort = bn.replace(CORP_SUFFIXES, '').trim();
       for (const name of [...new Set([bn, bnShort])]) {
         if (!name) continue;
-        // Primary: title starts with brand name
+        // Primary match only: title must START WITH the brand name.
+        // The secondary "whole-word anywhere in first 60 chars" match was removed because
+        // it caused false positives — e.g. "Acure" matching against unrelated titles
+        // that happened to contain the word somewhere near the start.
         if (t.startsWith(name + ' ') || t.startsWith(name + ',') || t.startsWith(name + '-') || t.startsWith(name + '|') || t === name) {
-          if (!brand.asins.includes(asin)) {
-            brand.asins.push(asin);
-            brand.asinTitles = brand.asinTitles || {};
-            brand.asinTitles[asin] = title;
-          }
-          return brand.name;
-        }
-        // Secondary: brand name appears as a whole word in the first 60 chars of title
-        // (catches "Health Life Zellies..." → Zellies)
-        const head = t.slice(0, 60);
-        const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        if (new RegExp('\\b' + escaped + '\\b').test(head)) {
           if (!brand.asins.includes(asin)) {
             brand.asins.push(asin);
             brand.asinTitles = brand.asinTitles || {};
@@ -928,8 +919,12 @@ async function syncBrandMetrics(brands) {
     }
   }
 
-  // 2. Process newly unassigned ASINs (not in ANY brand yet)
-  const newUnassigned = unassigned.filter(a => !brands.flatMap(b => b.asins).includes(a));
+  // 2. Process newly unassigned ASINs (not in ANY brand yet, including unknown-brand).
+  // We re-check brands.flatMap here (not the pre-built allBrandAsins set) so that ASINs
+  // already moved to a real brand in step 1 are excluded — prevents double-processing.
+  // This also ensures ASINs already in unknown-brand are never re-added here.
+  const allAssignedAfterStep1 = new Set(brands.flatMap(b => b.asins));
+  const newUnassigned = unassigned.filter(a => !allAssignedAfterStep1.has(a));
   const autoMapped = [], stillUnknown = [];
 
   for (const asin of newUnassigned) {

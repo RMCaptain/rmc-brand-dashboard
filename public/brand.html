@@ -10,6 +10,8 @@
   <link rel="stylesheet" href="/style.css" />
   <style>
     #salesPopup, #inventoryPopup { pointer-events: none; transition: opacity 0.1s ease; }
+    .asin-remove-btn { opacity: 0; transition: opacity 0.15s ease; }
+    tr:hover .asin-remove-btn { opacity: 1; }
   </style>
 </head>
 <body class="min-h-screen">
@@ -537,7 +539,7 @@
         '<td class="px-4 py-3 text-right text-xs font-mono" style="color:var(--text-2)">' + (brand.upcs?.[s.asin] || '—') + '</td>' +
         '<td class="px-4 py-3 text-right text-xs" style="color:var(--text-2)">' + (brand.casePacks?.[s.asin] ?? '—') + '</td>' +
         '<td class="px-4 py-3 text-center text-xs ' + typeColor + '">' + typeLabel + '</td>' +
-        '<td></td>' +
+        '<td class="px-3 py-3 text-right"><button class="asin-remove-btn text-slate-500 hover:text-red-400 transition-colors text-sm leading-none" title="Remove ' + s.asin + ' from this brand" onclick="removeAsinFromBrand(\'' + brand.id + '\', \'' + s.asin + '\')">×</button></td>' +
         '</tr>';
     }
 
@@ -741,6 +743,18 @@
         console.error(e);
       } finally {
         setTimeout(() => { btn.textContent = 'Scrape UPCs'; btn.disabled = false; }, 3000);
+      }
+    }
+
+    async function removeAsinFromBrand(brandId, asin) {
+      if (!confirm(`Remove ${asin} from this brand?`)) return;
+      const res = await fetch(`/api/brands/${brandId}/asins/${asin}`, { method: 'DELETE' });
+      if (!res.ok) { alert('Failed to remove ASIN.'); return; }
+      const data = await res.json();
+      // Update local brand cache and re-render
+      if (brandCache) {
+        brandCache.asins = data.asins || brandCache.asins.filter(a => a !== asin);
+        renderBrand({ ...brandCache, metrics: presetMetrics.presets?.[activePreset]?.brands?.[brandId] || null });
       }
     }
 
