@@ -4,7 +4,7 @@
 
 **Name:** Mike Sieben
 **Role:** CEO, Rocky Mountain Co. (RMC)
-**Context:** Amazon growth partner for brands. This dashboard is an internal tool for tracking brand performance across Amazon CA and US marketplaces.
+**Context:** Amazon growth partner for brands using the **Accelerator model** — RMC buys inventory from brands wholesale and resells on Amazon CA and US. This dashboard is an internal tool for tracking brand performance across both marketplaces.
 
 ---
 
@@ -93,9 +93,74 @@ Then open `http://localhost:3000`
 
 - **Unknown Brand ASINs**: Many ASINs auto-land in Unknown Brand after sync. They need manual remapping via `admin.html`.
 - **Duplicate brands**: Some brands appear twice (e.g. "Jarrow" and "Jarrow Formulas") due to Amazon Catalog API inconsistency. Needs manual merge via admin.
-- **No daily auto-sync**: Sync is manual only. A scheduled 6am sync hasn't been built yet.
 - **Brand rename**: Admin UI doesn't support renaming brands yet.
 - **Revenue accuracy**: S&T report revenue is "ordered product sales" — matches Sellerboard within ~$2 once all ASINs are assigned.
+
+---
+
+## Build Roadmap
+
+Features to build next, in priority order. Pick up from the top.
+
+### 1. Listing Health Monitor
+Daily scan across all ASINs. Flags:
+- Suppressed listings
+- Buybox losses
+- Price drops below threshold
+- Review score/count changes
+One consolidated alert instead of manually checking Seller Central per brand.
+
+### 2. Event/Promo Calendar Agent
+Tracks upcoming Amazon events (Prime Day, BFCM, etc.) and auto-generates a per-brand prep checklist:
+- Which ASINs to coupon
+- Inventory targets
+- Creative deadlines
+Connects awareness of events to concrete action items per brand.
+
+### 3. PPC + SEO Keyword Gap Tool
+Pull converting PPC keywords per ASIN, cross-reference against backend search terms.
+Flag keywords converting in ads but not indexed organically — highest-leverage SEO fixes.
+Currently done manually and gets missed.
+
+### 4. Internal Weekly Brand Manager Report
+Auto-generated weekly report per brand manager covering all their brands:
+- Metrics, flags, wins, action items
+- Brand manager reviews before acting
+- Not sent automatically — review step required
+
+### 5. Monthly Client Brand Report
+Auto-generated monthly report for brand partners (one report per brand):
+- Revenue, units, ad performance, inventory status, highlights
+- Polished, client-facing format
+- Brand manager reviews and approves before it goes out
+
+### 6. Review Velocity Tracker
+Daily scrape of review count + rating per ASIN. Stores snapshots over time.
+Alerts on: sudden count drops, rating decline, or plateaus where a review push would help.
+Note: scraping-based since SP-API doesn't expose review history.
+
+### 7. A+ Content / Listing Asset Tracker
+Yes/no matrix per ASIN tracking which assets exist:
+- Main images, lifestyle images, A+ content, video, brand story
+Flags ASINs missing assets so the team has a prioritized list vs. guessing.
+
+### 8. Bundle / Multipack Opportunity Finder
+Surfaces ASIN candidates for bundles or multipacks using 4 signals:
+- High unit velocity (30+ units/month = multipack candidate)
+- ASINs frequently appearing together in order data
+- PPC search terms containing "pack", "set", "bundle", "2 pack", "value"
+- Competitor catalog gaps (they have a multipack, we don't)
+Recommendation output explains which signals triggered each recommendation.
+
+### 9. Brand Onboarding Checklist
+When a new brand is signed — auto-generate the full onboarding task list in Notion:
+catalog audit, listing rewrites, backend SEO, PPC setup, inventory order.
+Same checklist every time, nothing missed.
+
+### 10. Client-Facing Brand Portal
+Read-only dashboard view for brand partners — their numbers, POs, inventory.
+Requires client logins and filters on what they can see.
+Long-term replaces the manual monthly report entirely.
 
 ---
 
