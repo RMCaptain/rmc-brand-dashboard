@@ -136,6 +136,7 @@
     let brandCache = null;
     let presetMetrics = {};
     let activePreset = 'last7d';
+    let allBrandsData = [];
     let asinSortCol = null;
     let asinSortDir = -1;
 
@@ -326,16 +327,18 @@
       activePreset = localStorage.getItem('dashboardPreset') || 'last30d';
 
       try {
-        const [brandRes, pmRes, fxRes] = await Promise.all([
+        const [brandRes, pmRes, fxRes, allBrandsRes] = await Promise.all([
           fetch(`/api/brands/${id}`).then(r => r.json()),
           fetch('/api/preset-metrics').then(r => r.json()),
-          fetch('/api/fx').then(r => r.json())
+          fetch('/api/fx').then(r => r.json()),
+          fetch('/api/brands').then(r => r.json())
         ]);
 
         fxRate = fxRes;
         updateToggleUI();
         presetMetrics = pmRes;
         brandCache = brandRes;
+        allBrandsData = allBrandsRes?.brands || [];
 
         const availablePresets = Object.keys(presetMetrics.presets || {});
         if (!availablePresets.includes(activePreset) && availablePresets.length > 0) {
@@ -675,29 +678,96 @@
       document.getElementById('cfgBundleSection').classList.toggle('hidden', type !== 'bundle');
     }
 
+    function setCfgCompType(i, type) {
+      if (type === 'asin') {
+        cfgComponents[i] = { type: 'asin', asin: '', qtyPerBundle: cfgComponents[i].qtyPerBundle || 1 };
+      } else {
+        cfgComponents[i] = { type: 'manual', description: '', upc: '', price: '', qtyPerBundle: cfgComponents[i].qtyPerBundle || 1 };
+      }
+      renderCfgComponents();
+    }
+
+    function cfgAsinSearch(i, query) {
+      cfgComponents[i]._searchQuery = query;
+      const q = query.toLowerCase();
+      const results = document.getElementById(`cfgAsinResults_${i}`);
+      if (!q) { results.classList.add('hidden'); return; }
+      const matches = allBrandsData.flatMap(b => b.asins.map(a => ({
+        asin: a,
+        title: b.asinTitles?.[a] || a,
+        brandName: b.name
+      }))).filter(x => x.asin.toLowerCase().includes(q) || x.title.toLowerCase().includes(q)).slice(0, 8);
+      if (!matches.length) { results.classList.add('hidden'); return; }
+      results.innerHTML = matches.map(m => `
+        <div class="px-3 py-2 hover:bg-slate-600 cursor-pointer" onclick="selectCfgAsin(${i}, '${m.asin}')">
+          <div class="text-xs font-mono text-slate-400">${m.asin}</div>
+          <div class="text-xs text-white truncate">${m.title}</div>
+          <div class="text-xs text-slate-500">${m.brandName}</div>
+        </div>`).join('');
+      results.classList.remove('hidden');
+    }
+
+    function selectCfgAsin(i, asin) {
+      const match = allBrandsData.flatMap(b => b.asins.map(a => ({ asin: a, title: b.asinTitles?.[a] || a }))).find(x => x.asin === asin);
+      cfgComponents[i].asin = asin;
+      cfgComponents[i]._resolvedTitle = match?.title || asin;
+      cfgComponents[i]._searchQuery = match?.title || asin;
+      document.getElementById(`cfgAsinInput_${i}`).value = cfgComponents[i]._searchQuery;
+      document.getElementById(`cfgAsinResults_${i}`).classList.add('hidden');
+    }
+
     function renderCfgComponents() {
       const el = document.getElementById('cfgComponents');
       if (!cfgComponents.length) {
         el.innerHTML = '<p class="text-xs text-slate-500 py-1 px-1">No components yet — click Add.</p>';
         return;
       }
-      el.innerHTML = cfgComponents.map((c, i) => `
-        <div class="grid grid-cols-12 gap-1 items-center">
+      el.innerHTML = cfgComponents.map((c, i) => {
+        const isAsin = c.type !== 'manual';
+        const btnBase = 'text-xs px-2.5 py-1 rounded transition-colors';
+        const btnOn  = btnBase + ' bg-indigo-600 text-white';
+        const btnOff = btnBase + ' bg-slate-700 text-slate-400 hover:bg-slate-600';
+        return `
+        <div class="p-2.5 bg-slate-900/60 rounded-lg mb-2 space-y-2 border border-slate-700/50">
+          <div class="flex items-center justify-between">
+            <div class="flex gap-1">
+              <button onclick="setCfgCompType(${i},'asin')" class="${isAsin ? btnOn : btnOff}">From Catalog</button>
+              <button onclick="setCfgCompType(${i},'manual')" class="${!isAsin ? btnOn : btnOff}">Manual</button>
+            </div>
+            <button onclick="removeCfgComponent(${i})" class="text-slate-600 hover:text-red-400 transition-colors text-base leading-none">×</button>
+          </div>
+          ${isAsin ? `
+          <div class="relative">
+            <input id="cfgAsinInput_${i}" type="text" value="${(c._searchQuery || c._resolvedTitle || c.asin || '').replace(/"/g,'&quot;')}"
+              placeholder="Search ASIN or product title…"
+              class="w-full bg-slate-700 border border-slate-600 text-white rounded px-2 py-1.5 text-xs focus:outline-none focus:border-indigo-500"
+              oninput="cfgAsinSearch(${i}, this.value)" autocomplete="off" />
+            <div id="cfgAsinResults_${i}" class="hidden absolute z-50 w-full mt-0.5 bg-slate-700 border border-slate-600 rounded-lg shadow-xl max-h-48 overflow-y-auto"></div>
+            ${c.asin ? `<div class="text-xs text-indigo-400 mt-1 font-mono">${c.asin}</div>` : ''}
+          </div>` : `
           <input type="text" value="${(c.description||'').replace(/"/g,'&quot;')}" placeholder="Description"
-            class="col-span-5 bg-slate-700 border border-slate-600 text-white rounded px-2 py-1 text-xs focus:outline-none focus:border-indigo-500"
+            class="w-full bg-slate-700 border border-slate-600 text-white rounded px-2 py-1.5 text-xs focus:outline-none focus:border-indigo-500"
             oninput="cfgComponents[${i}].description = this.value" />
-          <input type="text" value="${(c.upc||'').replace(/"/g,'&quot;')}" placeholder="UPC"
-            class="col-span-4 bg-slate-700 border border-slate-600 text-white rounded px-2 py-1 text-xs focus:outline-none focus:border-indigo-500"
-            oninput="cfgComponents[${i}].upc = this.value" />
-          <input type="number" min="1" value="${c.qtyPerBundle || 1}"
-            class="col-span-2 bg-slate-700 border border-slate-600 text-white rounded px-2 py-1 text-xs text-center focus:outline-none focus:border-indigo-500"
-            oninput="cfgComponents[${i}].qtyPerBundle = Number(this.value)" title="Qty per bundle" />
-          <button onclick="removeCfgComponent(${i})" class="col-span-1 text-slate-600 hover:text-red-400 transition-colors text-center">×</button>
-        </div>`).join('');
+          <div class="flex gap-1">
+            <input type="text" value="${(c.upc||'').replace(/"/g,'&quot;')}" placeholder="UPC (optional)"
+              class="flex-1 bg-slate-700 border border-slate-600 text-white rounded px-2 py-1.5 text-xs focus:outline-none focus:border-indigo-500"
+              oninput="cfgComponents[${i}].upc = this.value" />
+            <input type="number" min="0" step="0.01" value="${c.price || ''}" placeholder="Price"
+              class="w-24 bg-slate-700 border border-slate-600 text-white rounded px-2 py-1.5 text-xs focus:outline-none focus:border-indigo-500"
+              oninput="cfgComponents[${i}].price = this.value" />
+          </div>`}
+          <div class="flex items-center gap-2">
+            <span class="text-xs text-slate-500">Qty / bundle:</span>
+            <input type="number" min="1" value="${c.qtyPerBundle || 1}"
+              class="w-16 bg-slate-700 border border-slate-600 text-white rounded px-2 py-1 text-xs text-center focus:outline-none focus:border-indigo-500"
+              oninput="cfgComponents[${i}].qtyPerBundle = Number(this.value)" />
+          </div>
+        </div>`;
+      }).join('');
     }
 
     function addBundleComponent() {
-      cfgComponents.push({ description: '', upc: '', qtyPerBundle: 1 });
+      cfgComponents.push({ type: 'asin', asin: '', qtyPerBundle: 1 });
       renderCfgComponents();
     }
 
@@ -709,7 +779,10 @@
     async function saveAsinConfig() {
       const type = document.querySelector('[name=cfgType]:checked')?.value || 'single';
       const unitsPerPack = type === 'multipack' ? Number(document.getElementById('cfgUnitsPerPack').value) || null : null;
-      const components = type === 'bundle' ? cfgComponents : [];
+      // Strip UI-only _ fields before saving
+      const components = type === 'bundle'
+        ? cfgComponents.map(({ _searchQuery, _resolvedTitle, ...clean }) => clean)
+        : [];
       await fetch(`/api/brands/${cfgBrandId}/asins/${cfgAsin}/config`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },

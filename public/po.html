@@ -338,12 +338,31 @@
         if (cfg.type === 'bundle' && cfg.components?.length > 0) {
           // Bundle: one PO line per component
           cfg.components.forEach(comp => {
+            let compDesc, compUpc, compPrice, compStockNumber, compAsin;
+            if (comp.type === 'asin' && comp.asin) {
+              // Linked catalog ASIN — pull data from brands
+              const compBrand = brands.find(b => b.asins.includes(comp.asin));
+              const compCfg = compBrand?.asinConfig?.[comp.asin] || {};
+              compAsin = comp.asin;
+              compDesc = compCfg.supplierName || compBrand?.asinTitles?.[comp.asin] || comp.asin;
+              compUpc = compBrand?.upcs?.[comp.asin] || '';
+              compPrice = compBrand?.cogs?.[comp.asin] || 0;
+              compStockNumber = compCfg.stockNumber || '';
+            } else {
+              // Manual component
+              compAsin = asin;
+              compDesc = comp.description || `Component of ${title}`;
+              compUpc = comp.upc || '';
+              compPrice = Number(comp.price) || 0;
+              compStockNumber = '';
+            }
             lines.push({
               ...base,
-              asin,
-              description: comp.description || `Component of ${title}`,
-              upc: comp.upc || '',
-              price: 0,
+              asin: compAsin,
+              description: compDesc,
+              upc: compUpc,
+              stockNumber: compStockNumber,
+              price: compPrice,
               casePack: comp.qtyPerBundle || 1,
               quantity: qty * (comp.qtyPerBundle || 1),
               cases: 0,
