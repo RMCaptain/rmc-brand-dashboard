@@ -1206,6 +1206,13 @@ async function runFullSync(tag = 'Sync') {
   }
   console.log(`[${tag}] Starting...`);
   syncState = { status: 'syncing', lastSync: null, error: null };
+
+  // Stamp attempt time before anything else so restarts don't re-trigger immediately
+  try {
+    const pm = await loadPresetMetrics();
+    await savePresetMetrics({ ...pm, lastSyncAttempt: new Date().toISOString() });
+  } catch (_) {}
+
   try {
     const { syncBrandMetrics, fetchUpcsForAsins } = require('./sync/amazon');
     const { startAdReports, finishAdReports } = require('./sync/ads');
@@ -1351,17 +1358,22 @@ function scheduleDailySync() {
   });
   console.log('[AutoSync] Cron scheduled: daily at 6am');
 
-  // On startup: catch-up if data is more than 23h old
+  // On startup: catch-up if data is more than 23h old AND no attempt in last 4h
   (async () => {
     try {
       const pm = await loadPresetMetrics();
-      const lastSyncTime = pm.lastSync ? new Date(pm.lastSync).getTime() : 0;
-      const hoursSince = (Date.now() - lastSyncTime) / (1000 * 60 * 60);
-      if (hoursSince >= 23) {
+      const lastSyncTime    = pm.lastSync        ? new Date(pm.lastSync).getTime()        : 0;
+      const lastAttemptTime = pm.lastSyncAttempt ? new Date(pm.lastSyncAttempt).getTime() : 0;
+      const hoursSince      = (Date.now() - lastSyncTime)    / (1000 * 60 * 60);
+      const hoursSinceAttempt = (Date.now() - lastAttemptTime) / (1000 * 60 * 60);
+
+      if (hoursSince < 23) {
+        console.log(`[AutoSync] Data is ${Math.round(hoursSince)}h old — no catch-up needed`);
+      } else if (hoursSinceAttempt < 4) {
+        console.log(`[AutoSync] Data is ${Math.round(hoursSince)}h old but sync attempted ${Math.round(hoursSinceAttempt * 60)}min ago — skipping to avoid quota burn`);
+      } else {
         console.log(`[AutoSync] Data is ${Math.round(hoursSince)}h old — running catch-up sync now`);
         setTimeout(() => runFullSync('CatchUp'), 5000);
-      } else {
-        console.log(`[AutoSync] Data is ${Math.round(hoursSince)}h old — no catch-up needed`);
       }
     } catch (e) {
       console.warn('[AutoSync] Could not check last sync time:', e.message);

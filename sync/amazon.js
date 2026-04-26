@@ -117,13 +117,14 @@ async function createReport(reportType, marketplaceIds, reportOptions, dataRange
     body.dataEndTime = dataRange.end;
   }
 
-  for (let attempt = 1; attempt <= 5; attempt++) {
+  for (let attempt = 1; attempt <= 8; attempt++) {
     const res = await spRequest('POST', '/reports/2021-06-30/reports', token, body);
     if (res.status === 202) return res.body.reportId;
     const isQuota = res.body?.errors?.[0]?.code === 'QuotaExceeded' || res.status === 429;
-    if (isQuota && attempt < 5) {
-      const wait = attempt * 60000; // 1min, 2min, 3min, 4min
-      console.warn(`[Reports] QuotaExceeded for ${reportType} — retrying in ${attempt}m (attempt ${attempt}/5)`);
+    if (isQuota && attempt < 8) {
+      // Exponential backoff: 2m, 4m, 6m, 8m, 10m, 12m, 14m
+      const wait = attempt * 2 * 60000;
+      console.warn(`[Reports] QuotaExceeded for ${reportType} — retrying in ${attempt * 2}m (attempt ${attempt}/8)`);
       await sleep(wait);
     } else {
       throw new Error(`Failed to create ${reportType}: ${JSON.stringify(res.body)}`);
