@@ -667,7 +667,10 @@
       const type = cfg.type || 'single';
       document.querySelectorAll('[name=cfgType]').forEach(r => { r.checked = r.value === type; });
       document.getElementById('cfgUnitsPerPack').value = cfg.unitsPerPack || '';
-      cfgComponents = (cfg.components || []).map(c => ({ ...c }));
+      cfgComponents = (cfg.components || []).map(c => ({
+        type: c.type || (c.asin ? 'asin' : 'manual'),
+        ...c
+      }));
       showCfgSections(type);
       renderCfgComponents();
       document.getElementById('asinConfigModal').classList.remove('hidden');
@@ -888,16 +891,7 @@
           <button onclick="addBundleComponent()"
             class="text-xs px-2.5 py-1 bg-slate-700 text-slate-200 rounded hover:bg-slate-600 transition-colors">+ Add</button>
         </div>
-        <div class="space-y-1.5 mb-1">
-          <div class="grid grid-cols-12 gap-1 text-xs text-slate-500 px-1">
-            <span class="col-span-5">Description</span>
-            <span class="col-span-4">UPC</span>
-            <span class="col-span-2 text-center">Qty/bundle</span>
-            <span class="col-span-1"></span>
-          </div>
-          <div id="cfgComponents"></div>
-        </div>
-        <p class="text-xs text-slate-500 mt-1">Qty/bundle = how many of this component per bundle unit ordered.</p>
+        <div id="cfgComponents" class="mb-2"></div>
       </div>
 
       <div class="flex gap-3 mt-2">
