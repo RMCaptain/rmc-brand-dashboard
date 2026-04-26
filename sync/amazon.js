@@ -1092,55 +1092,34 @@ function extractUpcFromIdentifiers(identifiers) {
 async function fetchUpcsForAsins(asins) {
   const token = await getAccessToken();
   const marketplaceIds = getMarketplaceIds();
-  const batchSize = 20;
-  const result = {}; // asin → upc string
+  const mpParam = marketplaceIds.join(',');
+  const result = {};
+  let found = 0;
 
-  // Pass 1: batch queries per marketplace
-  for (const marketplaceId of marketplaceIds) {
-    const remaining = asins.filter(a => !result[a]);
-    if (remaining.length === 0) break;
-
-    for (let i = 0; i < remaining.length; i += batchSize) {
-      const batch = remaining.slice(i, i + batchSize);
-      const identifiers = batch.map(a => `identifiers=${encodeURIComponent(a)}`).join('&');
-      const path = `/catalog/2022-04-01/items?marketplaceIds=${marketplaceId}&${identifiers}&identifiersType=ASIN&includedData=identifiers`;
-
-      try {
-        const res = await spRequest('GET', path, token);
-        if (res.status !== 200) continue;
-        for (const item of (res.body.items || [])) {
-          if (!item.asin || result[item.asin]) continue;
-          const upc = extractUpcFromIdentifiers(item.identifiers);
-          if (upc) result[item.asin] = upc;
+  // Individual lookups only — batch endpoint misses non-seller catalog ASINs
+  console.log(`[UPC] Fetching UPCs for ${asins.length} ASINs via individual lookups...`);
+  for (const asin of asins) {
+    try {
+      const path = `/catalog/2022-04-01/items/${asin}?marketplaceIds=${mpParam}&includedData=identifiers`;
+      const res = await spRequest('GET', path, token);
+      if (res.status === 200) {
+        const upc = extractUpcFromIdentifiers(res.body.identifiers);
+        if (upc) { result[asin] = upc; found++; }
+      } else if (res.status === 429) {
+        await sleep(5000);
+        const retry = await spRequest('GET', path, token);
+        if (retry.status === 200) {
+          const upc = extractUpcFromIdentifiers(retry.body.identifiers);
+          if (upc) { result[asin] = upc; found++; }
         }
-      } catch (e) {
-        console.warn('[UPC] batch error:', e.message);
       }
-
-      if (i + batchSize < remaining.length) await sleep(600);
+    } catch (e) {
+      console.warn(`[UPC] ${asin} error: ${e.message}`);
     }
+    await sleep(300);
   }
 
-  // Pass 2: individual lookups for anything the batch missed
-  const stillMissing = asins.filter(a => !result[a]);
-  if (stillMissing.length > 0) {
-    console.log(`[UPC] Batch missed ${stillMissing.length} ASINs — trying individual lookups`);
-    const mpParam = marketplaceIds.join(',');
-    for (const asin of stillMissing) {
-      try {
-        const path = `/catalog/2022-04-01/items/${asin}?marketplaceIds=${mpParam}&includedData=identifiers`;
-        const res = await spRequest('GET', path, token);
-        if (res.status === 200) {
-          const upc = extractUpcFromIdentifiers(res.body.identifiers);
-          if (upc) { result[asin] = upc; console.log(`[UPC] ${asin} → ${upc} (individual)`); }
-        }
-      } catch (e) {
-        console.warn(`[UPC] individual lookup failed for ${asin}:`, e.message);
-      }
-      await sleep(300);
-    }
-  }
-
+  console.log(`[UPC] Done: ${found}/${asins.length} UPCs found`);
   return result;
 }
 

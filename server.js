@@ -386,31 +386,31 @@ app.post('/api/scrape-upcs', async (req, res) => {
     const { fetchUpcsForAsins } = require('./sync/amazon');
     const data = await loadBrands();
 
-    // Collect all ASINs never checked (key absence = never checked)
-    const allMissing = [];
+    // Scrape any ASIN with no UPC yet (missing key OR empty string from a previous failed attempt)
+    const toScrape = [];
     for (const brand of data.brands) {
       brand.upcs = brand.upcs || {};
       for (const asin of brand.asins) {
-        if (!(asin in brand.upcs)) allMissing.push({ brandId: brand.id, asin });
+        if (!brand.upcs[asin]) toScrape.push(asin);
       }
     }
 
-    if (allMissing.length === 0) return res.json({ updated: 0, message: 'All ASINs already checked' });
+    if (toScrape.length === 0) return res.json({ updated: 0, message: 'All ASINs have UPCs already' });
 
-    const uniqueAsins = [...new Set(allMissing.map(x => x.asin))];
+    const uniqueAsins = [...new Set(toScrape)];
     const upcMap = await fetchUpcsForAsins(uniqueAsins);
 
     let updated = 0;
     for (const brand of data.brands) {
       for (const asin of brand.asins) {
-        if (!(asin in brand.upcs)) {
+        if (!brand.upcs[asin]) {
           brand.upcs[asin] = upcMap[asin] || '';
           if (upcMap[asin]) updated++;
         }
       }
     }
     await saveBrands(data);
-    res.json({ updated, total: allMissing.length });
+    res.json({ updated, total: uniqueAsins.length });
   } catch (err) {
     console.error('[scrape-upcs-all]', err);
     res.status(500).json({ error: err.message });
