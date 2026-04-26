@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const cron = require('node-cron');
 const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
@@ -1117,145 +1118,8 @@ app.post('/api/sync', (req, res) => {
     return res.json({ success: true, status: 'syncing', message: 'Sync already in progress' });
   }
 
-  // Return immediately — sync runs in background
-  syncState = { status: 'syncing', lastSync: null, error: null };
   res.json({ success: true, status: 'started' });
-
-  (async () => {
-    try {
-      const { syncBrandMetrics, fetchUpcsForAsins } = require('./sync/amazon');
-      const { startAdReports, finishAdReports } = require('./sync/ads');
-      const data = await loadBrands();
-
-      // Phase 1: fire ads report creation for all presets BEFORE SP sync starts
-      // Reports take ~30 min to generate; SP sync takes ~5-10 min — they overlap.
-      let adHandles = {};
-      try {
-        // Pre-compute preset date ranges (matches what syncBrandMetrics uses)
-        const fmt = d => d.toISOString().split('T')[0];
-        const today = new Date(); today.setHours(0,0,0,0);
-        const yest  = new Date(today); yest.setDate(yest.getDate() - 1);
-        const l30s  = new Date(today); l30s.setDate(l30s.getDate() - 30);
-        const tms   = new Date(today.getFullYear(), today.getMonth(), 1);
-        const lms   = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-        const lme   = new Date(today.getFullYear(), today.getMonth(), 0);
-        const ranges = {
-          yesterday:  { startDate: fmt(yest), endDate: fmt(yest) },
-          last30d:    { startDate: fmt(l30s), endDate: fmt(yest) },
-          thisMonth:  { startDate: fmt(tms),  endDate: fmt(today) },
-          lastMonth:  { startDate: fmt(lms),  endDate: fmt(lme)  },
-        };
-        const entries = await Promise.all(
-          Object.entries(ranges).map(async ([key, { startDate, endDate }]) => {
-            const handles = await startAdReports(startDate, endDate);
-            return [key, { handles, startDate, endDate }];
-          })
-        );
-        adHandles = Object.fromEntries(entries);
-        console.log('[Sync] Ads reports submitted — baking while SP sync runs...');
-      } catch (adsCreateErr) {
-        console.warn('[Sync] Ads report creation failed (non-fatal):', adsCreateErr.message);
-      }
-
-      // Phase 2: run SP-API sync while ad reports bake
-      const { presets, updatedBrands } = await syncBrandMetrics(data.brands);
-      await saveSyncResults(updatedBrands);
-
-      // Phase 3: collect all ads results in parallel, merge into presets
-      try {
-        const adResultEntries = await Promise.all(
-          Object.entries(adHandles).map(async ([key, { handles, startDate, endDate }]) => {
-            const adData = await finishAdReports(handles, startDate, endDate);
-            return [key, adData];
-          })
-        );
-        const adDataByPreset = Object.fromEntries(adResultEntries);
-
-        for (const [presetKey, preset] of Object.entries(presets)) {
-          const adData = adDataByPreset[presetKey] || {};
-          let totalSpendCad = 0, totalSpendUsd = 0;
-
-          for (const brandMetrics of Object.values(preset.brands)) {
-            let bSpendCad = 0, bSpendUsd = 0, bSalesCad = 0, bSalesUsd = 0;
-            let bClicks = 0, bImpressions = 0, bOrders = 0;
-
-            for (const sku of (brandMetrics.skus || [])) {
-              const ad = adData[sku.asin];
-              if (ad) {
-                sku.spendCad           = ad.spendCad;
-                sku.spendUsd           = ad.spendUsd;
-                sku.attributedSalesCad = ad.attributedSalesCad;
-                sku.attributedSalesUsd = ad.attributedSalesUsd;
-                sku.adClicks           = ad.clicks;
-                sku.adImpressions      = ad.impressions;
-                sku.adOrders           = ad.orders;
-                sku.acos               = ad.acos;
-                sku.roas               = ad.roas;
-                sku.cpc                = ad.cpc;
-                sku.ctr                = ad.ctr;
-                sku.adCvr              = ad.adCvr;
-                bSpendCad    += ad.spendCad           || 0;
-                bSpendUsd    += ad.spendUsd           || 0;
-                bSalesCad    += ad.attributedSalesCad || 0;
-                bSalesUsd    += ad.attributedSalesUsd || 0;
-                bClicks      += ad.clicks      || 0;
-                bImpressions += ad.impressions || 0;
-                bOrders      += ad.orders      || 0;
-              }
-            }
-
-            const bSpend = bSpendCad + bSpendUsd;
-            const bSales = bSalesCad + bSalesUsd;
-            brandMetrics.adSummary = {
-              spendCad: Math.round(bSpendCad * 100) / 100,
-              spendUsd: Math.round(bSpendUsd * 100) / 100,
-              attributedSalesCad: Math.round(bSalesCad * 100) / 100,
-              attributedSalesUsd: Math.round(bSalesUsd * 100) / 100,
-              clicks: bClicks, impressions: bImpressions, orders: bOrders,
-              acos:  bSales > 0 ? Math.round(bSpend / bSales * 10000) / 100 : null,
-              roas:  bSpend > 0 ? Math.round(bSales / bSpend * 100) / 100 : null,
-              ctr:   bImpressions > 0 ? Math.round(bClicks / bImpressions * 100000) / 1000 : null,
-              cpc:   bClicks > 0 ? Math.round(bSpend / bClicks * 10000) / 10000 : null,
-              adCvr: bClicks > 0 ? Math.round(bOrders / bClicks * 10000) / 100 : null,
-            };
-            totalSpendCad += bSpendCad;
-            totalSpendUsd += bSpendUsd;
-          }
-
-          preset.financials = preset.financials || {};
-          preset.financials.CAD = preset.financials.CAD || {};
-          preset.financials.USD = preset.financials.USD || {};
-          if (totalSpendCad > 0) preset.financials.CAD.adSpend = Math.round(totalSpendCad * 100) / 100;
-          if (totalSpendUsd > 0) preset.financials.USD.adSpend = Math.round(totalSpendUsd * 100) / 100;
-        }
-        console.log('[Sync] Ads data merged into presets');
-      } catch (adsErr) {
-        console.warn('[Sync] Ads collection failed (non-fatal):', adsErr.message);
-      }
-
-      const lastSync = new Date().toISOString();
-      await savePresetMetrics({ lastSync, presets });
-      syncState = { status: 'done', lastSync, error: null };
-
-      // Scrape UPCs for any ASINs not yet checked (never overwrites existing)
-      const freshForUpc = await loadBrands();
-      const missingUpcs = [];
-      for (const b of freshForUpc.brands) {
-        b.upcs = b.upcs || {};
-        for (const asin of b.asins) { if (!(asin in b.upcs)) missingUpcs.push(asin); }
-      }
-      if (missingUpcs.length > 0) {
-        const upcMap = await fetchUpcsForAsins([...new Set(missingUpcs)]);
-        for (const b of freshForUpc.brands) {
-          for (const asin of b.asins) { if (!(asin in b.upcs)) b.upcs[asin] = upcMap[asin] || ''; }
-        }
-        await saveBrands(freshForUpc);
-        console.log(`[Sync] UPC scrape done — ${Object.values(upcMap).filter(Boolean).length} new UPCs`);
-      }
-    } catch (err) {
-      syncState = { status: 'error', lastSync: null, error: err.message };
-    }
-  })();
+  runFullSync('Sync');
 });
 
 app.get('/api/sync/status', (req, res) => {
@@ -1281,161 +1145,160 @@ app.listen(PORT, () => {
   scheduleDailySync();
 });
 
+// ── Shared full-sync runner (used by manual /api/sync and auto-sync) ──────────
+async function runFullSync(tag = 'Sync') {
+  if (syncState.status === 'syncing') {
+    console.log(`[${tag}] Skipped — sync already in progress`);
+    return;
+  }
+  console.log(`[${tag}] Starting...`);
+  syncState = { status: 'syncing', lastSync: null, error: null };
+  try {
+    const { syncBrandMetrics, fetchUpcsForAsins } = require('./sync/amazon');
+    const { startAdReports, finishAdReports } = require('./sync/ads');
+    const data = await loadBrands();
+
+    // Phase 1: kick off ads reports before SP sync starts
+    let adHandles = {};
+    try {
+      const fmt = d => d.toISOString().split('T')[0];
+      const today = new Date(); today.setHours(0,0,0,0);
+      const yest  = new Date(today); yest.setDate(yest.getDate() - 1);
+      const l30s  = new Date(today); l30s.setDate(l30s.getDate() - 30);
+      const tms   = new Date(today.getFullYear(), today.getMonth(), 1);
+      const lms   = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+      const lme   = new Date(today.getFullYear(), today.getMonth(), 0);
+      const ranges = {
+        yesterday:  { startDate: fmt(yest), endDate: fmt(yest) },
+        last30d:    { startDate: fmt(l30s), endDate: fmt(yest) },
+        thisMonth:  { startDate: fmt(tms),  endDate: fmt(today) },
+        lastMonth:  { startDate: fmt(lms),  endDate: fmt(lme)  },
+      };
+      const entries = await Promise.all(
+        Object.entries(ranges).map(async ([key, { startDate, endDate }]) => {
+          const handles = await startAdReports(startDate, endDate);
+          return [key, { handles, startDate, endDate }];
+        })
+      );
+      adHandles = Object.fromEntries(entries);
+      console.log(`[${tag}] Ads reports submitted — baking while SP sync runs...`);
+    } catch (adsCreateErr) {
+      console.warn(`[${tag}] Ads report creation failed (non-fatal):`, adsCreateErr.message);
+    }
+
+    // Phase 2: SP-API sync
+    const { presets, updatedBrands } = await syncBrandMetrics(data.brands);
+    await saveSyncResults(updatedBrands);
+
+    // Phase 3: collect ads results and merge
+    try {
+      const adResultEntries = await Promise.all(
+        Object.entries(adHandles).map(async ([key, { handles, startDate, endDate }]) => {
+          const adData = await finishAdReports(handles, startDate, endDate);
+          return [key, adData];
+        })
+      );
+      const adDataByPreset = Object.fromEntries(adResultEntries);
+
+      for (const [presetKey, preset] of Object.entries(presets)) {
+        const adData = adDataByPreset[presetKey] || {};
+        let totalSpendCad = 0, totalSpendUsd = 0;
+
+        for (const brandMetrics of Object.values(preset.brands)) {
+          let bSpendCad = 0, bSpendUsd = 0, bSalesCad = 0, bSalesUsd = 0;
+          let bClicks = 0, bImpressions = 0, bOrders = 0;
+
+          for (const sku of (brandMetrics.skus || [])) {
+            const ad = adData[sku.asin];
+            if (ad) {
+              sku.spendCad           = ad.spendCad;
+              sku.spendUsd           = ad.spendUsd;
+              sku.attributedSalesCad = ad.attributedSalesCad;
+              sku.attributedSalesUsd = ad.attributedSalesUsd;
+              sku.adClicks           = ad.clicks;
+              sku.adImpressions      = ad.impressions;
+              sku.adOrders           = ad.orders;
+              sku.acos               = ad.acos;
+              sku.roas               = ad.roas;
+              sku.cpc                = ad.cpc;
+              sku.ctr                = ad.ctr;
+              sku.adCvr              = ad.adCvr;
+              bSpendCad    += ad.spendCad           || 0;
+              bSpendUsd    += ad.spendUsd           || 0;
+              bSalesCad    += ad.attributedSalesCad || 0;
+              bSalesUsd    += ad.attributedSalesUsd || 0;
+              bClicks      += ad.clicks      || 0;
+              bImpressions += ad.impressions || 0;
+              bOrders      += ad.orders      || 0;
+            }
+          }
+
+          const bSpend = bSpendCad + bSpendUsd;
+          const bSales = bSalesCad + bSalesUsd;
+          brandMetrics.adSummary = {
+            spendCad: Math.round(bSpendCad * 100) / 100,
+            spendUsd: Math.round(bSpendUsd * 100) / 100,
+            attributedSalesCad: Math.round(bSalesCad * 100) / 100,
+            attributedSalesUsd: Math.round(bSalesUsd * 100) / 100,
+            clicks: bClicks, impressions: bImpressions, orders: bOrders,
+            acos:  bSales > 0 ? Math.round(bSpend / bSales * 10000) / 100 : null,
+            roas:  bSpend > 0 ? Math.round(bSales / bSpend * 100) / 100 : null,
+            ctr:   bImpressions > 0 ? Math.round(bClicks / bImpressions * 100000) / 1000 : null,
+            cpc:   bClicks > 0 ? Math.round(bSpend / bClicks * 10000) / 10000 : null,
+            adCvr: bClicks > 0 ? Math.round(bOrders / bClicks * 10000) / 100 : null,
+          };
+          totalSpendCad += bSpendCad;
+          totalSpendUsd += bSpendUsd;
+        }
+
+        preset.financials = preset.financials || {};
+        preset.financials.CAD = preset.financials.CAD || {};
+        preset.financials.USD = preset.financials.USD || {};
+        if (totalSpendCad > 0) preset.financials.CAD.adSpend = Math.round(totalSpendCad * 100) / 100;
+        if (totalSpendUsd > 0) preset.financials.USD.adSpend = Math.round(totalSpendUsd * 100) / 100;
+      }
+      console.log(`[${tag}] Ads data merged`);
+    } catch (adsErr) {
+      console.warn(`[${tag}] Ads collection failed (non-fatal):`, adsErr.message);
+    }
+
+    const lastSync = new Date().toISOString();
+    await savePresetMetrics({ lastSync, presets });
+    syncState = { status: 'done', lastSync, error: null };
+    console.log(`[${tag}] Done:`, lastSync);
+
+    // Scrape UPCs for any ASINs not yet checked
+    const freshForUpc = await loadBrands();
+    const missingUpcs = [];
+    for (const b of freshForUpc.brands) {
+      b.upcs = b.upcs || {};
+      for (const asin of b.asins) { if (!(asin in b.upcs)) missingUpcs.push(asin); }
+    }
+    if (missingUpcs.length > 0) {
+      const { fetchUpcsForAsins } = require('./sync/amazon');
+      const upcMap = await fetchUpcsForAsins([...new Set(missingUpcs)]);
+      for (const b of freshForUpc.brands) {
+        for (const asin of b.asins) { if (!(asin in b.upcs)) b.upcs[asin] = upcMap[asin] || ''; }
+      }
+      await saveBrands(freshForUpc);
+      console.log(`[${tag}] UPC scrape done — ${Object.values(upcMap).filter(Boolean).length} new UPCs`);
+    }
+  } catch (err) {
+    syncState = { status: 'error', lastSync: null, error: err.message };
+    console.error(`[${tag}] Error:`, err.message);
+  }
+}
+
 // ── Daily auto-sync at 6am server time ───────────────────────────────────────
 function scheduleDailySync() {
-  function msUntil6am() {
-    const now = new Date();
-    const next = new Date(now);
-    next.setHours(6, 0, 0, 0);
-    if (next <= now) next.setDate(next.getDate() + 1);
-    return next - now;
-  }
+  // Fire every day at 6:00am server time — survives restarts, no drift
+  cron.schedule('0 6 * * *', () => {
+    console.log('[AutoSync] 6am cron fired');
+    runFullSync('AutoSync');
+  });
+  console.log('[AutoSync] Cron scheduled: daily at 6am');
 
-  function runSync() {
-    if (syncState.status === 'syncing') {
-      console.log('[AutoSync] Skipped — sync already in progress');
-      return;
-    }
-    console.log('[AutoSync] Starting scheduled 6am sync...');
-    syncState = { status: 'syncing', lastSync: null, error: null };
-    (async () => {
-      try {
-        const { syncBrandMetrics, fetchUpcsForAsins } = require('./sync/amazon');
-        const { startAdReports, finishAdReports } = require('./sync/ads');
-        const data = await loadBrands();
-
-        // Phase 1: kick off all ads reports before SP sync
-        let adHandles = {};
-        try {
-          const fmt = d => d.toISOString().split('T')[0];
-          const today = new Date(); today.setHours(0,0,0,0);
-          const yest  = new Date(today); yest.setDate(yest.getDate() - 1);
-          const l30s  = new Date(today); l30s.setDate(l30s.getDate() - 30);
-          const tms   = new Date(today.getFullYear(), today.getMonth(), 1);
-          const lms   = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-          const lme   = new Date(today.getFullYear(), today.getMonth(), 0);
-          const ranges = {
-            yesterday:  { startDate: fmt(yest), endDate: fmt(yest) },
-            last30d:    { startDate: fmt(l30s), endDate: fmt(yest) },
-            thisMonth:  { startDate: fmt(tms),  endDate: fmt(today) },
-            lastMonth:  { startDate: fmt(lms),  endDate: fmt(lme)  },
-          };
-          const entries = await Promise.all(
-            Object.entries(ranges).map(async ([key, { startDate, endDate }]) => {
-              const handles = await startAdReports(startDate, endDate);
-              return [key, { handles, startDate, endDate }];
-            })
-          );
-          adHandles = Object.fromEntries(entries);
-          console.log('[AutoSync] Ads reports submitted — baking while SP sync runs...');
-        } catch (adsCreateErr) {
-          console.warn('[AutoSync] Ads report creation failed (non-fatal):', adsCreateErr.message);
-        }
-
-        // Phase 2: SP-API sync
-        const { presets, updatedBrands } = await syncBrandMetrics(data.brands);
-        await saveSyncResults(updatedBrands);
-
-        // Phase 3: collect all ads results in parallel
-        try {
-          const adResultEntries = await Promise.all(
-            Object.entries(adHandles).map(async ([key, { handles, startDate, endDate }]) => {
-              const adData = await finishAdReports(handles, startDate, endDate);
-              return [key, adData];
-            })
-          );
-          const adDataByPreset = Object.fromEntries(adResultEntries);
-
-          for (const [presetKey, preset] of Object.entries(presets)) {
-            const adData = adDataByPreset[presetKey] || {};
-            let totalSpendCad = 0, totalSpendUsd = 0;
-
-            for (const brandMetrics of Object.values(preset.brands)) {
-              let bSpendCad = 0, bSpendUsd = 0, bSalesCad = 0, bSalesUsd = 0;
-              let bClicks = 0, bImpressions = 0, bOrders = 0;
-
-              for (const sku of (brandMetrics.skus || [])) {
-                const ad = adData[sku.asin];
-                if (ad) {
-                  sku.spendCad           = ad.spendCad;
-                  sku.spendUsd           = ad.spendUsd;
-                  sku.attributedSalesCad = ad.attributedSalesCad;
-                  sku.attributedSalesUsd = ad.attributedSalesUsd;
-                  sku.adClicks           = ad.clicks;
-                  sku.adImpressions      = ad.impressions;
-                  sku.adOrders           = ad.orders;
-                  sku.acos               = ad.acos;
-                  sku.roas               = ad.roas;
-                  sku.cpc                = ad.cpc;
-                  sku.ctr                = ad.ctr;
-                  sku.adCvr              = ad.adCvr;
-                  bSpendCad    += ad.spendCad           || 0;
-                  bSpendUsd    += ad.spendUsd           || 0;
-                  bSalesCad    += ad.attributedSalesCad || 0;
-                  bSalesUsd    += ad.attributedSalesUsd || 0;
-                  bClicks      += ad.clicks      || 0;
-                  bImpressions += ad.impressions || 0;
-                  bOrders      += ad.orders      || 0;
-                }
-              }
-
-              const bSpend = bSpendCad + bSpendUsd;
-              const bSales = bSalesCad + bSalesUsd;
-              brandMetrics.adSummary = {
-                spendCad: Math.round(bSpendCad * 100) / 100,
-                spendUsd: Math.round(bSpendUsd * 100) / 100,
-                attributedSalesCad: Math.round(bSalesCad * 100) / 100,
-                attributedSalesUsd: Math.round(bSalesUsd * 100) / 100,
-                clicks: bClicks, impressions: bImpressions, orders: bOrders,
-                acos:  bSales > 0 ? Math.round(bSpend / bSales * 10000) / 100 : null,
-                roas:  bSpend > 0 ? Math.round(bSales / bSpend * 100) / 100 : null,
-                ctr:   bImpressions > 0 ? Math.round(bClicks / bImpressions * 100000) / 1000 : null,
-                cpc:   bClicks > 0 ? Math.round(bSpend / bClicks * 10000) / 10000 : null,
-                adCvr: bClicks > 0 ? Math.round(bOrders / bClicks * 10000) / 100 : null,
-              };
-              totalSpendCad += bSpendCad;
-              totalSpendUsd += bSpendUsd;
-            }
-
-            preset.financials = preset.financials || {};
-            preset.financials.CAD = preset.financials.CAD || {};
-            preset.financials.USD = preset.financials.USD || {};
-            if (totalSpendCad > 0) preset.financials.CAD.adSpend = Math.round(totalSpendCad * 100) / 100;
-            if (totalSpendUsd > 0) preset.financials.USD.adSpend = Math.round(totalSpendUsd * 100) / 100;
-          }
-          console.log('[AutoSync] Ads data merged');
-        } catch (adsErr) {
-          console.warn('[AutoSync] Ads collection failed (non-fatal):', adsErr.message);
-        }
-
-        const lastSync = new Date().toISOString();
-        await savePresetMetrics({ lastSync, presets });
-        syncState = { status: 'done', lastSync, error: null };
-        console.log('[AutoSync] Done:', lastSync);
-
-        // Scrape UPCs for any new ASINs (never overwrites existing)
-        const freshForUpc = await loadBrands();
-        const missingUpcs = [];
-        for (const b of freshForUpc.brands) {
-          b.upcs = b.upcs || {};
-          for (const asin of b.asins) { if (!(asin in b.upcs)) missingUpcs.push(asin); }
-        }
-        if (missingUpcs.length > 0) {
-          const upcMap = await fetchUpcsForAsins([...new Set(missingUpcs)]);
-          for (const b of freshForUpc.brands) {
-            for (const asin of b.asins) { if (!(asin in b.upcs)) b.upcs[asin] = upcMap[asin] || ''; }
-          }
-          await saveBrands(freshForUpc);
-          console.log(`[AutoSync] UPC scrape done — ${Object.values(upcMap).filter(Boolean).length} new UPCs`);
-        }
-      } catch (err) {
-        syncState = { status: 'error', lastSync: null, error: err.message };
-        console.error('[AutoSync] Error:', err.message);
-      }
-    })();
-  }
-
-  // On startup: run immediately if last sync was more than 23h ago
+  // On startup: catch-up if data is more than 23h old
   (async () => {
     try {
       const pm = await loadPresetMetrics();
@@ -1443,7 +1306,7 @@ function scheduleDailySync() {
       const hoursSince = (Date.now() - lastSyncTime) / (1000 * 60 * 60);
       if (hoursSince >= 23) {
         console.log(`[AutoSync] Data is ${Math.round(hoursSince)}h old — running catch-up sync now`);
-        setTimeout(runSync, 5000); // small delay to let server finish starting
+        setTimeout(() => runFullSync('CatchUp'), 5000);
       } else {
         console.log(`[AutoSync] Data is ${Math.round(hoursSince)}h old — no catch-up needed`);
       }
@@ -1451,12 +1314,4 @@ function scheduleDailySync() {
       console.warn('[AutoSync] Could not check last sync time:', e.message);
     }
   })();
-
-  // Schedule 6am daily sync, repeat every 24h
-  const delay = msUntil6am();
-  console.log(`[AutoSync] Next scheduled sync in ${Math.round(delay / 60000)} minutes (6am)`);
-  setTimeout(() => {
-    runSync();
-    setInterval(runSync, 24 * 60 * 60 * 1000);
-  }, delay);
 }
