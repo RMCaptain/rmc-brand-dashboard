@@ -36,19 +36,37 @@
         <p class="text-sm text-slate-400 mt-0.5">Generate POs pre-populated from brand velocity and inventory data.</p>
       </div>
 
-      <!-- Split download button -->
-      <div class="flex" id="downloadBtnGroup">
-        <button onclick="generatePO()" class="btn-primary flex items-center gap-2" style="border-radius:8px 0 0 8px;padding-right:16px" id="mainDownloadBtn">
+      <div class="flex items-center gap-2">
+        <!-- Saved POs button -->
+        <button onclick="openSavedPOs()" class="flex items-center gap-2 px-3 py-2 text-sm font-medium bg-slate-700 text-slate-200 rounded-lg hover:bg-slate-600 border border-slate-600 transition-colors">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8l1 12a2 2 0 002 2h8a2 2 0 002-2L19 8"/>
           </svg>
-          <span id="mainDownloadLabel">Download PDF</span>
+          Saved POs
         </button>
-        <button onclick="toggleFormatMenu(event)" class="btn-primary px-2" style="border-radius:0 8px 8px 0;border-left:1px solid rgba(255,255,255,0.2)" id="formatDropBtn" title="Switch format">
-          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/>
+
+        <!-- Save PO button -->
+        <button onclick="savePO()" id="savePOBtn" class="flex items-center gap-2 px-3 py-2 text-sm font-medium bg-slate-700 text-slate-200 rounded-lg hover:bg-slate-600 border border-slate-600 transition-colors">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/>
           </svg>
+          <span id="savePOLabel">Save PO</span>
         </button>
+
+        <!-- Split download button -->
+        <div class="flex" id="downloadBtnGroup">
+          <button onclick="generatePO()" class="btn-primary flex items-center gap-2" style="border-radius:8px 0 0 8px;padding-right:16px" id="mainDownloadBtn">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+            </svg>
+            <span id="mainDownloadLabel">Download PDF</span>
+          </button>
+          <button onclick="toggleFormatMenu(event)" class="btn-primary px-2" style="border-radius:0 8px 8px 0;border-left:1px solid rgba(255,255,255,0.2)" id="formatDropBtn" title="Switch format">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
 
@@ -213,6 +231,23 @@
 
     </div>
 
+  </div>
+
+  <!-- Saved POs Modal -->
+  <div id="savedPOsModal" class="hidden fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center" onclick="closeSavedPOs(event)">
+    <div class="bg-slate-800 border border-slate-700 rounded-xl w-full max-w-2xl mx-4 shadow-2xl" onclick="event.stopPropagation()">
+      <div class="px-6 py-4 border-b border-slate-700 flex items-center justify-between">
+        <h2 class="text-sm font-semibold text-white">Saved Purchase Orders</h2>
+        <button onclick="closeSavedPOs()" class="text-slate-500 hover:text-white transition-colors">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+      <div id="savedPOsList" class="overflow-y-auto" style="max-height:420px">
+        <div class="px-6 py-8 text-center text-sm text-slate-500">Loading…</div>
+      </div>
+    </div>
   </div>
 
   <!-- Generating spinner overlay -->
@@ -713,6 +748,181 @@
         alert('Error: ' + err.message);
       } finally {
         document.getElementById('generatingOverlay').classList.add('hidden');
+      }
+    }
+
+    // ── PO Save / Load ──────────────────────────────────────────────────────────
+
+    let currentPOId = null;
+
+    function collectPOPayload() {
+      return {
+        po_number: document.getElementById('poNumber').value || null,
+        brand_id:  selectedBrand?.id || null,
+        brand_name: selectedBrand?.name || null,
+        status: document.getElementById('poStatus').value,
+        data: {
+          date:         document.getElementById('poDate').value,
+          notes:        document.getElementById('poNotes').value,
+          optionalCols: getOptionalCols(),
+          lines
+        }
+      };
+    }
+
+    async function savePO() {
+      if (!selectedBrand) { alert('Select a brand before saving.'); return; }
+      const btn = document.getElementById('savePOBtn');
+      const label = document.getElementById('savePOLabel');
+      label.textContent = 'Saving…';
+      btn.disabled = true;
+
+      try {
+        const payload = collectPOPayload();
+        let res;
+        if (currentPOId) {
+          res = await fetch(`/api/pos/${currentPOId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+        } else {
+          res = await fetch('/api/pos', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+        }
+        if (!res.ok) throw new Error((await res.json()).error || 'Save failed');
+        const saved = await res.json();
+        currentPOId = saved.id;
+        label.textContent = 'Saved';
+        setTimeout(() => { label.textContent = 'Save PO'; }, 2000);
+      } catch (err) {
+        alert('Save failed: ' + err.message);
+        label.textContent = 'Save PO';
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function openSavedPOs() {
+      document.getElementById('savedPOsModal').classList.remove('hidden');
+      document.getElementById('savedPOsList').innerHTML = '<div class="px-6 py-8 text-center text-sm text-slate-500">Loading…</div>';
+
+      try {
+        const res = await fetch('/api/pos');
+        if (!res.ok) throw new Error('Failed to load');
+        const pos = await res.json();
+        if (!pos.length) {
+          document.getElementById('savedPOsList').innerHTML =
+            '<div class="px-6 py-8 text-center text-sm text-slate-500">No saved POs yet.</div>';
+          return;
+        }
+        document.getElementById('savedPOsList').innerHTML = pos.map(po => {
+          const date = po.data?.date || po.created_at?.split('T')[0] || '—';
+          const statusColors = {
+            'Working': 'text-yellow-400',
+            'Submitted': 'text-blue-400',
+            'Discrepancy Reporting': 'text-orange-400',
+            'Complete': 'text-green-400'
+          };
+          const statusColor = statusColors[po.status] || 'text-slate-400';
+          const isActive = po.id === currentPOId;
+          return `
+            <div class="px-6 py-4 border-b border-slate-700/50 flex items-center justify-between gap-4 hover:bg-slate-700/20 transition-colors ${isActive ? 'bg-indigo-950/30' : ''}">
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2">
+                  ${po.po_number ? `<span class="text-xs font-mono bg-slate-700 text-slate-300 rounded px-1.5 py-0.5">PO-${po.po_number}</span>` : ''}
+                  <span class="text-sm font-medium text-white truncate">${po.brand_name || '—'}</span>
+                  ${isActive ? '<span class="text-xs text-indigo-400 font-medium">· current</span>' : ''}
+                </div>
+                <div class="flex items-center gap-3 mt-1">
+                  <span class="text-xs ${statusColor}">${po.status || 'Working'}</span>
+                  <span class="text-xs text-slate-500">${date}</span>
+                  <span class="text-xs text-slate-500">${(po.data?.lines?.length || 0)} lines</span>
+                </div>
+              </div>
+              <div class="flex items-center gap-2 shrink-0">
+                <button onclick="loadPO('${po.id}')"
+                  class="text-xs px-3 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 transition-colors font-medium">
+                  Load
+                </button>
+                <button onclick="confirmDeletePO('${po.id}', this)"
+                  class="text-xs px-2 py-1.5 text-slate-500 hover:text-red-400 transition-colors">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                  </svg>
+                </button>
+              </div>
+            </div>`;
+        }).join('');
+      } catch (err) {
+        document.getElementById('savedPOsList').innerHTML =
+          `<div class="px-6 py-8 text-center text-sm text-red-400">Error: ${err.message}</div>`;
+      }
+    }
+
+    function closeSavedPOs(e) {
+      if (e && e.target !== document.getElementById('savedPOsModal')) return;
+      document.getElementById('savedPOsModal').classList.add('hidden');
+    }
+
+    async function loadPO(id) {
+      try {
+        const res = await fetch(`/api/pos/${id}`);
+        if (!res.ok) throw new Error('Failed to load PO');
+        const po = await res.json();
+
+        // Restore brand
+        const brand = brands.find(b => b.id === po.brand_id);
+        if (!brand) { alert('Brand not found in current data.'); return; }
+
+        document.getElementById('brandSelect').value = po.brand_id;
+        const brandRes = await fetch(`/api/brands/${po.brand_id}`).then(r => r.json());
+        selectedBrand = brandRes;
+
+        // Restore form fields
+        if (po.po_number) document.getElementById('poNumber').value = po.po_number;
+        document.getElementById('poStatus').value = po.status || 'Working';
+        if (po.data?.date) document.getElementById('poDate').value = po.data.date;
+        if (po.data?.notes) document.getElementById('poNotes').value = po.data.notes;
+
+        // Restore optional cols
+        if (po.data?.optionalCols) {
+          Object.entries(po.data.optionalCols).forEach(([col, checked]) => {
+            const el = document.getElementById(`col_${col}`);
+            if (el) el.checked = checked;
+          });
+        }
+
+        // Restore lines
+        lines = po.data?.lines || [];
+        currentPOId = po.id;
+        document.getElementById('savePOLabel').textContent = 'Save PO';
+
+        document.getElementById('noDataBanner').classList.add('hidden');
+        document.getElementById('emptyLinesMsg').classList.add('hidden');
+        document.getElementById('linesTableWrap').classList.remove('hidden');
+        renderLines();
+        closeSavedPOs();
+        document.getElementById('savedPOsModal').classList.add('hidden');
+      } catch (err) {
+        alert('Load failed: ' + err.message);
+      }
+    }
+
+    async function confirmDeletePO(id, btn) {
+      if (!confirm('Delete this PO? This cannot be undone.')) return;
+      btn.disabled = true;
+      try {
+        const res = await fetch(`/api/pos/${id}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Delete failed');
+        if (currentPOId === id) currentPOId = null;
+        openSavedPOs(); // refresh list
+      } catch (err) {
+        alert('Delete failed: ' + err.message);
+        btn.disabled = false;
       }
     }
 

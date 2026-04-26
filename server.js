@@ -521,6 +521,59 @@ app.put('/api/po/settings', async (req, res) => {
   res.json(settings);
 });
 
+// ── Purchase Order CRUD ──────────────────────────────────────────────────────
+
+app.get('/api/pos', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('purchase_orders')
+      .select('id, po_number, brand_id, brand_name, status, created_at, updated_at')
+      .order('updated_at', { ascending: false });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/pos', async (req, res) => {
+  try {
+    const { po_number, brand_id, brand_name, status, data } = req.body;
+    const { data: row, error } = await supabase
+      .from('purchase_orders')
+      .insert({ po_number, brand_id, brand_name, status: status || 'draft', data, updated_at: new Date().toISOString() })
+      .select().single();
+    if (error) throw error;
+    res.json(row);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/pos/:id', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('purchase_orders').select('*').eq('id', req.params.id).single();
+    if (error) throw error;
+    res.json(data);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/pos/:id', async (req, res) => {
+  try {
+    const { po_number, brand_id, brand_name, status, data } = req.body;
+    const { data: row, error } = await supabase
+      .from('purchase_orders')
+      .update({ po_number, brand_id, brand_name, status, data, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(row);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/pos/:id', async (req, res) => {
+  try {
+    const { error } = await supabase.from('purchase_orders').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // POST generate PO PDF
 app.post('/api/po/generate-pdf', async (req, res) => {
   try {
