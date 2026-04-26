@@ -108,6 +108,10 @@
 
     <!-- Product Data tab -->
     <div id="view-data" class="hidden">
+      <div class="flex items-center justify-between mb-3">
+        <span class="text-xs" style="color:var(--text-3)">UPCs missing for ASINs that haven't been scraped yet.</span>
+        <button id="scrapeAllUpcsBtn" onclick="scrapeAllUpcs()" class="btn-ghost" style="font-size:12px;padding:6px 14px;">Scrape All UPCs</button>
+      </div>
       <div class="rmc-card overflow-hidden">
         <div class="overflow-x-auto">
           <table class="rmc-table">
@@ -651,6 +655,27 @@
       const top  = Math.max(8, Math.min(e.clientY - h / 2, window.innerHeight - h - 8));
       popup.style.left = left + 'px';
       popup.style.top  = top  + 'px';
+    }
+
+    // ── Scrape All UPCs ──────────────────────────────────────────────────────────
+
+    async function scrapeAllUpcs() {
+      const btn = document.getElementById('scrapeAllUpcsBtn');
+      btn.disabled = true;
+      btn.textContent = 'Scraping...';
+      try {
+        const res = await fetch('/api/scrape-upcs', { method: 'POST' });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || 'Failed');
+        btn.textContent = `Done — ${json.updated} UPCs found`;
+        await loadData();
+        renderDataTable();
+      } catch (err) {
+        btn.textContent = 'Error — retry';
+        console.error(err);
+      } finally {
+        setTimeout(() => { btn.textContent = 'Scrape All UPCs'; btn.disabled = false; }, 4000);
+      }
     }
 
     // ── Product Data tab ─────────────────────────────────────────────────────────
