@@ -460,7 +460,9 @@
         document.getElementById('noDataState').classList.remove('hidden');
         document.getElementById('skuTable').innerHTML = brand.asins.map(asin => `
           <tr class="border-b border-slate-700/40 last:border-0">
-            <td class="px-5 py-3 font-mono text-xs text-slate-400">${asin}</td>
+            <td class="px-5 py-3">
+              <a href="${brand.marketplace === 'US' ? 'https://www.amazon.com' : 'https://www.amazon.ca'}/dp/${asin}" target="_blank" rel="noopener" class="font-mono text-xs text-slate-400 hover:underline">${asin}</a>
+            </td>
             <td class="px-4 py-3 text-slate-500 text-xs" colspan="17">No data yet</td>
           </tr>`).join('');
         return;

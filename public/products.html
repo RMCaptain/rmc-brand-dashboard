@@ -726,8 +726,9 @@
               <img src="${r.imageUrl || `https://images-na.ssl-images-amazon.com/images/P/${r.asin}.01._SX100_.jpg`}" loading="lazy" onerror="this.style.display='none'" class="w-9 h-9 object-contain rounded absolute inset-0" />
             </div>
               <div class="min-w-0">
-                <div class="font-mono text-xs" style="color:var(--text-3)">${r.asin}</div>
+                <a href="${r.marketplace === 'US' ? 'https://www.amazon.com' : 'https://www.amazon.ca'}/dp/${r.asin}" target="_blank" rel="noopener" class="font-mono text-xs hover:underline" style="color:var(--text-3)">${r.asin}</a>
                 <div class="text-xs mt-0.5 max-w-xs truncate" style="color:var(--text-2)" title="${titleEsc}">${r.title}</div>
+                ${r.sellerSku ? `<a href="${r.marketplace === 'US' ? 'https://sellercentral.amazon.com' : 'https://sellercentral.amazon.ca'}/skucentral?mSku=${encodeURIComponent(r.sellerSku)}" target="_blank" rel="noopener" class="font-mono text-xs hover:underline truncate max-w-xs block mt-0.5" style="color:var(--text-3);opacity:0.6" title="${(r.sellerSku).replace(/"/g,'&quot;')}">${r.sellerSku}</a>` : ''}
               </div>
             </div>
           </td>
