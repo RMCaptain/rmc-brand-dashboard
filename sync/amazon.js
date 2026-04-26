@@ -776,15 +776,18 @@ async function syncBrandMetrics(brands) {
       }
     }
 
-    // Apply UPCs from listings report — most complete source, never overwrites existing
+    // Apply UPCs and SKUs from listings report — never overwrites existing UPCs
     let listingsUpcCount = 0;
     for (const brand of brands) {
       brand.upcs = brand.upcs || {};
+      brand.asinSkus = brand.asinSkus || {};
+      brand.asinMarketplaces = brand.asinMarketplaces || {};
       for (const asin of brand.asins) {
-        if (!(asin in brand.upcs) && listingsData[asin]?.upc) {
-          brand.upcs[asin] = listingsData[asin].upc;
-          listingsUpcCount++;
-        }
+        const listing = listingsData[asin];
+        if (!listing) continue;
+        if (!(asin in brand.upcs) && listing.upc) { brand.upcs[asin] = listing.upc; listingsUpcCount++; }
+        if (listing.sellerSku) brand.asinSkus[asin] = listing.sellerSku;
+        if (listing.marketplace) brand.asinMarketplaces[asin] = listing.marketplace;
       }
     }
     if (listingsUpcCount > 0) console.log(`[Sync] Applied ${listingsUpcCount} UPCs from listings report`);

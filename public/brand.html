@@ -458,13 +458,15 @@
       const skus = brand.metrics ? brand.metrics.skus : null;
       if (!skus || skus.length === 0) {
         document.getElementById('noDataState').classList.remove('hidden');
-        document.getElementById('skuTable').innerHTML = brand.asins.map(asin => `
-          <tr class="border-b border-slate-700/40 last:border-0">
+        document.getElementById('skuTable').innerHTML = brand.asins.map(asin => {
+          const mp = brand.asinMarketplaces?.[asin] || brand.marketplace;
+          return `<tr class="border-b border-slate-700/40 last:border-0">
             <td class="px-5 py-3">
-              <a href="${brand.marketplace === 'US' ? 'https://www.amazon.com' : 'https://www.amazon.ca'}/dp/${asin}" target="_blank" rel="noopener" class="font-mono text-xs text-slate-400 hover:underline">${asin}</a>
+              <a href="${mp === 'US' ? 'https://www.amazon.com' : 'https://www.amazon.ca'}/dp/${asin}" target="_blank" rel="noopener" class="font-mono text-xs text-slate-400 hover:underline">${asin}</a>
             </td>
             <td class="px-4 py-3 text-slate-500 text-xs" colspan="17">No data yet</td>
-          </tr>`).join('');
+          </tr>`;
+        }).join('');
         return;
       }
 
@@ -506,14 +508,16 @@
         : '<td class="px-4 py-3 text-right"><input type="text" value="' + upcVal + '" placeholder="—" class="w-28 text-right text-xs bg-slate-700 border border-slate-600 text-white rounded px-1.5 py-0.5 focus:outline-none focus:border-indigo-500" onchange="saveUpc(\'' + brand.id + '\', \'' + s.asin + '\', this.value)" title="UPC / Barcode" /></td>';
 
       const titleEsc = (s.title || '').replace(/"/g, '&quot;');
-      const skuEsc   = (s.sellerSku || '').replace(/"/g, '&quot;');
+      const asinSku  = s.sellerSku || brand.asinSkus?.[s.asin] || '';
+      const asinMp   = s.marketplace || brand.asinMarketplaces?.[s.asin] || brand.marketplace;
+      const skuEsc   = asinSku.replace(/"/g, '&quot;');
       const invJson  = JSON.stringify(s.inventory ?? {}).replace(/"/g, '&quot;');
       const invTotal = ((s.inventory?.onHand ?? 0) + (s.inventory?.inbound ?? 0) + (s.inventory?.reserved ?? 0) + (s.inventory?.researching ?? 0) + (s.inventory?.unfulfillable ?? 0)).toLocaleString();
 
       return '<tr class="border-b border-slate-700/40 last:border-0 hover:bg-slate-700/20">' +
         '<td class="px-5 py-3 whitespace-nowrap">' +
-          '<a href="' + (brand.marketplace === 'US' ? 'https://www.amazon.com' : 'https://www.amazon.ca') + '/dp/' + s.asin + '" target="_blank" rel="noopener" class="font-mono text-xs text-slate-400 hover:underline">' + s.asin + '</a>' +
-          (s.sellerSku ? '<a href="' + (brand.marketplace === 'US' ? 'https://sellercentral.amazon.com' : 'https://sellercentral.amazon.ca') + '/inventory?searchSKU=' + encodeURIComponent(s.sellerSku) + '" target="_blank" rel="noopener" class="font-mono text-xs text-slate-500 mt-0.5 max-w-[160px] truncate hover:underline block" title="' + skuEsc + '">' + skuEsc + '</a>' : '') +
+          '<a href="' + (asinMp === 'US' ? 'https://www.amazon.com' : 'https://www.amazon.ca') + '/dp/' + s.asin + '" target="_blank" rel="noopener" class="font-mono text-xs text-slate-400 hover:underline">' + s.asin + '</a>' +
+          (asinSku ? '<a href="' + (asinMp === 'US' ? 'https://sellercentral.amazon.com' : 'https://sellercentral.amazon.ca') + '/skucentral?mSku=' + encodeURIComponent(asinSku) + '" target="_blank" rel="noopener" class="font-mono text-xs text-slate-500 mt-0.5 max-w-[160px] truncate hover:underline block" title="' + skuEsc + '">' + skuEsc + '</a>' : '') +
         '</td>' +
         '<td class="px-4 py-3 text-slate-300 text-xs max-w-xs truncate" title="' + titleEsc + '">' + titleEsc + '</td>' +
         '<td class="px-4 py-3"><span class="text-xs px-2 py-0.5 rounded-full font-medium ' + statusColor + '">' + s.status + '</span></td>' +
