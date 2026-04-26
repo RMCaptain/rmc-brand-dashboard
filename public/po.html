@@ -98,6 +98,11 @@
           <h2 class="text-sm font-semibold text-white mb-3">Optional Columns</h2>
           <div class="space-y-2">
             <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" id="col_cases" onchange="renderLines()" checked
+                class="w-4 h-4 rounded border-slate-600 text-indigo-500 cursor-pointer" />
+              <span class="text-sm text-slate-300">Cases</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" id="col_stockNumber" onchange="renderLines()"
                 class="w-4 h-4 rounded border-slate-600 text-indigo-500 cursor-pointer" />
               <span class="text-sm text-slate-300">Stock Number</span>
@@ -383,6 +388,7 @@
 
     function getOptionalCols() {
       return {
+        cases:         document.getElementById('col_cases').checked,
         stockNumber:   document.getElementById('col_stockNumber').checked,
         wholesalePrice: document.getElementById('col_wholesalePrice').checked,
         discountPct:   document.getElementById('col_discountPct').checked,
@@ -408,7 +414,8 @@
     function buildHeaders(opts) {
       const h = ['Description', 'UPC'];
       if (opts.stockNumber)   h.push('Stock #');
-      h.push('Cases', 'Price / unit');
+      if (opts.cases)         h.push('Cases');
+      h.push('Price / unit');
       if (opts.wholesalePrice) h.push('Wholesale Price');
       if (opts.discountPct)    h.push('Discount %');
       if (opts.qtyPerCase)     h.push('Qty / Case');
@@ -443,10 +450,10 @@
             <input class="line-input" style="width:90px" type="text" value="${esc(line.stockNumber)}"
               oninput="setLine(${i}, 'stockNumber', this.value)" />
           </td>` : ''}
-          <td class="px-3 py-2">
+          ${opts.cases ? `<td class="px-3 py-2">
             <input class="line-input" style="width:60px" type="number" min="0" value="${line.cases || ''}"
               oninput="setCasesQty(${i}, 'cases', this.value)" ${velocityHint} />
-          </td>
+          </td>` : ''}
           <td class="px-3 py-2">
             <input class="line-input" style="width:80px" type="number" min="0" step="0.01" value="${line.price || ''}"
               oninput="setLineAndRefreshTotal(${i}, 'price', this.value)" />
