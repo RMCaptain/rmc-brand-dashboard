@@ -117,11 +117,18 @@ async function createReport(reportType, marketplaceIds, reportOptions, dataRange
     body.dataEndTime = dataRange.end;
   }
 
-  const res = await spRequest('POST', '/reports/2021-06-30/reports', token, body);
-  if (res.status !== 202) {
-    throw new Error(`Failed to create ${reportType}: ${JSON.stringify(res.body)}`);
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    const res = await spRequest('POST', '/reports/2021-06-30/reports', token, body);
+    if (res.status === 202) return res.body.reportId;
+    const isQuota = res.body?.errors?.[0]?.code === 'QuotaExceeded' || res.status === 429;
+    if (isQuota && attempt < 5) {
+      const wait = attempt * 60000; // 1min, 2min, 3min, 4min
+      console.warn(`[Reports] QuotaExceeded for ${reportType} — retrying in ${attempt}m (attempt ${attempt}/5)`);
+      await sleep(wait);
+    } else {
+      throw new Error(`Failed to create ${reportType}: ${JSON.stringify(res.body)}`);
+    }
   }
-  return res.body.reportId;
 }
 
 async function waitForReport(reportId, token, maxWaitMs = 900000) {
@@ -823,21 +830,20 @@ async function syncBrandMetrics(brands) {
   // ── S&T reports for all presets × all marketplaces (parallel) ───────────────
   console.log(`[Sync] Requesting S&T reports for ${presetKeys.length} presets × ${marketplaceIds.length} marketplaces...`);
 
-  // Create all reports in parallel
+  // Create reports sequentially to avoid QuotaExceeded bursts
   const stReportMap = {}; // key: "presetKey_mpId" → reportId
-  await Promise.all(
-    presetKeys.flatMap(presetKey =>
-      marketplaceIds.map(async mpId => {
-        const range = presets[presetKey];
-        const id = await createReport(
-          'GET_SALES_AND_TRAFFIC_REPORT', [mpId],
-          { dateGranularity: 'SUMMARY', asinGranularity: 'CHILD' },
-          range, token
-        );
-        stReportMap[`${presetKey}_${mpId}`] = id;
-      })
-    )
-  );
+  for (const presetKey of presetKeys) {
+    for (const mpId of marketplaceIds) {
+      const range = presets[presetKey];
+      const id = await createReport(
+        'GET_SALES_AND_TRAFFIC_REPORT', [mpId],
+        { dateGranularity: 'SUMMARY', asinGranularity: 'CHILD' },
+        range, token
+      );
+      stReportMap[`${presetKey}_${mpId}`] = id;
+      await sleep(2000); // 2s between requests — well within quota
+    }
+  }
 
   // Wait for all reports (all running in parallel on Amazon's side)
   // Use allSettled so a single stuck/failed report doesn't kill the whole sync
