@@ -668,7 +668,7 @@
         const json = await res.json();
         if (!res.ok) throw new Error(json.error || 'Failed');
         btn.textContent = `Done — ${json.updated} UPCs found`;
-        await loadData();
+        await load();
         renderDataTable();
       } catch (err) {
         btn.textContent = 'Error — retry';
