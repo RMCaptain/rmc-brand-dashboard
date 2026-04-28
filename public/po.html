@@ -488,13 +488,16 @@
 
       return `
         <tr class="border-b border-slate-700/50 hover:bg-slate-700/20 ${rowBg}">
-          <td class="px-3 py-2">
+          <td class="px-3 py-2" style="width:100%">
             ${line._bundleParent
-              ? `<div class="text-xs text-indigo-400/70 mb-0.5">↳ ${line._bundleParent}</div>`
-              : `<div class="font-mono text-slate-500 text-xs mb-0.5">${line.asin || ''}</div>`}
-            <input class="line-input" style="min-width:180px" type="text" value="${esc(line.description)}"
+              ? `<div class="text-xs text-indigo-400/70 mb-1">↳ ${line._bundleParent}</div>`
+              : ''}
+            <input class="line-input" style="width:100%;min-width:220px" type="text" value="${esc(line.description)}"
               oninput="setLine(${i}, 'description', this.value)" />
-            ${line._totalUnits ? `<div class="text-xs text-slate-500 mt-0.5">${line._totalUnits.toLocaleString()} total units</div>` : ''}
+            <div class="flex items-center gap-2 mt-0.5">
+              ${!line._bundleParent && line.asin ? `<span class="font-mono text-slate-600 text-xs">${line.asin}</span>` : ''}
+              ${line._totalUnits ? `<span class="text-xs text-slate-500">${line._totalUnits.toLocaleString()} total units</span>` : ''}
+            </div>
           </td>
           <td class="px-3 py-2">
             <input class="line-input" style="width:110px" type="text" value="${esc(line.upc)}"
