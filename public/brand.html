@@ -690,25 +690,45 @@
       renderCfgComponents();
     }
 
+    function _cfgAllAsins() {
+      return allBrandsData.flatMap(b => b.asins.map(a => ({
+        asin: a,
+        title: b.asinTitles?.[a] || '',
+        brandName: b.name
+      })));
+    }
+
     function cfgAsinSearch(i, query) {
       cfgComponents[i]._searchQuery = query;
-      const q = query.toLowerCase();
+      const q = query.toLowerCase().trim();
       const results = document.getElementById(`cfgAsinResults_${i}`);
-      if (!q) { results.classList.add('hidden'); return; }
-      const matches = allBrandsData.flatMap(b => b.asins.map(a => ({
-        asin: a,
-        title: b.asinTitles?.[a] || a,
-        brandName: b.name
-      }))).filter(x => x.asin.toLowerCase().includes(q) || x.title.toLowerCase().includes(q)).slice(0, 8);
-      if (!matches.length) { results.classList.add('hidden'); return; }
+      const all = _cfgAllAsins();
+      const matches = q
+        ? all.filter(x => x.asin.toLowerCase().includes(q) || x.title.toLowerCase().includes(q)).slice(0, 12)
+        : all.slice(0, 20);
+      if (!matches.length) {
+        results.innerHTML = '<div class="px-3 py-2 text-xs text-slate-500">No ASINs found</div>';
+        results.classList.remove('hidden');
+        return;
+      }
       results.innerHTML = matches.map(m => `
-        <div class="px-3 py-2 hover:bg-slate-600 cursor-pointer" onclick="selectCfgAsin(${i}, '${m.asin}')">
-          <div class="text-xs font-mono text-slate-400">${m.asin}</div>
-          <div class="text-xs text-white truncate">${m.title}</div>
+        <div class="px-3 py-2 hover:bg-slate-600 cursor-pointer border-b border-slate-700/50 last:border-0" onclick="selectCfgAsin(${i}, '${m.asin}')">
+          <div class="text-xs font-mono text-indigo-400">${m.asin}</div>
+          <div class="text-xs text-white truncate">${m.title || '<span class=\'text-slate-500\'>No title</span>'}</div>
           <div class="text-xs text-slate-500">${m.brandName}</div>
         </div>`).join('');
       results.classList.remove('hidden');
     }
+
+    function cfgAsinFocus(i) {
+      cfgAsinSearch(i, cfgComponents[i]._searchQuery || '');
+    }
+
+    document.addEventListener('click', e => {
+      if (!e.target.closest('[id^="cfgAsinInput_"]') && !e.target.closest('[id^="cfgAsinResults_"]')) {
+        document.querySelectorAll('[id^="cfgAsinResults_"]').forEach(el => el.classList.add('hidden'));
+      }
+    });
 
     function selectCfgAsin(i, asin) {
       const match = allBrandsData.flatMap(b => b.asins.map(a => ({ asin: a, title: b.asinTitles?.[a] || a }))).find(x => x.asin === asin);
@@ -731,38 +751,48 @@
         const btnOn  = btnBase + ' bg-indigo-600 text-white';
         const btnOff = btnBase + ' bg-slate-700 text-slate-400 hover:bg-slate-600';
         return `
-        <div class="p-2.5 bg-slate-900/60 rounded-lg mb-2 space-y-2 border border-slate-700/50">
-          <div class="flex items-center justify-between">
-            <div class="flex gap-1">
-              <button onclick="setCfgCompType(${i},'asin')" class="${isAsin ? btnOn : btnOff}">From Catalog</button>
-              <button onclick="setCfgCompType(${i},'manual')" class="${!isAsin ? btnOn : btnOff}">Manual</button>
+        <div class="p-3 bg-slate-900/60 rounded-lg mb-2 border border-slate-700/50">
+          <div class="flex items-center justify-between mb-2">
+            <div class="flex rounded-lg overflow-hidden border border-slate-600">
+              <button onclick="setCfgCompType(${i},'asin')"
+                class="px-3 py-1.5 text-xs font-medium transition-colors ${isAsin ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}">
+                From Catalog
+              </button>
+              <button onclick="setCfgCompType(${i},'manual')"
+                class="px-3 py-1.5 text-xs font-medium transition-colors border-l border-slate-600 ${!isAsin ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}">
+                Manual
+              </button>
             </div>
-            <button onclick="removeCfgComponent(${i})" class="text-slate-600 hover:text-red-400 transition-colors text-base leading-none">×</button>
+            <button onclick="removeCfgComponent(${i})" class="text-slate-600 hover:text-red-400 transition-colors ml-2">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
           </div>
           ${isAsin ? `
           <div class="relative">
             <input id="cfgAsinInput_${i}" type="text" value="${(c._searchQuery || c._resolvedTitle || c.asin || '').replace(/"/g,'&quot;')}"
-              placeholder="Search ASIN or product title…"
-              class="w-full bg-slate-700 border border-slate-600 text-white rounded px-2 py-1.5 text-xs focus:outline-none focus:border-indigo-500"
-              oninput="cfgAsinSearch(${i}, this.value)" autocomplete="off" />
-            <div id="cfgAsinResults_${i}" class="hidden absolute z-50 w-full mt-0.5 bg-slate-700 border border-slate-600 rounded-lg shadow-xl max-h-48 overflow-y-auto"></div>
-            ${c.asin ? `<div class="text-xs text-indigo-400 mt-1 font-mono">${c.asin}</div>` : ''}
-          </div>` : `
+              placeholder="Search by ASIN or product name…"
+              class="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-indigo-500"
+              oninput="cfgAsinSearch(${i}, this.value)"
+              onfocus="cfgAsinFocus(${i})"
+              autocomplete="off" />
+            <div id="cfgAsinResults_${i}" class="hidden absolute z-50 w-full mt-1 bg-slate-800 border border-slate-600 rounded-lg shadow-xl max-h-52 overflow-y-auto"></div>
+          </div>
+          ${c.asin ? `<div class="text-xs text-indigo-400 mt-1.5 font-mono pl-1">${c.asin}</div>` : '<div class="text-xs text-slate-500 mt-1 pl-1">Click above to browse or search</div>'}` : `
           <input type="text" value="${(c.description||'').replace(/"/g,'&quot;')}" placeholder="Description"
-            class="w-full bg-slate-700 border border-slate-600 text-white rounded px-2 py-1.5 text-xs focus:outline-none focus:border-indigo-500"
+            class="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-indigo-500 mb-2"
             oninput="cfgComponents[${i}].description = this.value" />
-          <div class="flex gap-1">
+          <div class="flex gap-2">
             <input type="text" value="${(c.upc||'').replace(/"/g,'&quot;')}" placeholder="UPC (optional)"
-              class="flex-1 bg-slate-700 border border-slate-600 text-white rounded px-2 py-1.5 text-xs focus:outline-none focus:border-indigo-500"
+              class="flex-1 bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-indigo-500"
               oninput="cfgComponents[${i}].upc = this.value" />
             <input type="number" min="0" step="0.01" value="${c.price || ''}" placeholder="Price"
-              class="w-24 bg-slate-700 border border-slate-600 text-white rounded px-2 py-1.5 text-xs focus:outline-none focus:border-indigo-500"
+              class="w-24 bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-indigo-500"
               oninput="cfgComponents[${i}].price = this.value" />
           </div>`}
-          <div class="flex items-center gap-2">
-            <span class="text-xs text-slate-500">Qty / bundle:</span>
+          <div class="flex items-center gap-2 mt-2 pt-2 border-t border-slate-700/50">
+            <span class="text-xs text-slate-500">Qty / bundle</span>
             <input type="number" min="1" value="${c.qtyPerBundle || 1}"
-              class="w-16 bg-slate-700 border border-slate-600 text-white rounded px-2 py-1 text-xs text-center focus:outline-none focus:border-indigo-500"
+              class="w-16 bg-slate-700 border border-slate-600 text-white rounded-lg px-2 py-1 text-xs text-center focus:outline-none focus:border-indigo-500"
               oninput="cfgComponents[${i}].qtyPerBundle = Number(this.value)" />
           </div>
         </div>`;
