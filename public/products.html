@@ -745,7 +745,7 @@
       const brand = brandsData.find(b => b.id === cfgBrandId);
       if (brand) { brand.asinConfig = brand.asinConfig || {}; brand.asinConfig[cfgAsin] = { type, unitsPerPack, components }; }
       closeCfgModal();
-      render();
+      if (activeTab === 'data') renderDataTable(); else render();
     }
 
     function closeCfgModal() {
