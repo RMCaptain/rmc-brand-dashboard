@@ -453,11 +453,11 @@
 
     // ── Column resize state ─────────────────────────────────────────────────────
     const DEFAULT_COL_WIDTHS = {
-      description: 320, upc: 130, stockNumber: 100, cases: 75,
-      price: 90, wholesalePrice: 100, discountPct: 80, qtyPerCase: 80,
-      quantity: 80, total: 100, del: 36
+      description: 480, upc: 115, stockNumber: 76, cases: 58,
+      price: 76, wholesalePrice: 82, discountPct: 62, qtyPerCase: 62,
+      quantity: 68, total: 82, del: 32
     };
-    let colWidths = JSON.parse(localStorage.getItem('po_colWidths') || 'null') || { ...DEFAULT_COL_WIDTHS };
+    let colWidths = JSON.parse(localStorage.getItem('po_colWidths_v2') || 'null') || { ...DEFAULT_COL_WIDTHS };
 
     let _resizing = null;
     document.addEventListener('mousemove', e => {
@@ -470,7 +470,7 @@
     });
     document.addEventListener('mouseup', () => {
       if (!_resizing) return;
-      localStorage.setItem('po_colWidths', JSON.stringify(colWidths));
+      localStorage.setItem('po_colWidths_v2', JSON.stringify(colWidths));
       _resizing = null;
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
