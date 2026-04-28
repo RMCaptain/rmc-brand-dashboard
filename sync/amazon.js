@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 
 const LISTINGS_CACHE_PATH = path.join(__dirname, '../data/listings-cache.json');
-const LISTINGS_CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
+const LISTINGS_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const IMAGE_CACHE_PATH = path.join(__dirname, '../data/image-cache.json');
 
 const SP_API_HOST = 'sellingpartnerapi-na.amazon.com';
@@ -747,96 +747,120 @@ async function syncBrandMetrics(brands) {
     console.log(`[Sync] Loaded ${Object.keys(persistedImages).length} images from persistent cache`);
   } catch {}
 
-  // ── Listings + Inventory (cached 4h to avoid quota errors) ─────────────────
+  // ── Listings + Inventory (cached 24h; stale fallback if Amazon reports hang) ──
   let listingsData, inventory, imageUrls;
-  try {
-    const cache = JSON.parse(fs.readFileSync(LISTINGS_CACHE_PATH, 'utf8'));
-    if (cache.fetched && (Date.now() - new Date(cache.fetched)) < LISTINGS_CACHE_TTL_MS) {
-      console.log('[Sync] Using cached listings data (< 4h old)');
-      listingsData = cache.listingsData;
-      inventory = cache.inventory;
-      imageUrls = { ...(cache.imageUrls || {}), ...persistedImages };
-    }
-  } catch {}
+
+  // Always load whatever cache exists so we have a fallback if fresh fetch times out
+  let staleCache = null;
+  try { staleCache = JSON.parse(fs.readFileSync(LISTINGS_CACHE_PATH, 'utf8')); } catch {}
+
+  const cacheAgeMs = staleCache?.fetched ? Date.now() - new Date(staleCache.fetched) : Infinity;
+  if (cacheAgeMs < LISTINGS_CACHE_TTL_MS) {
+    console.log(`[Sync] Using cached listings data (${Math.round(cacheAgeMs / 3600000)}h old)`);
+    listingsData = staleCache.listingsData;
+    inventory    = staleCache.inventory;
+    imageUrls    = { ...(staleCache.imageUrls || {}), ...persistedImages };
+  }
 
   if (!listingsData) {
     console.log('[Sync] Requesting listings + inventory reports...');
-    const listingsReportIds = await Promise.all(
-      marketplaceIds.map(mpId => createReport('GET_MERCHANT_LISTINGS_ALL_DATA', [mpId], null, null, token))
-    );
-    const listingsDocIds = await Promise.all(listingsReportIds.map(id => waitForReport(id, token)));
-    const listingsDatasets = await Promise.all(
-      listingsDocIds.map((docId, i) =>
-        downloadReport(docId, token).then(raw => ({
-          marketplace: MARKETPLACE_CODE[marketplaceIds[i]] || 'CA',
-          data: parseListingsReport(raw)
-        }))
-      )
+
+    const LISTINGS_HARD_TIMEOUT_MS = 20 * 60 * 1000; // 20 min — kills stuck reports
+    const hardTimeout = new Promise((_, rej) =>
+      setTimeout(() => rej(new Error('Listings fetch timed out after 20min')), LISTINGS_HARD_TIMEOUT_MS)
     );
 
-    listingsData = {};
-    for (const { marketplace, data } of listingsDatasets) {
-      for (const [asin, d] of Object.entries(data)) {
-        if (!listingsData[asin] || d.status === 'active') listingsData[asin] = { ...d, marketplace };
+    try {
+      await Promise.race([
+        (async () => {
+          const listingsReportIds = await Promise.all(
+            marketplaceIds.map(mpId => createReport('GET_MERCHANT_LISTINGS_ALL_DATA', [mpId], null, null, token))
+          );
+          const listingsDocIds = await Promise.all(listingsReportIds.map(id => waitForReport(id, token)));
+          const listingsDatasets = await Promise.all(
+            listingsDocIds.map((docId, i) =>
+              downloadReport(docId, token).then(raw => ({
+                marketplace: MARKETPLACE_CODE[marketplaceIds[i]] || 'CA',
+                data: parseListingsReport(raw)
+              }))
+            )
+          );
+
+          listingsData = {};
+          for (const { marketplace, data } of listingsDatasets) {
+            for (const [asin, d] of Object.entries(data)) {
+              if (!listingsData[asin] || d.status === 'active') listingsData[asin] = { ...d, marketplace };
+            }
+          }
+
+          const skusByMarketplace = {};
+          for (const mpId of marketplaceIds) {
+            const mpCode = MARKETPLACE_CODE[mpId] || 'CA';
+            skusByMarketplace[mpId] = Object.values(listingsData)
+              .filter(d => d.marketplace === mpCode && d.sellerSku)
+              .map(d => d.sellerSku);
+          }
+
+          const inventoryResults = await Promise.all(
+            marketplaceIds.map(mpId => getInventoryBySkus(mpId, skusByMarketplace[mpId], token))
+          );
+          inventory = {};
+          for (const inv of inventoryResults) {
+            for (const [asin, data] of Object.entries(inv)) {
+              if (!inventory[asin]) inventory[asin] = { onHand: 0, inbound: 0, reserved: 0, researching: 0, unfulfillable: 0 };
+              inventory[asin].onHand        += data.onHand;
+              inventory[asin].inbound       += data.inbound;
+              inventory[asin].reserved      += data.reserved;
+              inventory[asin].researching   += data.researching;
+              inventory[asin].unfulfillable += data.unfulfillable;
+            }
+          }
+
+          let listingsUpcCount = 0;
+          for (const brand of brands) {
+            brand.upcs = brand.upcs || {};
+            brand.asinSkus = brand.asinSkus || {};
+            brand.asinMarketplaces = brand.asinMarketplaces || {};
+            for (const asin of brand.asins) {
+              const listing = listingsData[asin];
+              if (!listing) continue;
+              if (!(asin in brand.upcs) && listing.upc) { brand.upcs[asin] = listing.upc; listingsUpcCount++; }
+              if (listing.sellerSku) brand.asinSkus[asin] = listing.sellerSku;
+              if (listing.marketplace) brand.asinMarketplaces[asin] = listing.marketplace;
+            }
+          }
+          if (listingsUpcCount > 0) console.log(`[Sync] Applied ${listingsUpcCount} UPCs from listings report`);
+
+          imageUrls = {};
+          for (const [asin, d] of Object.entries(listingsData)) {
+            if (d.imageUrl) imageUrls[asin] = d.imageUrl;
+          }
+          console.log(`[Sync] Got ${Object.keys(imageUrls).length} images from listings report`);
+
+          const allAsins = [...new Set(brands.flatMap(b => b.asins))];
+          const catalogImages = await getAsinImages(allAsins, marketplaceIds, token);
+          Object.assign(imageUrls, catalogImages);
+          Object.assign(imageUrls, persistedImages);
+          console.log(`[Sync] Total images after Catalog API overlay + persistent cache: ${Object.keys(imageUrls).length}`);
+
+          fs.writeFileSync(LISTINGS_CACHE_PATH, JSON.stringify({ fetched: new Date().toISOString(), listingsData, inventory, imageUrls }));
+        })(),
+        hardTimeout,
+      ]);
+    } catch (listingsErr) {
+      console.warn(`[Sync] Listings fetch failed: ${listingsErr.message}`);
+      if (staleCache?.listingsData) {
+        console.log('[Sync] Falling back to stale listings cache — revenue data unaffected');
+        listingsData = staleCache.listingsData;
+        inventory    = staleCache.inventory;
+        imageUrls    = { ...(staleCache.imageUrls || {}), ...persistedImages };
+      } else {
+        console.warn('[Sync] No listings cache available — continuing with empty listings');
+        listingsData = {};
+        inventory    = {};
+        imageUrls    = {};
       }
     }
-
-    // Build seller SKU lists per marketplace from the listings report
-    const skusByMarketplace = {};
-    for (const mpId of marketplaceIds) {
-      const mpCode = MARKETPLACE_CODE[mpId] || 'CA';
-      skusByMarketplace[mpId] = Object.values(listingsData)
-        .filter(d => d.marketplace === mpCode && d.sellerSku)
-        .map(d => d.sellerSku);
-    }
-
-    const inventoryResults = await Promise.all(
-      marketplaceIds.map(mpId => getInventoryBySkus(mpId, skusByMarketplace[mpId], token))
-    );
-    inventory = {};
-    for (const inv of inventoryResults) {
-      for (const [asin, data] of Object.entries(inv)) {
-        if (!inventory[asin]) inventory[asin] = { onHand: 0, inbound: 0, reserved: 0, researching: 0, unfulfillable: 0 };
-        inventory[asin].onHand        += data.onHand;
-        inventory[asin].inbound       += data.inbound;
-        inventory[asin].reserved      += data.reserved;
-        inventory[asin].researching   += data.researching;
-        inventory[asin].unfulfillable += data.unfulfillable;
-      }
-    }
-
-    // Apply UPCs and SKUs from listings report — never overwrites existing UPCs
-    let listingsUpcCount = 0;
-    for (const brand of brands) {
-      brand.upcs = brand.upcs || {};
-      brand.asinSkus = brand.asinSkus || {};
-      brand.asinMarketplaces = brand.asinMarketplaces || {};
-      for (const asin of brand.asins) {
-        const listing = listingsData[asin];
-        if (!listing) continue;
-        if (!(asin in brand.upcs) && listing.upc) { brand.upcs[asin] = listing.upc; listingsUpcCount++; }
-        if (listing.sellerSku) brand.asinSkus[asin] = listing.sellerSku;
-        if (listing.marketplace) brand.asinMarketplaces[asin] = listing.marketplace;
-      }
-    }
-    if (listingsUpcCount > 0) console.log(`[Sync] Applied ${listingsUpcCount} UPCs from listings report`);
-
-    // Base image URLs from listings report (image-url column — covers all active ASINs)
-    imageUrls = {};
-    for (const [asin, d] of Object.entries(listingsData)) {
-      if (d.imageUrl) imageUrls[asin] = d.imageUrl;
-    }
-    console.log(`[Sync] Got ${Object.keys(imageUrls).length} images from listings report`);
-
-    // Overlay Catalog API images for mapped brand ASINs (higher quality, fills gaps)
-    const allAsins = [...new Set(brands.flatMap(b => b.asins))];
-    const catalogImages = await getAsinImages(allAsins, marketplaceIds, token);
-    Object.assign(imageUrls, catalogImages);
-    // Merge persistent image cache on top — never lose manually backfilled images
-    Object.assign(imageUrls, persistedImages);
-    console.log(`[Sync] Total images after Catalog API overlay + persistent cache: ${Object.keys(imageUrls).length}`);
-
-    fs.writeFileSync(LISTINGS_CACHE_PATH, JSON.stringify({ fetched: new Date().toISOString(), listingsData, inventory, imageUrls }));
   }
 
   imageUrls = imageUrls || {};
