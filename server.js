@@ -1,4 +1,6 @@
 require('dotenv').config();
+if (process.stdout._handle) process.stdout._handle.setBlocking(true);
+if (process.stderr._handle) process.stderr._handle.setBlocking(true);
 const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
