@@ -134,14 +134,16 @@ async function createReport(reportType, marketplaceIds, reportOptions, dataRange
   }
 
   for (let attempt = 1; attempt <= 8; attempt++) {
-    const currentToken = await getAccessToken(); // always use fresh token (auto-cached 50min)
+    const currentToken = await getAccessToken();
     const res = await spRequest('POST', '/reports/2021-06-30/reports', currentToken, body);
     if (res.status === 202) return res.body.reportId;
-    const isQuota = res.body?.errors?.[0]?.code === 'QuotaExceeded' || res.status === 429;
-    if (isQuota && attempt < 8) {
-      // Exponential backoff: 2m, 4m, 6m, 8m, 10m, 12m, 14m
-      const wait = attempt * 2 * 60000;
-      console.warn(`[Reports] QuotaExceeded for ${reportType} — retrying in ${attempt * 2}m (attempt ${attempt}/8)`);
+    const errCode = res.body?.errors?.[0]?.code;
+    const isQuota = errCode === 'QuotaExceeded' || res.status === 429;
+    const isTransient = errCode === 'InternalFailure' || (res.status >= 500 && res.status !== 501);
+    if (attempt < 8 && (isQuota || isTransient)) {
+      const wait = isQuota ? attempt * 2 * 60000 : Math.min(attempt * 15000, 60000); // quota: 2-14m, transient: 15-60s
+      const label = isQuota ? `${attempt * 2}m` : `${Math.round(wait / 1000)}s`;
+      console.warn(`[Reports] ${errCode} for ${reportType} — retrying in ${label} (attempt ${attempt}/8)`);
       await sleep(wait);
     } else {
       throw new Error(`Failed to create ${reportType}: ${JSON.stringify(res.body)}`);
