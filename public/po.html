@@ -420,18 +420,20 @@
 
         } else if (cfg.type === 'multipack') {
           const upp = cfg.unitsPerPack || 1;
-          // Velocity is in packs; qty is in packs
+          // qty is in packs; multiply by upp to get individual units to order from supplier
+          const indivQty = qty * upp;
+          const indivCasePack = casePack * upp;
           lines.push({
             ...base,
             asin,
-            description: upp > 1 ? `${title} (${upp}-Pack)` : title,
+            description: upp > 1 ? `${title} (individual units for ${upp}-Pack)` : title,
             upc: brand.upcs?.[asin] || '',
             price: brand.cogs?.[asin] || 0,
-            casePack,
-            quantity: qty,
-            cases,
+            casePack: indivCasePack,
+            quantity: indivQty,
+            cases: indivCasePack > 0 ? Math.ceil(indivQty / indivCasePack) : 0,
             _unitsPerPack: upp,
-            _totalUnits: qty * upp
+            _totalUnits: indivQty
           });
 
         } else {
