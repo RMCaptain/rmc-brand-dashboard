@@ -1198,6 +1198,29 @@ app.listen(PORT, () => {
   scheduleDailySync();
 });
 
+// ── Background financial events patch (runs after core sync completes) ────────
+async function backgroundUpdateFinancials(tag = 'Finances') {
+  console.log(`[${tag}] Background financial events fetch starting...`);
+  try {
+    const { fetchFinancialEvents } = require('./sync/amazon');
+    const financialsMap = await fetchFinancialEvents();
+    if (syncState.status === 'syncing') {
+      console.log(`[${tag}] New sync started while fetching financials — skipping patch to avoid overwrite`);
+      return;
+    }
+    const pm = await loadPresetMetrics();
+    for (const [presetKey, financials] of Object.entries(financialsMap)) {
+      if (pm.presets?.[presetKey]) {
+        pm.presets[presetKey].financials = financials;
+      }
+    }
+    await savePresetMetrics(pm);
+    console.log(`[${tag}] Financial events patched into preset-metrics`);
+  } catch (err) {
+    console.warn(`[${tag}] Background financials failed:`, err.message);
+  }
+}
+
 // ── Shared full-sync runner (used by manual /api/sync and auto-sync) ──────────
 async function runFullSync(tag = 'Sync') {
   if (syncState.status === 'syncing') {
@@ -1326,6 +1349,10 @@ async function runFullSync(tag = 'Sync') {
     await savePresetMetrics({ lastSync, presets });
     syncState = { status: 'done', lastSync, error: null };
     console.log(`[${tag}] Done:`, lastSync);
+
+    // Financial events run in background — fees data can take 30-60 min (100+ API pages)
+    // so we don't block the core S&T sync on them. They'll patch preset-metrics when done.
+    setImmediate(() => backgroundUpdateFinancials(tag));
 
     // Scrape UPCs for any ASINs not yet checked
     const freshForUpc = await loadBrands();

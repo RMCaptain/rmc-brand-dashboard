@@ -841,23 +841,9 @@ async function syncBrandMetrics(brands) {
 
   imageUrls = imageUrls || {};
 
-  // ── Financial events per preset (sequential — 0.5 req/s rate limit) ─────────
-  console.log('[Sync] Fetching financial events for each preset...');
+  // Financial events are fetched in the background after the sync completes
+  // (see backgroundUpdateFinancials in server.js) to avoid blocking S&T reports.
   const financialsMap = {};
-  for (const [presetKey, range] of Object.entries(presets)) {
-    try {
-      financialsMap[presetKey] = await getFinancialSummary(range.start, range.end, token);
-      const f = financialsMap[presetKey];
-      console.log(`[Sync] Financials OK for ${presetKey}: fees CAD=${f.CAD.amazonFees} USD=${f.USD.amazonFees}`);
-    } catch (err) {
-      console.warn(`[Sync] Financials failed for ${presetKey}: ${err.message}`);
-      financialsMap[presetKey] = {
-        CAD: { amazonFees: 0, refundAmount: 0, refundFees: 0, adSpend: 0 },
-        USD: { amazonFees: 0, refundAmount: 0, refundFees: 0, adSpend: 0 }
-      };
-    }
-    await sleep(2100);
-  }
 
   // ── S&T reports for all presets × all marketplaces (parallel) ───────────────
   console.log(`[Sync] Requesting S&T reports for ${presetKeys.length} presets × ${marketplaceIds.length} marketplaces...`);
@@ -1155,4 +1141,26 @@ async function fetchUpcsForAsins(asins) {
   return result;
 }
 
-module.exports = { syncBrandMetrics, importBrandsFromAmazon, fetchUpcsForAsins };
+async function fetchFinancialEvents() {
+  const token = await getAccessToken();
+  const presets = getPresetRanges();
+  const emptyF = () => ({
+    CAD: { amazonFees: 0, refundAmount: 0, refundFees: 0, adSpend: 0 },
+    USD: { amazonFees: 0, refundAmount: 0, refundFees: 0, adSpend: 0 }
+  });
+  const financialsMap = {};
+  for (const [presetKey, range] of Object.entries(presets)) {
+    try {
+      financialsMap[presetKey] = await getFinancialSummary(range.start, range.end, token);
+      const f = financialsMap[presetKey];
+      console.log(`[Finances] OK for ${presetKey}: fees CAD=${f.CAD.amazonFees} USD=${f.USD.amazonFees}`);
+    } catch (err) {
+      console.warn(`[Finances] Failed for ${presetKey}: ${err.message}`);
+      financialsMap[presetKey] = emptyF();
+    }
+    await sleep(2100);
+  }
+  return financialsMap;
+}
+
+module.exports = { syncBrandMetrics, importBrandsFromAmazon, fetchUpcsForAsins, fetchFinancialEvents };
