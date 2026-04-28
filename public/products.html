@@ -584,27 +584,58 @@
       })));
     }
 
+    function _cfgDropdown() {
+      let d = document.getElementById('_cfgDropdownPortal');
+      if (!d) {
+        d = document.createElement('div');
+        d.id = '_cfgDropdownPortal';
+        d.style.cssText = 'position:fixed;z-index:9999;display:none;background:#0f172a;border:1px solid #334155;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.8);max-height:220px;overflow-y:auto;min-width:280px';
+        document.body.appendChild(d);
+      }
+      return d;
+    }
+
+    function _cfgDropdownHide() {
+      const d = document.getElementById('_cfgDropdownPortal');
+      if (d) d.style.display = 'none';
+    }
+
     function cfgAsinSearch(i, query) {
       cfgComponents[i]._searchQuery = query;
       const q = query.toLowerCase().trim();
-      const results = document.getElementById(`cfgAsinResults_${i}`);
+      const input = document.getElementById(`cfgAsinInput_${i}`);
+      if (!input) return;
+      const rect = input.getBoundingClientRect();
       const all = _cfgAllAsins();
       const matches = q
         ? all.filter(x => x.asin.toLowerCase().includes(q) || x.title.toLowerCase().includes(q)).slice(0, 12)
         : all.slice(0, 20);
+      const d = _cfgDropdown();
+      d.dataset.idx = i;
       if (!matches.length) {
-        results.innerHTML = '<div style="padding:8px 12px;font-size:12px;color:var(--text-3)">No ASINs found</div>';
-        results.classList.remove('hidden');
-        return;
+        d.innerHTML = '<div style="padding:8px 12px;font-size:12px;color:var(--text-3)">No ASINs found</div>';
+      } else {
+        d.innerHTML = matches.map(m => `
+          <div style="padding:8px 12px;cursor:pointer;border-bottom:1px solid #1e293b"
+            onmouseover="this.style.background='#1e293b'" onmouseout="this.style.background=''"
+            onmousedown="selectCfgAsin(${i},'${m.asin}')">
+            <div style="font-size:11px;font-family:monospace;color:#818cf8">${m.asin}</div>
+            <div style="font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${m.title || '<span style="color:var(--text-3)">No title</span>'}</div>
+            <div style="font-size:11px;color:var(--text-3)">${m.brandName}</div>
+          </div>`).join('');
       }
-      results.innerHTML = matches.map(m => `
-        <div style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border)" class="hover:bg-slate-600"
-          onmousedown="selectCfgAsin(${i},'${m.asin}')">
-          <div style="font-size:11px;font-family:monospace;color:#818cf8">${m.asin}</div>
-          <div style="font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${m.title || '<span style="color:var(--text-3)">No title</span>'}</div>
-          <div style="font-size:11px;color:var(--text-3)">${m.brandName}</div>
-        </div>`).join('');
-      results.classList.remove('hidden');
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const dropH = Math.min(220, matches.length * 52 + 8);
+      if (spaceBelow >= dropH || spaceBelow >= 120) {
+        d.style.top = (rect.bottom + 2) + 'px';
+        d.style.bottom = '';
+      } else {
+        d.style.bottom = (window.innerHeight - rect.top + 2) + 'px';
+        d.style.top = '';
+      }
+      d.style.left = rect.left + 'px';
+      d.style.width = rect.width + 'px';
+      d.style.display = 'block';
     }
 
     function cfgAsinFocus(i) {
@@ -617,8 +648,9 @@
       cfgComponents[i].asin = asin;
       cfgComponents[i]._resolvedTitle = match?.title || asin;
       cfgComponents[i]._searchQuery = match?.title || asin;
-      document.getElementById(`cfgAsinInput_${i}`).value = cfgComponents[i]._searchQuery;
-      document.getElementById(`cfgAsinResults_${i}`).classList.add('hidden');
+      const input = document.getElementById(`cfgAsinInput_${i}`);
+      if (input) input.value = cfgComponents[i]._searchQuery;
+      _cfgDropdownHide();
       renderCfgComponents();
     }
 
@@ -655,7 +687,7 @@
             <button onclick="removeCfgComponent(${i})" style="color:var(--text-3);background:none;border:none;cursor:pointer;font-size:18px;line-height:1;padding:0 4px">×</button>
           </div>
           ${isAsin ? `
-          <div style="position:relative">
+          <div>
             <input id="cfgAsinInput_${i}" type="text"
               value="${(c._searchQuery || c._resolvedTitle || c.asin || '').replace(/"/g,'&quot;')}"
               placeholder="Search by ASIN or product name…"
@@ -663,7 +695,6 @@
               oninput="cfgAsinSearch(${i},this.value)"
               onfocus="cfgAsinFocus(${i})"
               autocomplete="off" />
-            <div id="cfgAsinResults_${i}" class="hidden" style="position:absolute;z-index:100;width:100%;margin-top:2px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.5);max-height:200px;overflow-y:auto"></div>
             ${c.asin
               ? `<div style="font-size:11px;font-family:monospace;color:#818cf8;margin-top:4px">${c.asin}</div>`
               : `<div style="font-size:11px;color:var(--text-3);margin-top:4px">Click above to browse or search</div>`}
@@ -696,8 +727,8 @@
     function removeCfgComponent(i) { cfgComponents.splice(i, 1); renderCfgComponents(); }
 
     document.addEventListener('click', e => {
-      if (!e.target.closest('[id^="cfgAsinInput_"]') && !e.target.closest('[id^="cfgAsinResults_"]')) {
-        document.querySelectorAll('[id^="cfgAsinResults_"]').forEach(el => el.classList.add('hidden'));
+      if (!e.target.closest('[id^="cfgAsinInput_"]') && e.target.id !== '_cfgDropdownPortal' && !e.target.closest('#_cfgDropdownPortal')) {
+        _cfgDropdownHide();
       }
     });
 
@@ -719,6 +750,7 @@
 
     function closeCfgModal() {
       document.getElementById('asinConfigModal').classList.add('hidden');
+      _cfgDropdownHide();
       cfgBrandId = null; cfgAsin = null; cfgComponents = [];
     }
 
