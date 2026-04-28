@@ -563,7 +563,9 @@
       const type = cfg.type || 'single';
       document.querySelectorAll('[name=cfgType]').forEach(r => { r.checked = r.value === type; });
       document.getElementById('cfgUnitsPerPack').value = cfg.unitsPerPack || '';
-      cfgComponents = (cfg.components || []).map(c => ({ ...c }));
+      cfgComponents = (cfg.components || []).map(c => ({
+        type: c.type || (c.asin ? 'asin' : 'manual'), ...c
+      }));
       showCfgSections(type);
       renderCfgComponents();
       document.getElementById('asinConfigModal').classList.remove('hidden');
@@ -574,34 +576,137 @@
       document.getElementById('cfgBundleSection').classList.toggle('hidden', type !== 'bundle');
     }
 
+    function _cfgAllAsins() {
+      return brandsData.flatMap(b => (b.asins || []).map(a => ({
+        asin: a,
+        title: b.asinTitles?.[a] || '',
+        brandName: b.name
+      })));
+    }
+
+    function cfgAsinSearch(i, query) {
+      cfgComponents[i]._searchQuery = query;
+      const q = query.toLowerCase().trim();
+      const results = document.getElementById(`cfgAsinResults_${i}`);
+      const all = _cfgAllAsins();
+      const matches = q
+        ? all.filter(x => x.asin.toLowerCase().includes(q) || x.title.toLowerCase().includes(q)).slice(0, 12)
+        : all.slice(0, 20);
+      if (!matches.length) {
+        results.innerHTML = '<div style="padding:8px 12px;font-size:12px;color:var(--text-3)">No ASINs found</div>';
+        results.classList.remove('hidden');
+        return;
+      }
+      results.innerHTML = matches.map(m => `
+        <div style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border)" class="hover:bg-slate-600"
+          onmousedown="selectCfgAsin(${i},'${m.asin}')">
+          <div style="font-size:11px;font-family:monospace;color:#818cf8">${m.asin}</div>
+          <div style="font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${m.title || '<span style="color:var(--text-3)">No title</span>'}</div>
+          <div style="font-size:11px;color:var(--text-3)">${m.brandName}</div>
+        </div>`).join('');
+      results.classList.remove('hidden');
+    }
+
+    function cfgAsinFocus(i) {
+      cfgAsinSearch(i, cfgComponents[i]._searchQuery || '');
+    }
+
+    function selectCfgAsin(i, asin) {
+      const match = _cfgAllAsins().find(x => x.asin === asin);
+      cfgComponents[i].type = 'asin';
+      cfgComponents[i].asin = asin;
+      cfgComponents[i]._resolvedTitle = match?.title || asin;
+      cfgComponents[i]._searchQuery = match?.title || asin;
+      document.getElementById(`cfgAsinInput_${i}`).value = cfgComponents[i]._searchQuery;
+      document.getElementById(`cfgAsinResults_${i}`).classList.add('hidden');
+      renderCfgComponents();
+    }
+
+    function setCfgCompType(i, type) {
+      if (type === 'asin') {
+        cfgComponents[i] = { type: 'asin', asin: '', qtyPerBundle: cfgComponents[i].qtyPerBundle || 1 };
+      } else {
+        cfgComponents[i] = { type: 'manual', description: '', upc: '', price: '', qtyPerBundle: cfgComponents[i].qtyPerBundle || 1 };
+      }
+      renderCfgComponents();
+    }
+
     function renderCfgComponents() {
       const el = document.getElementById('cfgComponents');
       if (!cfgComponents.length) {
-        el.innerHTML = '<p class="text-xs py-1 px-1" style="color:var(--text-3)">No components yet — click Add.</p>';
+        el.innerHTML = '<p style="font-size:12px;padding:4px;color:var(--text-3)">No components yet — click Add.</p>';
         return;
       }
-      el.innerHTML = cfgComponents.map((c, i) => `
-        <div class="grid grid-cols-12 gap-1 items-center">
+      el.innerHTML = cfgComponents.map((c, i) => {
+        const isAsin = c.type !== 'manual';
+        return `
+        <div style="padding:10px;background:var(--bg-well);border:1px solid var(--border);border-radius:8px;margin-bottom:8px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+            <div style="display:flex;border:1px solid var(--border);border-radius:6px;overflow:hidden">
+              <button onclick="setCfgCompType(${i},'asin')"
+                style="padding:4px 12px;font-size:12px;cursor:pointer;border:none;transition:background 0.15s;${isAsin ? 'background:#4f46e5;color:#fff' : 'background:var(--bg-card);color:var(--text-3)'}">
+                From Catalog
+              </button>
+              <button onclick="setCfgCompType(${i},'manual')"
+                style="padding:4px 12px;font-size:12px;cursor:pointer;border:none;border-left:1px solid var(--border);transition:background 0.15s;${!isAsin ? 'background:#4f46e5;color:#fff' : 'background:var(--bg-card);color:var(--text-3)'}">
+                Manual
+              </button>
+            </div>
+            <button onclick="removeCfgComponent(${i})" style="color:var(--text-3);background:none;border:none;cursor:pointer;font-size:18px;line-height:1;padding:0 4px">×</button>
+          </div>
+          ${isAsin ? `
+          <div style="position:relative">
+            <input id="cfgAsinInput_${i}" type="text"
+              value="${(c._searchQuery || c._resolvedTitle || c.asin || '').replace(/"/g,'&quot;')}"
+              placeholder="Search by ASIN or product name…"
+              class="rmc-input" style="width:100%;font-size:12px"
+              oninput="cfgAsinSearch(${i},this.value)"
+              onfocus="cfgAsinFocus(${i})"
+              autocomplete="off" />
+            <div id="cfgAsinResults_${i}" class="hidden" style="position:absolute;z-index:100;width:100%;margin-top:2px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.5);max-height:200px;overflow-y:auto"></div>
+            ${c.asin
+              ? `<div style="font-size:11px;font-family:monospace;color:#818cf8;margin-top:4px">${c.asin}</div>`
+              : `<div style="font-size:11px;color:var(--text-3);margin-top:4px">Click above to browse or search</div>`}
+          </div>` : `
           <input type="text" value="${(c.description||'').replace(/"/g,'&quot;')}" placeholder="Description"
-            class="col-span-5 rmc-input" style="font-size:12px;padding:4px 8px"
+            class="rmc-input" style="width:100%;font-size:12px;margin-bottom:6px"
             oninput="cfgComponents[${i}].description=this.value" />
-          <input type="text" value="${(c.upc||'').replace(/"/g,'&quot;')}" placeholder="UPC"
-            class="col-span-4 rmc-input" style="font-size:12px;padding:4px 8px"
-            oninput="cfgComponents[${i}].upc=this.value" />
-          <input type="number" min="1" value="${c.qtyPerBundle||1}"
-            class="col-span-2 rmc-input text-center" style="font-size:12px;padding:4px 8px"
-            oninput="cfgComponents[${i}].qtyPerBundle=Number(this.value)" />
-          <button onclick="removeCfgComponent(${i})" class="col-span-1 text-center transition-colors hover:text-red-400" style="color:var(--text-3)">×</button>
-        </div>`).join('');
+          <div style="display:flex;gap:6px">
+            <input type="text" value="${(c.upc||'').replace(/"/g,'&quot;')}" placeholder="UPC (optional)"
+              class="rmc-input" style="flex:1;font-size:12px"
+              oninput="cfgComponents[${i}].upc=this.value" />
+            <input type="number" min="0" step="0.01" value="${c.price||''}" placeholder="Price"
+              class="rmc-input" style="width:80px;font-size:12px"
+              oninput="cfgComponents[${i}].price=this.value" />
+          </div>`}
+          <div style="display:flex;align-items:center;gap:8px;margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
+            <span style="font-size:12px;color:var(--text-3)">Qty / bundle</span>
+            <input type="number" min="1" value="${c.qtyPerBundle||1}"
+              class="rmc-input text-center" style="width:60px;font-size:12px"
+              oninput="cfgComponents[${i}].qtyPerBundle=Number(this.value)" />
+          </div>
+        </div>`;
+      }).join('');
     }
 
-    function addBundleComponent() { cfgComponents.push({ description: '', upc: '', qtyPerBundle: 1 }); renderCfgComponents(); }
+    function addBundleComponent() {
+      cfgComponents.push({ type: 'asin', asin: '', qtyPerBundle: 1 });
+      renderCfgComponents();
+    }
     function removeCfgComponent(i) { cfgComponents.splice(i, 1); renderCfgComponents(); }
+
+    document.addEventListener('click', e => {
+      if (!e.target.closest('[id^="cfgAsinInput_"]') && !e.target.closest('[id^="cfgAsinResults_"]')) {
+        document.querySelectorAll('[id^="cfgAsinResults_"]').forEach(el => el.classList.add('hidden'));
+      }
+    });
 
     async function saveAsinConfig() {
       const type = document.querySelector('[name=cfgType]:checked')?.value || 'single';
       const unitsPerPack = type === 'multipack' ? Number(document.getElementById('cfgUnitsPerPack').value) || null : null;
-      const components = type === 'bundle' ? cfgComponents : [];
+      const components = type === 'bundle'
+        ? cfgComponents.map(({ _searchQuery, _resolvedTitle, ...clean }) => clean)
+        : [];
       await fetch(`/api/brands/${cfgBrandId}/asins/${cfgAsin}/config`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type, unitsPerPack, components })
@@ -876,16 +981,7 @@
           <p class="text-xs" style="color:var(--text-2)">Components — each becomes a separate PO line item</p>
           <button onclick="addBundleComponent()" class="btn-ghost" style="font-size:11px;padding:4px 10px;">+ Add</button>
         </div>
-        <div class="space-y-1.5 mb-1">
-          <div class="grid grid-cols-12 gap-1 text-xs px-1" style="color:var(--text-3)">
-            <span class="col-span-5">Description</span>
-            <span class="col-span-4">UPC</span>
-            <span class="col-span-2 text-center">Qty/bundle</span>
-            <span class="col-span-1"></span>
-          </div>
-          <div id="cfgComponents" class="space-y-1"></div>
-        </div>
-        <p class="text-xs mt-1" style="color:var(--text-3)">Qty/bundle = how many of this component per bundle unit ordered.</p>
+        <div id="cfgComponents"></div>
       </div>
 
       <div class="flex gap-3 mt-2">
