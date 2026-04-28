@@ -121,6 +121,11 @@
               <span class="text-sm text-slate-300">Cases</span>
             </label>
             <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" id="col_asin" onchange="renderLines()"
+                class="w-4 h-4 rounded border-slate-600 text-indigo-500 cursor-pointer" />
+              <span class="text-sm text-slate-300">ASIN</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" id="col_stockNumber" onchange="renderLines()"
                 class="w-4 h-4 rounded border-slate-600 text-indigo-500 cursor-pointer" />
               <span class="text-sm text-slate-300">Stock Number</span>
@@ -449,6 +454,7 @@
 
     function getOptionalCols() {
       return {
+        asin:          document.getElementById('col_asin').checked,
         cases:         document.getElementById('col_cases').checked,
         stockNumber:   document.getElementById('col_stockNumber').checked,
         wholesalePrice: document.getElementById('col_wholesalePrice').checked,
@@ -459,7 +465,7 @@
 
     // ── Column resize state ─────────────────────────────────────────────────────
     const DEFAULT_COL_WIDTHS = {
-      description: 480, upc: 115, stockNumber: 76, cases: 58,
+      description: 480, asin: 105, upc: 115, stockNumber: 76, cases: 58,
       price: 76, wholesalePrice: 82, discountPct: 62, qtyPerCase: 62,
       quantity: 68, total: 82, del: 32
     };
@@ -539,6 +545,7 @@
         { label: 'Description', key: 'description' },
         { label: 'UPC',         key: 'upc' },
       ];
+      if (opts.asin)           h.push({ label: 'ASIN',            key: 'asin' });
       if (opts.stockNumber)    h.push({ label: 'Stock #',         key: 'stockNumber' });
       if (opts.cases)          h.push({ label: 'Cases',           key: 'cases' });
       h.push(                        { label: 'Price / unit',     key: 'price' });
@@ -578,6 +585,7 @@
             <input class="line-input" style="width:100%" type="text" value="${esc(line.upc)}"
               oninput="setLine(${i}, 'upc', this.value)" />
           </td>
+          ${opts.asin ? `<td class="px-3 py-2 font-mono text-xs text-slate-400" style="overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${esc(line.asin || '—')}</td>` : ''}
           ${opts.stockNumber ? `<td class="px-3 py-2" style="overflow:hidden">
             <input class="line-input" style="width:100%" type="text" value="${esc(line.stockNumber)}"
               oninput="setLine(${i}, 'stockNumber', this.value)" />
