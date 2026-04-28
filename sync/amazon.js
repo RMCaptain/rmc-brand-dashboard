@@ -76,8 +76,8 @@ async function _fetchAccessToken() {
   });
 }
 
-async function spRequest(method, path, token, body = null) {
-  return new Promise((resolve, reject) => {
+async function spRequest(method, path, token, body = null, timeoutMs = 45000) {
+  const request = new Promise((resolve, reject) => {
     const bodyStr = body ? JSON.stringify(body) : null;
     const headers = {
       'x-amz-access-token': token,
@@ -93,12 +93,16 @@ async function spRequest(method, path, token, body = null) {
         try { resolve({ status: res.statusCode, body: JSON.parse(data) }); }
         catch { resolve({ status: res.statusCode, body: data }); }
       });
+      res.on('error', reject);
     });
-    req.setTimeout(30000, () => { req.destroy(new Error('SP-API request timed out after 30s')); });
     req.on('error', reject);
     if (bodyStr) req.write(bodyStr);
     req.end();
   });
+  const timeout = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error(`SP-API request timed out after ${timeoutMs / 1000}s`)), timeoutMs)
+  );
+  return Promise.race([request, timeout]);
 }
 
 async function downloadUrl(url) {
@@ -512,7 +516,13 @@ async function getFinancialSummary(startDate, endDate, token) {
       ? `/finances/v0/financialEvents?NextToken=${encodeURIComponent(nextToken)}&MaxResultsPerPage=100`
       : `/finances/v0/financialEvents?PostedAfter=${encodeURIComponent(startDate)}&PostedBefore=${encodeURIComponent(endDate)}&MaxResultsPerPage=100`;
 
-    const res = await spRequest('GET', path, token);
+    let res;
+    try {
+      res = await spRequest('GET', path, token);
+    } catch (e) {
+      console.warn(`[Finances] Request failed (page ${page}): ${e.message} — stopping pagination`);
+      break;
+    }
     if (res.status !== 200) {
       console.warn(`[Finances] HTTP ${res.status}: ${JSON.stringify(res.body).slice(0, 200)}`);
       break;
