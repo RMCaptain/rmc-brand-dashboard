@@ -28,7 +28,7 @@
     </div>
   </nav>
 
-  <div class="max-w-screen-xl mx-auto px-6 py-6">
+  <div class="max-w-[1800px] mx-auto px-6 py-6">
 
     <div class="flex items-start justify-between mb-6 gap-4 flex-wrap">
       <div>
@@ -70,7 +70,7 @@
       </div>
     </div>
 
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div class="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6">
 
       <!-- Left: PO Setup -->
       <div class="space-y-4">
@@ -191,7 +191,7 @@
       </div>
 
       <!-- Right: Line items table -->
-      <div class="lg:col-span-2">
+      <div>
         <div class="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
           <div class="px-5 py-4 border-b border-slate-700 flex items-center justify-between">
             <h2 class="text-sm font-semibold text-white">Line Items
@@ -211,7 +211,8 @@
           </div>
 
           <div id="linesTableWrap" class="hidden overflow-x-auto">
-            <table class="w-full text-xs">
+            <table id="linesTable" class="text-xs" style="width:100%;table-layout:fixed;border-collapse:collapse">
+              <colgroup id="linesColgroup"></colgroup>
               <thead>
                 <tr id="lineHeader" class="bg-slate-900 border-b border-slate-700 text-slate-400 uppercase tracking-wide">
                   <!-- Rendered by JS -->
@@ -450,12 +451,58 @@
       };
     }
 
+    // ── Column resize state ─────────────────────────────────────────────────────
+    const DEFAULT_COL_WIDTHS = {
+      description: 320, upc: 130, stockNumber: 100, cases: 75,
+      price: 90, wholesalePrice: 100, discountPct: 80, qtyPerCase: 80,
+      quantity: 80, total: 100, del: 36
+    };
+    let colWidths = JSON.parse(localStorage.getItem('po_colWidths') || 'null') || { ...DEFAULT_COL_WIDTHS };
+
+    let _resizing = null;
+    document.addEventListener('mousemove', e => {
+      if (!_resizing) return;
+      const delta = e.clientX - _resizing.startX;
+      const w = Math.max(50, _resizing.startW + delta);
+      colWidths[_resizing.key] = w;
+      const col = document.querySelector(`#linesColgroup col[data-key="${_resizing.key}"]`);
+      if (col) col.style.width = w + 'px';
+    });
+    document.addEventListener('mouseup', () => {
+      if (!_resizing) return;
+      localStorage.setItem('po_colWidths', JSON.stringify(colWidths));
+      _resizing = null;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    });
+
+    function startColResize(e, key) {
+      e.preventDefault();
+      _resizing = { key, startX: e.clientX, startW: colWidths[key] || DEFAULT_COL_WIDTHS[key] || 100 };
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    }
+
     function renderLines() {
       const opts = getOptionalCols();
-      const headers = buildHeaders(opts);
+      const headers = buildHeaders(opts); // [{label, key}, ...]
+
+      // Update colgroup
+      const cg = document.getElementById('linesColgroup');
+      cg.innerHTML = headers.map(h =>
+        `<col data-key="${h.key}" style="width:${colWidths[h.key] || DEFAULT_COL_WIDTHS[h.key] || 100}px">`
+      ).join('') + `<col data-key="del" style="width:${colWidths.del}px">`;
+
+      // Render headers with resize handles
       document.getElementById('lineHeader').innerHTML = headers.map(h =>
-        `<th class="text-left px-3 py-2.5 font-medium whitespace-nowrap">${h}</th>`
-      ).join('') + '<th class="px-3 py-2.5"></th>';
+        `<th class="text-left px-3 py-2.5 font-medium whitespace-nowrap" style="position:relative;overflow:hidden">
+          <span>${h.label}</span>
+          <span onmousedown="startColResize(event,'${h.key}')"
+            style="position:absolute;right:0;top:0;bottom:0;width:5px;cursor:col-resize;background:transparent"
+            onmouseenter="this.style.background='rgba(99,102,241,0.4)'"
+            onmouseleave="this.style.background='transparent'"></span>
+        </th>`
+      ).join('') + '<th style="width:36px"></th>';
 
       document.getElementById('linesBody').innerHTML = lines.map((line, i) =>
         renderLineRow(line, i, opts)
@@ -466,14 +513,20 @@
     }
 
     function buildHeaders(opts) {
-      const h = ['Description', 'UPC'];
-      if (opts.stockNumber)   h.push('Stock #');
-      if (opts.cases)         h.push('Cases');
-      h.push('Price / unit');
-      if (opts.wholesalePrice) h.push('Wholesale Price');
-      if (opts.discountPct)    h.push('Discount %');
-      if (opts.qtyPerCase)     h.push('Qty / Case');
-      h.push('Quantity', 'Total');
+      const h = [
+        { label: 'Description', key: 'description' },
+        { label: 'UPC',         key: 'upc' },
+      ];
+      if (opts.stockNumber)    h.push({ label: 'Stock #',         key: 'stockNumber' });
+      if (opts.cases)          h.push({ label: 'Cases',           key: 'cases' });
+      h.push(                        { label: 'Price / unit',     key: 'price' });
+      if (opts.wholesalePrice) h.push({ label: 'Wholesale Price', key: 'wholesalePrice' });
+      if (opts.discountPct)    h.push({ label: 'Discount %',      key: 'discountPct' });
+      if (opts.qtyPerCase)     h.push({ label: 'Qty / Case',      key: 'qtyPerCase' });
+      h.push(
+        { label: 'Quantity', key: 'quantity' },
+        { label: 'Total',    key: 'total' },
+      );
       return h;
     }
 
@@ -488,50 +541,50 @@
 
       return `
         <tr class="border-b border-slate-700/50 hover:bg-slate-700/20 ${rowBg}">
-          <td class="px-3 py-2" style="width:100%">
+          <td class="px-3 py-2" style="overflow:hidden">
             ${line._bundleParent
               ? `<div class="text-xs text-indigo-400/70 mb-1">↳ ${line._bundleParent}</div>`
               : ''}
-            <input class="line-input" style="width:100%;min-width:220px" type="text" value="${esc(line.description)}"
+            <input class="line-input" style="width:100%" type="text" value="${esc(line.description)}"
               oninput="setLine(${i}, 'description', this.value)" />
             <div class="flex items-center gap-2 mt-0.5">
               ${!line._bundleParent && line.asin ? `<span class="font-mono text-slate-600 text-xs">${line.asin}</span>` : ''}
               ${line._totalUnits ? `<span class="text-xs text-slate-500">${line._totalUnits.toLocaleString()} total units</span>` : ''}
             </div>
           </td>
-          <td class="px-3 py-2">
-            <input class="line-input" style="width:110px" type="text" value="${esc(line.upc)}"
+          <td class="px-3 py-2" style="overflow:hidden">
+            <input class="line-input" style="width:100%" type="text" value="${esc(line.upc)}"
               oninput="setLine(${i}, 'upc', this.value)" />
           </td>
-          ${opts.stockNumber ? `<td class="px-3 py-2">
-            <input class="line-input" style="width:90px" type="text" value="${esc(line.stockNumber)}"
+          ${opts.stockNumber ? `<td class="px-3 py-2" style="overflow:hidden">
+            <input class="line-input" style="width:100%" type="text" value="${esc(line.stockNumber)}"
               oninput="setLine(${i}, 'stockNumber', this.value)" />
           </td>` : ''}
-          ${opts.cases ? `<td class="px-3 py-2">
-            <input class="line-input" style="width:60px" type="number" min="0" value="${line.cases || ''}"
+          ${opts.cases ? `<td class="px-3 py-2" style="overflow:hidden">
+            <input class="line-input" style="width:100%" type="number" min="0" value="${line.cases || ''}"
               oninput="setCasesQty(${i}, 'cases', this.value)" ${velocityHint} />
           </td>` : ''}
-          <td class="px-3 py-2">
-            <input class="line-input" style="width:80px" type="number" min="0" step="0.01" value="${line.price || ''}"
+          <td class="px-3 py-2" style="overflow:hidden">
+            <input class="line-input" style="width:100%" type="number" min="0" step="0.01" value="${line.price || ''}"
               oninput="setLineAndRefreshTotal(${i}, 'price', this.value)" />
           </td>
-          ${opts.wholesalePrice ? `<td class="px-3 py-2">
-            <input class="line-input" style="width:80px" type="number" min="0" step="0.01" value="${line.wholesalePrice || ''}"
+          ${opts.wholesalePrice ? `<td class="px-3 py-2" style="overflow:hidden">
+            <input class="line-input" style="width:100%" type="number" min="0" step="0.01" value="${line.wholesalePrice || ''}"
               oninput="setLine(${i}, 'wholesalePrice', this.value)" />
           </td>` : ''}
-          ${opts.discountPct ? `<td class="px-3 py-2">
-            <input class="line-input" style="width:70px" type="number" min="0" max="100" step="0.1" value="${line.discountPct || ''}"
+          ${opts.discountPct ? `<td class="px-3 py-2" style="overflow:hidden">
+            <input class="line-input" style="width:100%" type="number" min="0" max="100" step="0.1" value="${line.discountPct || ''}"
               oninput="setLine(${i}, 'discountPct', this.value)" />
           </td>` : ''}
-          ${opts.qtyPerCase ? `<td class="px-3 py-2">
-            <input class="line-input" style="width:60px" type="number" min="1" value="${line.casePack || ''}"
+          ${opts.qtyPerCase ? `<td class="px-3 py-2" style="overflow:hidden">
+            <input class="line-input" style="width:100%" type="number" min="1" value="${line.casePack || ''}"
               oninput="setCasesQty(${i}, 'casePack', this.value)" />
           </td>` : ''}
-          <td class="px-3 py-2">
-            <input class="line-input" style="width:70px" type="number" min="0" value="${line.quantity || ''}"
+          <td class="px-3 py-2" style="overflow:hidden">
+            <input class="line-input" style="width:100%" type="number" min="0" value="${line.quantity || ''}"
               oninput="setCasesQty(${i}, 'quantity', this.value)" />
           </td>
-          <td class="px-3 py-2 text-right font-medium text-slate-200 whitespace-nowrap">${totalFmt}</td>
+          <td class="px-3 py-2 text-right font-medium text-slate-200 whitespace-nowrap" style="overflow:hidden">${totalFmt}</td>
           <td class="px-3 py-2">
             <button onclick="removeLine(${i})" class="text-slate-600 hover:text-red-400 transition-colors">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
