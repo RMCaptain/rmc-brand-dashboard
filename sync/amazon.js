@@ -520,7 +520,7 @@ async function getFinancialSummary(startDate, endDate, token) {
 
     let res;
     try {
-      res = await spRequest('GET', path, token);
+      res = await spRequest('GET', path, token, null, 90000); // 90s — API is slow on large result sets
     } catch (e) {
       console.warn(`[Finances] Request failed (page ${page}): ${e.message} — stopping pagination`);
       break;
@@ -589,7 +589,7 @@ async function getFinancialSummary(startDate, endDate, token) {
     nextToken = res.body.payload?.NextToken || res.body.nextToken || null;
     if (nextToken) {
       if (page % 10 === 0) console.log(`[Finances] Page ${page}...`);
-      await sleep(2100); // stay under 0.5 req/s rate limit
+      await sleep(4000); // 4s between pages — conservative to avoid rate-limit timeouts
     }
     page++;
   } while (nextToken && page < 100);
