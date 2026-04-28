@@ -33,7 +33,18 @@ function getMarketplaceIds() {
 
 // ─── HTTP Helpers ────────────────────────────────────────────────────────────
 
+let _cachedToken = null;
+let _tokenExpiry = 0;
+
 async function getAccessToken() {
+  if (_cachedToken && Date.now() < _tokenExpiry) return _cachedToken;
+  const token = await _fetchAccessToken();
+  _cachedToken = token;
+  _tokenExpiry = Date.now() + 50 * 60 * 1000; // refresh at 50min (tokens last 1h)
+  return token;
+}
+
+async function _fetchAccessToken() {
   return new Promise((resolve, reject) => {
     const body = new URLSearchParams({
       grant_type: 'refresh_token',
@@ -118,7 +129,8 @@ async function createReport(reportType, marketplaceIds, reportOptions, dataRange
   }
 
   for (let attempt = 1; attempt <= 8; attempt++) {
-    const res = await spRequest('POST', '/reports/2021-06-30/reports', token, body);
+    const currentToken = await getAccessToken(); // always use fresh token (auto-cached 50min)
+    const res = await spRequest('POST', '/reports/2021-06-30/reports', currentToken, body);
     if (res.status === 202) return res.body.reportId;
     const isQuota = res.body?.errors?.[0]?.code === 'QuotaExceeded' || res.status === 429;
     if (isQuota && attempt < 8) {
