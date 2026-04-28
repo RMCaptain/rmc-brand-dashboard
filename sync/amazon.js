@@ -94,6 +94,7 @@ async function spRequest(method, path, token, body = null) {
         catch { resolve({ status: res.statusCode, body: data }); }
       });
     });
+    req.setTimeout(30000, () => { req.destroy(new Error('SP-API request timed out after 30s')); });
     req.on('error', reject);
     if (bodyStr) req.write(bodyStr);
     req.end();
@@ -574,7 +575,10 @@ async function getFinancialSummary(startDate, endDate, token) {
     }
 
     nextToken = res.body.payload?.NextToken || res.body.nextToken || null;
-    if (nextToken) await sleep(2100); // stay under 0.5 req/s rate limit
+    if (nextToken) {
+      if (page % 10 === 0) console.log(`[Finances] Page ${page}...`);
+      await sleep(2100); // stay under 0.5 req/s rate limit
+    }
     page++;
   } while (nextToken && page < 100);
 
