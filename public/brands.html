@@ -63,6 +63,7 @@
         <div class="view-tabs">
           <button onclick="setView('performance')" id="view-performance" class="view-tab">Performance</button>
           <button onclick="setView('mapping')"     id="view-mapping"     class="view-tab">Mapping</button>
+          <button onclick="setView('health')"      id="view-health"      class="view-tab">Health</button>
         </div>
       </div>
     </div>
@@ -80,6 +81,25 @@
       <div id="emptyState" class="hidden text-center py-16">
         <p class="text-slate-500 text-sm mb-3">No brands yet.</p>
         <button onclick="openAddBrand()" class="text-sm font-medium text-indigo-400 hover:text-indigo-300">Add your first brand →</button>
+      </div>
+    </div>
+
+    <!-- Health view -->
+    <div id="healthView" class="hidden">
+      <div id="healthSummaryBar" class="flex items-center gap-4 mb-5 p-4 bg-slate-800/60 border border-slate-700 rounded-xl">
+        <div class="flex items-center gap-3 flex-1">
+          <span id="healthCritCount" class="text-sm font-semibold text-red-400"></span>
+          <span id="healthWarnCount" class="text-sm font-semibold text-amber-400"></span>
+          <span id="healthBrandsAffected" class="text-sm text-slate-500"></span>
+        </div>
+        <span id="healthGeneratedAt" class="text-xs text-slate-600"></span>
+        <button onclick="loadHealth(true)" id="healthRefreshBtn"
+          class="text-xs font-medium px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg transition-colors">
+          Refresh
+        </button>
+      </div>
+      <div id="healthAlerts" class="space-y-2">
+        <div class="text-center py-12 text-slate-500 text-sm">Loading health data...</div>
       </div>
     </div>
 
@@ -198,14 +218,16 @@
     function setView(view) {
       activeView = view;
       localStorage.setItem('brandsView', view);
-      const isPerfActive = view === 'performance';
-      document.getElementById('performanceView').classList.toggle('hidden', !isPerfActive);
-      document.getElementById('mappingView').classList.toggle('hidden', isPerfActive);
-      document.getElementById('presetBtns').classList.toggle('hidden', !isPerfActive);
-      document.getElementById('mappingActions').classList.toggle('hidden', isPerfActive);
-      document.getElementById('view-performance').classList.toggle('active', isPerfActive);
-      document.getElementById('view-mapping').classList.toggle('active', !isPerfActive);
-      if (!isPerfActive) renderMapping();
+      document.getElementById('performanceView').classList.toggle('hidden', view !== 'performance');
+      document.getElementById('mappingView').classList.toggle('hidden', view !== 'mapping');
+      document.getElementById('healthView').classList.toggle('hidden', view !== 'health');
+      document.getElementById('presetBtns').classList.toggle('hidden', view !== 'performance');
+      document.getElementById('mappingActions').classList.toggle('hidden', view !== 'mapping');
+      document.getElementById('view-performance').classList.toggle('active', view === 'performance');
+      document.getElementById('view-mapping').classList.toggle('active', view === 'mapping');
+      document.getElementById('view-health').classList.toggle('active', view === 'health');
+      if (view === 'mapping') renderMapping();
+      if (view === 'health') loadHealth();
     }
 
     // ── Performance view ──────────────────────────────────────────────────────
@@ -672,6 +694,112 @@
       }
     }
     function closeImport() { document.getElementById('importModal').classList.add('hidden'); }
+
+    // ── Health monitor ────────────────────────────────────────────────────────
+    let healthData = null;
+    let healthLoading = false;
+
+    async function loadHealth(force = false) {
+      if (healthLoading) return;
+      if (healthData && !force) { renderHealth(); return; }
+      healthLoading = true;
+      document.getElementById('healthAlerts').innerHTML =
+        '<div class="text-center py-12 text-slate-500 text-sm">Loading health data...</div>';
+      const btn = document.getElementById('healthRefreshBtn');
+      if (btn) btn.disabled = true;
+      try {
+        const res = await fetch('/api/health');
+        healthData = await res.json();
+        renderHealth();
+      } catch (err) {
+        document.getElementById('healthAlerts').innerHTML =
+          `<div class="text-center py-12 text-red-400 text-sm">Failed to load health data: ${err.message}</div>`;
+      } finally {
+        healthLoading = false;
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    function renderHealth() {
+      if (!healthData) return;
+      const { alerts, summary, generatedAt } = healthData;
+
+      const critEl = document.getElementById('healthCritCount');
+      const warnEl = document.getElementById('healthWarnCount');
+      const brandEl = document.getElementById('healthBrandsAffected');
+      const genEl = document.getElementById('healthGeneratedAt');
+
+      critEl.textContent = summary.critical > 0 ? `${summary.critical} critical` : '';
+      critEl.className = `text-sm font-semibold ${summary.critical > 0 ? 'text-red-400' : 'text-slate-600'}`;
+      warnEl.textContent = summary.warning > 0 ? `${summary.warning} warnings` : '';
+      warnEl.className = `text-sm font-semibold ${summary.warning > 0 ? 'text-amber-400' : 'text-slate-600'}`;
+      brandEl.textContent = summary.total > 0
+        ? `${summary.brandsAffected} brand${summary.brandsAffected !== 1 ? 's' : ''} affected`
+        : 'All clear';
+      brandEl.className = `text-sm ${summary.total === 0 ? 'text-emerald-400 font-semibold' : 'text-slate-500'}`;
+      genEl.textContent = 'Updated ' + new Date(generatedAt).toLocaleString();
+
+      const container = document.getElementById('healthAlerts');
+
+      if (alerts.length === 0) {
+        container.innerHTML = `
+          <div class="text-center py-16">
+            <div class="text-4xl mb-3">✓</div>
+            <p class="text-emerald-400 font-semibold text-sm mb-1">No issues detected</p>
+            <p class="text-slate-500 text-xs">All listings are active, buy box is healthy, and stock levels look good.</p>
+          </div>`;
+        return;
+      }
+
+      const typeIcons = {
+        suppressed:    { icon: '⛔', label: 'Suppressed' },
+        buybox_lost:   { icon: '🔴', label: 'Buy Box Lost' },
+        unfulfillable: { icon: '⚠', label: 'Stranded' },
+        low_stock:     { icon: '📦', label: 'Low Stock' },
+      };
+
+      const grouped = {};
+      for (const a of alerts) {
+        if (!grouped[a.severity]) grouped[a.severity] = [];
+        grouped[a.severity].push(a);
+      }
+
+      const sections = [];
+      for (const sev of ['critical', 'warning', 'info']) {
+        if (!grouped[sev]?.length) continue;
+        const sevLabel = sev === 'critical' ? 'Critical' : sev === 'warning' ? 'Warning' : 'Info';
+        const sevColor = sev === 'critical' ? 'text-red-400' : sev === 'warning' ? 'text-amber-400' : 'text-sky-400';
+        const borderColor = sev === 'critical' ? 'border-red-800/50' : sev === 'warning' ? 'border-amber-800/50' : 'border-sky-800/50';
+        const bgColor = sev === 'critical' ? 'bg-red-950/30' : sev === 'warning' ? 'bg-amber-950/20' : 'bg-sky-950/20';
+
+        const cards = grouped[sev].map(a => {
+          const ti = typeIcons[a.type] || { icon: '•', label: a.type };
+          const shortTitle = a.title.length > 70 ? a.title.slice(0, 70) + '…' : a.title;
+          return `
+            <div class="${bgColor} border ${borderColor} rounded-lg px-4 py-3 flex items-start gap-3">
+              <span class="text-base flex-shrink-0 mt-0.5">${ti.icon}</span>
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 flex-wrap mb-0.5">
+                  <span class="font-mono text-xs text-slate-400 flex-shrink-0">${a.asin}</span>
+                  <span class="text-xs font-medium px-1.5 py-0.5 rounded" style="background:${a.brandColor}22;color:${a.brandColor}">${a.brandName}</span>
+                  <span class="text-xs text-slate-500">${ti.label}</span>
+                </div>
+                <p class="text-xs text-slate-300 truncate">${shortTitle}</p>
+                <p class="text-xs mt-0.5 ${sevColor}">${a.message}</p>
+              </div>
+              <a href="/brand.html?id=${a.brandId}" class="text-xs text-indigo-400 hover:text-indigo-300 flex-shrink-0 mt-0.5">View →</a>
+            </div>`;
+        }).join('');
+
+        sections.push(`
+          <div class="mb-4">
+            <p class="text-xs font-semibold uppercase tracking-wide ${sevColor} mb-2">${sevLabel} · ${grouped[sev].length}</p>
+            <div class="space-y-2">${cards}</div>
+          </div>`);
+      }
+
+      container.innerHTML = sections.join('');
+    }
 
     // ── Load ──────────────────────────────────────────────────────────────────
     async function load() {

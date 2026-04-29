@@ -1195,6 +1195,88 @@ app.get('/api/preset-metrics', async (req, res) => {
   res.json(await loadPresetMetrics());
 });
 
+app.get('/api/health', async (req, res) => {
+  try {
+    const [{ brands }, pm] = await Promise.all([loadBrands(), loadPresetMetrics()]);
+    const preset = pm.presets?.last30d || pm.presets?.[Object.keys(pm.presets || {})[0]];
+    const brandMetrics = preset?.brands || {};
+    const alerts = [];
+
+    for (const brand of brands) {
+      if (brand.id === 'unknown-brand') continue;
+      const bm = brandMetrics[brand.id];
+      if (!bm?.skus?.length) continue;
+
+      for (const sku of bm.skus) {
+        const asin = sku.asin;
+        const title = sku.title || brand.asinTitles?.[asin] || asin;
+        const leadTime = brand.leadTimes?.[asin] || 30;
+        const inv = sku.inventory || {};
+        const onHand = inv.onHand || 0;
+        const inbound = inv.inbound || 0;
+        const units = sku.units || 0;
+        const dailyVelocity = units / 30;
+        const daysOfStock = dailyVelocity > 0 ? Math.round(onHand / dailyVelocity) : null;
+
+        if (sku.status && sku.status !== 'Active') {
+          alerts.push({
+            brandId: brand.id, brandName: brand.name, brandColor: brand.color,
+            asin, title, severity: 'critical', type: 'suppressed',
+            message: `Listing status: ${sku.status}`,
+            detail: { status: sku.status }
+          });
+        }
+
+        if (sku.buyBox != null && sku.buyBox < 20 && units > 0) {
+          alerts.push({
+            brandId: brand.id, brandName: brand.name, brandColor: brand.color,
+            asin, title, severity: 'critical', type: 'buybox_lost',
+            message: `Buy Box ${sku.buyBox.toFixed(1)}% with ${units} units sold`,
+            detail: { buyBox: sku.buyBox, units }
+          });
+        }
+
+        if ((inv.unfulfillable || 0) > 0) {
+          alerts.push({
+            brandId: brand.id, brandName: brand.name, brandColor: brand.color,
+            asin, title, severity: 'critical', type: 'unfulfillable',
+            message: `${inv.unfulfillable} unfulfillable units`,
+            detail: { unfulfillable: inv.unfulfillable }
+          });
+        }
+
+        if (daysOfStock != null && daysOfStock < leadTime && inbound === 0 && onHand > 0) {
+          alerts.push({
+            brandId: brand.id, brandName: brand.name, brandColor: brand.color,
+            asin, title, severity: 'warning', type: 'low_stock',
+            message: `${daysOfStock}d of stock · lead time ${leadTime}d · no inbound`,
+            detail: { daysOfStock, leadTime, onHand, inbound }
+          });
+        }
+      }
+    }
+
+    alerts.sort((a, b) => {
+      const sev = { critical: 0, warning: 1, info: 2 };
+      if (sev[a.severity] !== sev[b.severity]) return sev[a.severity] - sev[b.severity];
+      return a.brandName.localeCompare(b.brandName);
+    });
+
+    const critical = alerts.filter(a => a.severity === 'critical').length;
+    const warning  = alerts.filter(a => a.severity === 'warning').length;
+    const brandsAffected = new Set(alerts.map(a => a.brandId)).size;
+
+    res.json({
+      generatedAt: new Date().toISOString(),
+      alerts,
+      summary: { critical, warning, total: alerts.length, brandsAffected }
+    });
+  } catch (err) {
+    console.error('[health]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`RMC Brand Dashboard → http://localhost:${PORT}`);
   scheduleDailySync();
