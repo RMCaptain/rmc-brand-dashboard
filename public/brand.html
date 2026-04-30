@@ -64,9 +64,7 @@
     <!-- Date Range Picker -->
     <div class="flex items-center justify-between mb-6">
       <div class="flex items-center gap-1 flex-wrap">
-        <button onclick="setPreset('yesterday')" id="preset-yesterday" class="preset-btn">Yesterday</button>
         <button onclick="setPreset('last30d')" id="preset-last30d" class="preset-btn">Last 30 Days</button>
-        <button onclick="setPreset('thisMonth')" id="preset-thisMonth" class="preset-btn">This Month</button>
         <button onclick="setPreset('lastMonth')" id="preset-lastMonth" class="preset-btn">Last Month</button>
       </div>
       <p id="dateRangeLabel" class="text-sm text-slate-500 ml-4 whitespace-nowrap"></p>
@@ -135,7 +133,7 @@
     let fxRate = { usdToCad: 1.38, cadToUsd: 0.724 };
     let brandCache = null;
     let presetMetrics = {};
-    let activePreset = 'last7d';
+    let activePreset = 'last30d';
     let allBrandsData = [];
     let asinSortCol = null;
     let asinSortDir = -1;

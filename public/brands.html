@@ -42,9 +42,7 @@
         <h1 class="text-base font-semibold text-white">Brands <span id="brandCount" class="text-slate-500 font-normal text-sm"></span></h1>
         <!-- Preset buttons — performance view only -->
         <div id="presetBtns" class="flex gap-1">
-          <button onclick="setPreset('yesterday')" id="preset-yesterday" class="preset-btn">Yesterday</button>
-          <button onclick="setPreset('last30d')"   id="preset-last30d"   class="preset-btn">Last 30d</button>
-          <button onclick="setPreset('thisMonth')" id="preset-thisMonth" class="preset-btn">This Month</button>
+          <button onclick="setPreset('last30d')"   id="preset-last30d"   class="preset-btn">Last 30 Days</button>
           <button onclick="setPreset('lastMonth')" id="preset-lastMonth" class="preset-btn">Last Month</button>
         </div>
       </div>
@@ -184,7 +182,7 @@
     // ── State ─────────────────────────────────────────────────────────────────
     let brandsData = [];
     let presetMetrics = {};
-    let activePreset = localStorage.getItem('brandPreset') || 'last30d';
+    let activePreset = (['last30d','lastMonth'].includes(localStorage.getItem('brandPreset'))) ? localStorage.getItem('brandPreset') : 'last30d';
     let currency = localStorage.getItem('currency') || 'CAD';
     let fxRate = { usdToCad: 1.38, cadToUsd: 0.724 };
     let activeView = localStorage.getItem('brandsView') || 'performance';

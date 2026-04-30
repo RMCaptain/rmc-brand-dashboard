@@ -1332,21 +1332,18 @@ async function runFullSync(tag = 'Sync') {
       const today = new Date(); today.setHours(0,0,0,0);
       const yest  = new Date(today); yest.setDate(yest.getDate() - 1);
       const l30s  = new Date(today); l30s.setDate(l30s.getDate() - 30);
-      const tms   = new Date(today.getFullYear(), today.getMonth(), 1);
       const lms   = new Date(today.getFullYear(), today.getMonth() - 1, 1);
       const lme   = new Date(today.getFullYear(), today.getMonth(), 0);
       const ranges = {
-        yesterday:  { startDate: fmt(yest), endDate: fmt(yest) },
-        last30d:    { startDate: fmt(l30s), endDate: fmt(yest) },
-        thisMonth:  { startDate: fmt(tms),  endDate: fmt(today) },
-        lastMonth:  { startDate: fmt(lms),  endDate: fmt(lme)  },
+        last30d:   { startDate: fmt(l30s), endDate: fmt(yest) },
+        lastMonth: { startDate: fmt(lms),  endDate: fmt(lme)  },
       };
-      const entries = await Promise.all(
-        Object.entries(ranges).map(async ([key, { startDate, endDate }]) => {
-          const handles = await startAdReports(startDate, endDate);
-          return [key, { handles, startDate, endDate }];
-        })
-      );
+      const entries = [];
+      for (const [key, { startDate, endDate }] of Object.entries(ranges)) {
+        const handles = await startAdReports(startDate, endDate);
+        entries.push([key, { handles, startDate, endDate }]);
+        await new Promise(r => setTimeout(r, 1000)); // 1s between ad report creates
+      }
       adHandles = Object.fromEntries(entries);
       console.log(`[${tag}] Ads reports submitted — baking while SP sync runs...`);
     } catch (adsCreateErr) {
@@ -1430,7 +1427,10 @@ async function runFullSync(tag = 'Sync') {
     }
 
     const lastSync = new Date().toISOString();
-    await savePresetMetrics({ lastSync, presets });
+    // Merge new preset data into existing (don't wipe presets not included in this sync)
+    const existing = await loadPresetMetrics();
+    const mergedPresets = { ...(existing.presets || {}), ...presets };
+    await savePresetMetrics({ lastSync, presets: mergedPresets });
     syncState = { status: 'done', lastSync, error: null };
     console.log(`[${tag}] Done:`, lastSync);
 
@@ -1462,12 +1462,21 @@ async function runFullSync(tag = 'Sync') {
 
 // ── Daily auto-sync at 6am server time ───────────────────────────────────────
 function scheduleDailySync() {
-  // Fire every day at 6:00am server time — survives restarts, no drift
+  // Primary sync: 6am UTC (midnight MDT). Backup: 9am UTC (3am MDT) and 12pm UTC (6am MDT).
+  // If the 6am sync succeeds, the 9am and 12pm ones are instant no-ops (sync guard + 23h check).
   cron.schedule('0 6 * * *', () => {
-    console.log('[AutoSync] 6am cron fired');
-    runFullSync('AutoSync');
+    console.log('[AutoSync] 6am UTC cron fired');
+    runFullSync('AutoSync-6am');
   });
-  console.log('[AutoSync] Cron scheduled: daily at 6am');
+  cron.schedule('0 9 * * *', () => {
+    console.log('[AutoSync] 9am UTC backup cron fired');
+    runFullSync('AutoSync-9am');
+  });
+  cron.schedule('0 12 * * *', () => {
+    console.log('[AutoSync] 12pm UTC backup cron fired');
+    runFullSync('AutoSync-12pm');
+  });
+  console.log('[AutoSync] Crons scheduled: 6am, 9am, 12pm UTC');
 
   // On startup: catch-up if data is more than 23h old AND no attempt in last 4h
   (async () => {

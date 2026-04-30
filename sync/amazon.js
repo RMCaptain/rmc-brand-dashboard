@@ -133,17 +133,19 @@ async function createReport(reportType, marketplaceIds, reportOptions, dataRange
     body.dataEndTime = dataRange.end;
   }
 
-  for (let attempt = 1; attempt <= 8; attempt++) {
+  for (let attempt = 1; attempt <= 5; attempt++) {
     const currentToken = await getAccessToken();
     const res = await spRequest('POST', '/reports/2021-06-30/reports', currentToken, body);
     if (res.status === 202) return res.body.reportId;
     const errCode = res.body?.errors?.[0]?.code;
     const isQuota = errCode === 'QuotaExceeded' || res.status === 429;
     const isTransient = errCode === 'InternalFailure' || (res.status >= 500 && res.status !== 501);
-    if (attempt < 8 && (isQuota || isTransient)) {
-      const wait = isQuota ? attempt * 2 * 60000 : Math.min(attempt * 15000, 60000); // quota: 2-14m, transient: 15-60s
-      const label = isQuota ? `${attempt * 2}m` : `${Math.round(wait / 1000)}s`;
-      console.warn(`[Reports] ${errCode} for ${reportType} — retrying in ${label} (attempt ${attempt}/8)`);
+    if (attempt < 5 && (isQuota || isTransient)) {
+      // Quota: short wait only — don't burn retries sitting in a loop for hours.
+      // If quota is genuinely depleted, the backup cron (9am) will pick it up.
+      const wait = isQuota ? 90000 : Math.min(attempt * 15000, 60000); // quota: 90s flat, transient: 15-60s
+      const label = isQuota ? '90s' : `${Math.round(wait / 1000)}s`;
+      console.warn(`[Reports] ${errCode} for ${reportType} — retrying in ${label} (attempt ${attempt}/5)`);
       await sleep(wait);
     } else {
       throw new Error(`Failed to create ${reportType}: ${JSON.stringify(res.body)}`);
@@ -647,9 +649,7 @@ function getPresetRanges() {
   }
 
   return {
-    yesterday: r(y,              y,            'Yesterday'),
     last30d:   r(d30,            y,            'Last 30 Days'),
-    thisMonth: r(thisMonthStart, y,            'This Month'),
     lastMonth: r(lastMonthStart, lastMonthEnd, 'Last Month')
   };
 }
