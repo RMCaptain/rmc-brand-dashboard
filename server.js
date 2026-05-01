@@ -1279,7 +1279,11 @@ app.get('/api/health', async (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`RMC Brand Dashboard → http://localhost:${PORT}`);
-  scheduleDailySync();
+  if (process.env.SYNC_ENABLED === 'true') {
+    scheduleDailySync();
+  } else {
+    console.log('[AutoSync] Disabled (SYNC_ENABLED != true) — set SYNC_ENABLED=true on VPS to enable');
+  }
 });
 
 // ── Background financial events patch (runs after core sync completes) ────────
