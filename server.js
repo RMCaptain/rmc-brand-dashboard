@@ -1284,7 +1284,7 @@ app.get('/api/bulk-template', async (req, res) => {
     const preset = pm.presets?.last30d || pm.presets?.[Object.keys(pm.presets || {})[0]];
     const brandMetrics = preset?.brands || {};
 
-    const headers = ['Brand', 'ASIN', 'Title', 'SKU', 'UPC', 'Lead Time (days)', 'Case Pack', 'Stock #', 'Supplier Product Name'];
+    const headers = ['Brand', 'ASIN', 'Title', 'SKU', 'UPC', 'Lead Time (days)', 'Case Pack Size (units)', 'Stock #', 'Supplier Product Name'];
     const csvRows = [headers];
 
     for (const brand of brands.filter(b => b.id !== 'unknown-brand').sort((a, b) => a.name.localeCompare(b.name))) {
