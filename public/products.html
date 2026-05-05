@@ -1003,7 +1003,7 @@
           // Expected columns: Brand(0) ASIN(1) Title(2) SKU(3) UPC(4) LeadTime(5) CasePack(6) StockNum(7) SupplierName(8)
           const header = rows[0].map(h => h.trim().toLowerCase());
           const col = name => header.findIndex(h => h.includes(name));
-          const iAsin = col('asin'), iUpc = col('upc'), iLead = col('lead'), iCase = col('case'), iStock = col('stock'), iSupplier = col('supplier');
+          const iAsin = col('asin'), iUpc = col('upc'), iLead = col('lead'), iCase = col('case'), iStock = col('stock'), iSupplier = col('supplier'), iCogs = col('cogs');
 
           if (iAsin < 0) throw new Error('Could not find ASIN column in the uploaded CSV. Make sure you\'re using the downloaded template.');
 
@@ -1027,25 +1027,28 @@
             const newCase      = get(iCase);
             const newStock     = get(iStock);
             const newSupplier  = get(iSupplier);
+            const newCogs      = get(iCogs);
 
             const curUpc      = brand.upcs?.[asin] || '';
             const curLead     = brand.leadTimes?.[asin] != null ? String(brand.leadTimes[asin]) : '';
             const curCase     = brand.casePacks?.[asin] != null ? String(brand.casePacks[asin]) : '';
             const curStock    = cfg.stockNumber || '';
             const curSupplier = cfg.supplierName || '';
+            const curCogs     = brand.cogs?.[asin] != null ? String(brand.cogs[asin]) : '';
 
             const changed = (nv, cv) => nv !== '' && nv !== cv;
-            const hasChange = changed(newUpc, curUpc) || changed(newLead, curLead) || changed(newCase, curCase) || changed(newStock, curStock) || changed(newSupplier, curSupplier);
+            const hasChange = changed(newUpc, curUpc) || changed(newLead, curLead) || changed(newCase, curCase) || changed(newStock, curStock) || changed(newSupplier, curSupplier) || changed(newCogs, curCogs);
             if (!hasChange) continue;
 
             changes.push({
               asin, brandId: brand.id, brandName: brand.name,
               title: brand.asinTitles?.[asin] || asin,
-              upc:          changed(newUpc, curUpc)      ? { old: curUpc,      new: newUpc }      : null,
-              leadTime:     changed(newLead, curLead)    ? { old: curLead,     new: newLead }     : null,
-              casePack:     changed(newCase, curCase)    ? { old: curCase,     new: newCase }     : null,
-              stockNumber:  changed(newStock, curStock)  ? { old: curStock,    new: newStock }    : null,
+              upc:          changed(newUpc, curUpc)           ? { old: curUpc,      new: newUpc }      : null,
+              leadTime:     changed(newLead, curLead)         ? { old: curLead,     new: newLead }     : null,
+              casePack:     changed(newCase, curCase)         ? { old: curCase,     new: newCase }     : null,
+              stockNumber:  changed(newStock, curStock)       ? { old: curStock,    new: newStock }    : null,
               supplierName: changed(newSupplier, curSupplier) ? { old: curSupplier, new: newSupplier } : null,
+              cogs:         changed(newCogs, curCogs)         ? { old: curCogs,     new: newCogs }     : null,
             });
           }
 
@@ -1075,7 +1078,7 @@
         return;
       }
 
-      const fieldCount = changes.reduce((n, c) => n + [c.upc, c.leadTime, c.casePack, c.stockNumber, c.supplierName].filter(Boolean).length, 0);
+      const fieldCount = changes.reduce((n, c) => n + [c.upc, c.leadTime, c.casePack, c.stockNumber, c.supplierName, c.cogs].filter(Boolean).length, 0);
       countEl.textContent = `— ${changes.length} ASIN${changes.length !== 1 ? 's' : ''}, ${fieldCount} field${fieldCount !== 1 ? 's' : ''} will be updated`;
 
       const cell = (change) => {
@@ -1095,6 +1098,7 @@
           <td class="px-4 py-2.5 text-center text-xs">${cell(c.casePack)}</td>
           <td class="px-4 py-2.5 text-xs">${cell(c.stockNumber)}</td>
           <td class="px-4 py-2.5 text-xs">${cell(c.supplierName)}</td>
+          <td class="px-4 py-2.5 text-right text-xs">${cell(c.cogs)}</td>
         </tr>`).join('');
     }
 
@@ -1112,6 +1116,7 @@
           casePack:     c.casePack     ? c.casePack.new     : null,
           stockNumber:  c.stockNumber  ? c.stockNumber.new  : null,
           supplierName: c.supplierName ? c.supplierName.new : null,
+          cogs:         c.cogs         ? c.cogs.new         : null,
         }));
         const res = await fetch('/api/bulk-update', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1215,6 +1220,7 @@
                   <th class="text-center" style="min-width:130px">Case Pack Size (units)</th>
                   <th class="text-left" style="min-width:110px">Stock #</th>
                   <th class="text-left" style="min-width:160px">Supplier Product Name</th>
+                  <th class="text-right" style="min-width:80px">COGS</th>
                 </tr>
               </thead>
               <tbody id="bulkPreviewBody"></tbody>

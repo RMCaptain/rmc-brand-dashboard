@@ -1284,7 +1284,7 @@ app.get('/api/bulk-template', async (req, res) => {
     const preset = pm.presets?.last30d || pm.presets?.[Object.keys(pm.presets || {})[0]];
     const brandMetrics = preset?.brands || {};
 
-    const headers = ['Brand', 'ASIN', 'Title', 'SKU', 'UPC', 'Lead Time (days)', 'Case Pack Size (units)', 'Stock #', 'Supplier Product Name'];
+    const headers = ['Brand', 'ASIN', 'Title', 'SKU', 'UPC', 'Lead Time (days)', 'Case Pack Size (units)', 'Stock #', 'Supplier Product Name', 'COGS'];
     const csvRows = [headers];
 
     for (const brand of brands.filter(b => b.id !== 'unknown-brand').sort((a, b) => a.name.localeCompare(b.name))) {
@@ -1301,7 +1301,8 @@ app.get('/api/bulk-template', async (req, res) => {
           brand.leadTimes?.[asin] ?? '',
           brand.casePacks?.[asin] ?? '',
           cfg.stockNumber || '',
-          cfg.supplierName || ''
+          cfg.supplierName || '',
+          brand.cogs?.[asin] ?? ''
         ]);
       }
     }
@@ -1351,6 +1352,10 @@ app.post('/api/bulk-update', async (req, res) => {
         brand.asinConfig[asin] = brand.asinConfig[asin] || {};
         if (u.stockNumber != null) brand.asinConfig[asin].stockNumber = u.stockNumber;
         if (u.supplierName != null) brand.asinConfig[asin].supplierName = u.supplierName;
+      }
+      if (u.cogs !== '' && u.cogs != null) {
+        brand.cogs = brand.cogs || {};
+        brand.cogs[asin] = Number(u.cogs);
       }
       updatedAsins++;
     }
