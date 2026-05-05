@@ -1277,6 +1277,91 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
+app.get('/api/bulk-template', async (req, res) => {
+  try {
+    const [brandData, pm] = await Promise.all([loadBrands(), loadPresetMetrics()]);
+    const { brands } = brandData;
+    const preset = pm.presets?.last30d || pm.presets?.[Object.keys(pm.presets || {})[0]];
+    const brandMetrics = preset?.brands || {};
+
+    const headers = ['Brand', 'ASIN', 'Title', 'SKU', 'UPC', 'Lead Time (days)', 'Case Pack', 'Stock #', 'Supplier Product Name'];
+    const csvRows = [headers];
+
+    for (const brand of brands.filter(b => b.id !== 'unknown-brand').sort((a, b) => a.name.localeCompare(b.name))) {
+      const skuMap = Object.fromEntries((brandMetrics[brand.id]?.skus || []).map(s => [s.asin, s]));
+      for (const asin of brand.asins) {
+        const sku = skuMap[asin];
+        const cfg = brand.asinConfig?.[asin] || {};
+        csvRows.push([
+          brand.name,
+          asin,
+          sku?.title || brand.asinTitles?.[asin] || '',
+          sku?.sellerSku || brand.asinSkus?.[asin] || '',
+          brand.upcs?.[asin] || '',
+          brand.leadTimes?.[asin] ?? '',
+          brand.casePacks?.[asin] ?? '',
+          cfg.stockNumber || '',
+          cfg.supplierName || ''
+        ]);
+      }
+    }
+
+    const escape = v => {
+      const s = String(v ?? '');
+      return (s.includes(',') || s.includes('"') || s.includes('\n')) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const csv = csvRows.map(r => r.map(escape).join(',')).join('\r\n');
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="rmc-product-data.csv"');
+    res.send(csv);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/bulk-update', async (req, res) => {
+  try {
+    const { updates } = req.body;
+    if (!Array.isArray(updates) || !updates.length) return res.status(400).json({ error: 'No updates provided' });
+
+    const brandData = await loadBrands();
+    const { brands } = brandData;
+    let updatedAsins = 0;
+
+    for (const u of updates) {
+      const brand = brands.find(b => b.id === u.brandId);
+      if (!brand || !brand.asins.includes(u.asin)) continue;
+
+      const { asin } = u;
+      if (u.leadTime !== '' && u.leadTime != null) {
+        brand.leadTimes = brand.leadTimes || {};
+        brand.leadTimes[asin] = Number(u.leadTime);
+      }
+      if (u.casePack !== '' && u.casePack != null) {
+        brand.casePacks = brand.casePacks || {};
+        brand.casePacks[asin] = Number(u.casePack);
+      }
+      if (u.upc != null) {
+        brand.upcs = brand.upcs || {};
+        brand.upcs[asin] = u.upc;
+      }
+      if (u.stockNumber != null || u.supplierName != null) {
+        brand.asinConfig = brand.asinConfig || {};
+        brand.asinConfig[asin] = brand.asinConfig[asin] || {};
+        if (u.stockNumber != null) brand.asinConfig[asin].stockNumber = u.stockNumber;
+        if (u.supplierName != null) brand.asinConfig[asin].supplierName = u.supplierName;
+      }
+      updatedAsins++;
+    }
+
+    await saveBrands(brandData);
+    res.json({ success: true, updatedAsins });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`RMC Brand Dashboard → http://localhost:${PORT}`);
   if (process.env.SYNC_ENABLED === 'true') {

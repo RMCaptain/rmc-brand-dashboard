@@ -108,7 +108,10 @@
     <div id="view-data" class="hidden">
       <div class="flex items-center justify-between mb-3">
         <span class="text-xs" style="color:var(--text-3)">UPCs missing for ASINs that haven't been scraped yet.</span>
-        <button id="scrapeAllUpcsBtn" onclick="scrapeAllUpcs()" class="btn-ghost" style="font-size:12px;padding:6px 14px;">Scrape All UPCs</button>
+        <div class="flex gap-2">
+          <button onclick="openBulkEdit()" class="btn-ghost" style="font-size:12px;padding:6px 14px;">Bulk Edit</button>
+          <button id="scrapeAllUpcsBtn" onclick="scrapeAllUpcs()" class="btn-ghost" style="font-size:12px;padding:6px 14px;">Scrape All UPCs</button>
+        </div>
       </div>
       <div class="rmc-card overflow-hidden">
         <div class="overflow-x-auto">
@@ -947,6 +950,187 @@
       renderDataTable();
     }
 
+    // ── Bulk Edit ────────────────────────────────────────────────────────────────
+    let bulkUpdates = [];
+
+    function openBulkEdit() {
+      bulkUpdates = [];
+      document.getElementById('bulkPreview').classList.add('hidden');
+      document.getElementById('bulkUploadLabel').textContent = 'Choose CSV file…';
+      document.getElementById('bulkErrorMsg').classList.add('hidden');
+      document.getElementById('bulkEditModal').classList.remove('hidden');
+    }
+
+    function closeBulkEdit() {
+      document.getElementById('bulkEditModal').classList.add('hidden');
+    }
+
+    function parseCsv(text) {
+      const rows = [];
+      let row = [], field = '', inQuotes = false;
+      const flush = () => { row.push(field); field = ''; };
+      for (let i = 0; i < text.length; i++) {
+        const c = text[i];
+        if (inQuotes) {
+          if (c === '"' && text[i + 1] === '"') { field += '"'; i++; }
+          else if (c === '"') inQuotes = false;
+          else field += c;
+        } else {
+          if (c === '"') { inQuotes = true; }
+          else if (c === ',') flush();
+          else if (c === '\r' || c === '\n') {
+            if (c === '\r' && text[i + 1] === '\n') i++;
+            flush();
+            if (row.some(f => f.trim())) rows.push(row);
+            row = [];
+          } else field += c;
+        }
+      }
+      flush();
+      if (row.some(f => f.trim())) rows.push(row);
+      return rows;
+    }
+
+    function handleBulkUpload(file) {
+      if (!file) return;
+      document.getElementById('bulkUploadLabel').textContent = file.name;
+      const reader = new FileReader();
+      reader.onload = e => {
+        try {
+          const rows = parseCsv(e.target.result);
+          if (rows.length < 2) throw new Error('CSV appears empty');
+
+          // Expected columns: Brand(0) ASIN(1) Title(2) SKU(3) UPC(4) LeadTime(5) CasePack(6) StockNum(7) SupplierName(8)
+          const header = rows[0].map(h => h.trim().toLowerCase());
+          const col = name => header.findIndex(h => h.includes(name));
+          const iAsin = col('asin'), iUpc = col('upc'), iLead = col('lead'), iCase = col('case'), iStock = col('stock'), iSupplier = col('supplier');
+
+          if (iAsin < 0) throw new Error('Could not find ASIN column in the uploaded CSV. Make sure you\'re using the downloaded template.');
+
+          const changes = [];
+          const asinBrandMap = {};
+          for (const brand of brandsData) {
+            for (const asin of brand.asins) asinBrandMap[asin] = brand;
+          }
+
+          for (const row of rows.slice(1)) {
+            const asin = (row[iAsin] || '').trim().toUpperCase();
+            if (!asin) continue;
+            const brand = asinBrandMap[asin];
+            if (!brand) continue;
+
+            const cfg = brand.asinConfig?.[asin] || {};
+            const get = i => i >= 0 ? (row[i] || '').trim() : '';
+
+            const newUpc       = get(iUpc);
+            const newLead      = get(iLead);
+            const newCase      = get(iCase);
+            const newStock     = get(iStock);
+            const newSupplier  = get(iSupplier);
+
+            const curUpc      = brand.upcs?.[asin] || '';
+            const curLead     = brand.leadTimes?.[asin] != null ? String(brand.leadTimes[asin]) : '';
+            const curCase     = brand.casePacks?.[asin] != null ? String(brand.casePacks[asin]) : '';
+            const curStock    = cfg.stockNumber || '';
+            const curSupplier = cfg.supplierName || '';
+
+            const changed = (nv, cv) => nv !== '' && nv !== cv;
+            const hasChange = changed(newUpc, curUpc) || changed(newLead, curLead) || changed(newCase, curCase) || changed(newStock, curStock) || changed(newSupplier, curSupplier);
+            if (!hasChange) continue;
+
+            changes.push({
+              asin, brandId: brand.id, brandName: brand.name,
+              title: brand.asinTitles?.[asin] || asin,
+              upc:          changed(newUpc, curUpc)      ? { old: curUpc,      new: newUpc }      : null,
+              leadTime:     changed(newLead, curLead)    ? { old: curLead,     new: newLead }     : null,
+              casePack:     changed(newCase, curCase)    ? { old: curCase,     new: newCase }     : null,
+              stockNumber:  changed(newStock, curStock)  ? { old: curStock,    new: newStock }    : null,
+              supplierName: changed(newSupplier, curSupplier) ? { old: curSupplier, new: newSupplier } : null,
+            });
+          }
+
+          bulkUpdates = changes;
+          renderBulkPreview(changes);
+        } catch (err) {
+          document.getElementById('bulkErrorMsg').textContent = err.message;
+          document.getElementById('bulkErrorMsg').classList.remove('hidden');
+          document.getElementById('bulkPreview').classList.remove('hidden');
+          document.getElementById('bulkPreviewBody').innerHTML = '';
+          document.getElementById('bulkChangeCount').textContent = '';
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    function renderBulkPreview(changes) {
+      const preview = document.getElementById('bulkPreview');
+      const tbody = document.getElementById('bulkPreviewBody');
+      const countEl = document.getElementById('bulkChangeCount');
+      preview.classList.remove('hidden');
+      document.getElementById('bulkErrorMsg').classList.add('hidden');
+
+      if (!changes.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center py-8" style="color:var(--text-3)">No changes detected — all values match what\'s already saved.</td></tr>';
+        countEl.textContent = '— nothing to update';
+        return;
+      }
+
+      const fieldCount = changes.reduce((n, c) => n + [c.upc, c.leadTime, c.casePack, c.stockNumber, c.supplierName].filter(Boolean).length, 0);
+      countEl.textContent = `— ${changes.length} ASIN${changes.length !== 1 ? 's' : ''}, ${fieldCount} field${fieldCount !== 1 ? 's' : ''} will be updated`;
+
+      const cell = (change) => {
+        if (!change) return `<span style="color:var(--text-3)">—</span>`;
+        return `<span class="font-medium" style="color:var(--brand)">${change.new || '(clear)'}</span><br><span style="color:var(--text-3);font-size:10px">${change.old || 'empty'}</span>`;
+      };
+
+      tbody.innerHTML = changes.map(c => `
+        <tr class="border-b last:border-0" style="border-color:rgba(255,255,255,0.04)">
+          <td class="px-4 py-2.5">
+            <div class="font-mono text-xs" style="color:var(--text-3)">${c.asin}</div>
+            <div class="text-xs truncate max-w-xs" style="color:var(--text-2);max-width:180px" title="${c.title}">${c.title}</div>
+          </td>
+          <td class="px-4 py-2.5 text-xs" style="color:var(--text-3)">${c.brandName}</td>
+          <td class="px-4 py-2.5 text-center text-xs">${cell(c.upc)}</td>
+          <td class="px-4 py-2.5 text-center text-xs">${cell(c.leadTime)}</td>
+          <td class="px-4 py-2.5 text-center text-xs">${cell(c.casePack)}</td>
+          <td class="px-4 py-2.5 text-xs">${cell(c.stockNumber)}</td>
+          <td class="px-4 py-2.5 text-xs">${cell(c.supplierName)}</td>
+        </tr>`).join('');
+    }
+
+    async function confirmBulkUpdate() {
+      if (!bulkUpdates.length) return;
+      const btn = document.getElementById('bulkConfirmBtn');
+      btn.disabled = true;
+      btn.textContent = 'Saving...';
+      try {
+        const payload = bulkUpdates.map(c => ({
+          asin: c.asin,
+          brandId: c.brandId,
+          upc:          c.upc          ? c.upc.new          : null,
+          leadTime:     c.leadTime     ? c.leadTime.new     : null,
+          casePack:     c.casePack     ? c.casePack.new     : null,
+          stockNumber:  c.stockNumber  ? c.stockNumber.new  : null,
+          supplierName: c.supplierName ? c.supplierName.new : null,
+        }));
+        const res = await fetch('/api/bulk-update', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ updates: payload })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Save failed');
+        closeBulkEdit();
+        await load();
+        renderDataTable();
+      } catch (err) {
+        document.getElementById('bulkErrorMsg').textContent = err.message;
+        document.getElementById('bulkErrorMsg').classList.remove('hidden');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Save Changes';
+      }
+    }
+
     // ── Boot ─────────────────────────────────────────────────────────────────────
     async function load() {
       const [brandsRes, pmRes, fxRes] = await Promise.all([
@@ -965,6 +1149,86 @@
 
     load();
   </script>
+
+  <!-- Bulk Edit Modal -->
+  <div id="bulkEditModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 rmc-modal-backdrop"
+       onclick="if(event.target===this)closeBulkEdit()">
+    <div class="rmc-modal w-full p-6" style="max-width:900px;max-height:90vh;overflow-y:auto">
+      <div class="flex items-center justify-between mb-5">
+        <div>
+          <h2 class="text-base font-semibold" style="color:var(--text)">Bulk Edit Product Data</h2>
+          <p class="text-xs mt-0.5" style="color:var(--text-3)">Download the template, fill in the editable columns, then upload it back.</p>
+        </div>
+        <button onclick="closeBulkEdit()" style="color:var(--text-3)" class="hover:opacity-80 transition-opacity">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Step 1 -->
+      <div class="flex items-start gap-4 p-4 rounded-xl mb-4" style="background:var(--bg-well);border:1px solid var(--border)">
+        <div class="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center flex-shrink-0 mt-0.5">1</div>
+        <div class="flex-1">
+          <p class="text-sm font-medium mb-1" style="color:var(--text)">Download Template</p>
+          <p class="text-xs mb-3" style="color:var(--text-3)">Pre-filled with all your ASINs. <strong style="color:var(--text-2)">Edit only the last 5 columns</strong> — Brand, ASIN, Title, and SKU are read-only reference columns and will be ignored on upload.</p>
+          <a href="/api/bulk-template" download class="btn-ghost inline-flex items-center gap-2" style="font-size:12px;padding:6px 14px;text-decoration:none">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+            </svg>
+            Download rmc-product-data.csv
+          </a>
+        </div>
+      </div>
+
+      <!-- Step 2 -->
+      <div class="flex items-start gap-4 p-4 rounded-xl mb-5" style="background:var(--bg-well);border:1px solid var(--border)">
+        <div class="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center flex-shrink-0 mt-0.5">2</div>
+        <div class="flex-1">
+          <p class="text-sm font-medium mb-1" style="color:var(--text)">Upload Filled CSV</p>
+          <p class="text-xs mb-3" style="color:var(--text-3)">Blank cells are skipped — only filled cells update the app. Changes are shown for review before saving.</p>
+          <label class="btn-ghost inline-flex items-center gap-2 cursor-pointer" style="font-size:12px;padding:6px 14px">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l4-4m0 0l4 4m-4-4v12"/>
+            </svg>
+            <span id="bulkUploadLabel">Choose CSV file…</span>
+            <input type="file" accept=".csv" class="hidden" onchange="handleBulkUpload(this.files[0])" />
+          </label>
+        </div>
+      </div>
+
+      <!-- Preview -->
+      <div id="bulkPreview" class="hidden">
+        <div class="flex items-center justify-between mb-3">
+          <p class="text-sm font-medium" style="color:var(--text)">Preview <span id="bulkChangeCount" class="text-slate-400 font-normal text-xs"></span></p>
+          <p class="text-xs" style="color:var(--text-3)">Highlighted cells will be updated. Gray cells are unchanged.</p>
+        </div>
+        <div class="rounded-xl overflow-hidden mb-5" style="border:1px solid var(--border)">
+          <div class="overflow-x-auto">
+            <table class="rmc-table text-xs">
+              <thead>
+                <tr>
+                  <th class="text-left" style="padding-left:16px;min-width:200px">Product</th>
+                  <th class="text-left" style="min-width:120px">Brand</th>
+                  <th class="text-center" style="min-width:110px">UPC</th>
+                  <th class="text-center" style="min-width:90px">Lead Time</th>
+                  <th class="text-center" style="min-width:80px">Case Pack</th>
+                  <th class="text-left" style="min-width:110px">Stock #</th>
+                  <th class="text-left" style="min-width:160px">Supplier Product Name</th>
+                </tr>
+              </thead>
+              <tbody id="bulkPreviewBody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div id="bulkErrorMsg" class="hidden text-sm text-red-400 mb-3"></div>
+        <div class="flex gap-3">
+          <button onclick="closeBulkEdit()" class="btn-ghost flex-1 justify-center">Cancel</button>
+          <button onclick="confirmBulkUpdate()" id="bulkConfirmBtn" class="btn-primary flex-1 justify-center">Save Changes</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- ASIN Config Modal -->
   <div id="asinConfigModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 rmc-modal-backdrop"
