@@ -247,6 +247,9 @@
             leadTime,
             invRaw,
             cogs: brand.cogs?.[asin] ?? null,
+            cogsCa: brand.cogsPerMarketplace?.[asin]?.CA ?? (brand.marketplace !== 'US' ? brand.cogs?.[asin] : null) ?? null,
+            cogsUs: brand.cogsPerMarketplace?.[asin]?.US ?? (brand.marketplace === 'US' ? brand.cogs?.[asin] : null) ?? null,
+            marketplaces: s?.marketplaces || [],
             upc: brand.upcs?.[asin] ?? '',
             casePack: brand.casePacks?.[asin] ?? null,
             stockNumber: cfg.stockNumber || '',
@@ -442,8 +445,9 @@
               <img src="${r.imageUrl || `https://images-na.ssl-images-amazon.com/images/P/${r.asin}.01._SX100_.jpg`}" loading="lazy" onerror="this.style.display='none'" class="w-9 h-9 object-contain rounded absolute inset-0" />
             </div>
             <div class="min-w-0">
-              <div class="flex items-center gap-2">
+              <div class="flex items-center gap-2 flex-wrap">
                 <a href="${r.marketplace === 'US' ? 'https://www.amazon.com' : 'https://www.amazon.ca'}/dp/${r.asin}" target="_blank" rel="noopener" class="font-mono text-xs hover:underline" style="color:var(--text-3)">${r.asin}</a>
+                ${(mps => mps.length ? mps.map(mp => { const sc = mp === 'CA' ? 'background:#1e3a5f;color:#60a5fa' : mp === 'US' ? 'background:#1a3a1a;color:#4ade80' : 'background:#2a2a2a;color:#888'; return `<span style="${sc};font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;letter-spacing:0.05em">${mp}</span>`; }).join('') : '')(r.marketplaces?.length ? r.marketplaces : r.marketplace ? [r.marketplace] : [])}
                 ${r.sellerSku ? `<a href="${r.marketplace === 'US' ? 'https://sellercentral.amazon.com' : 'https://sellercentral.amazon.ca'}/inventory?searchSKU=${encodeURIComponent(r.sellerSku)}" target="_blank" rel="noopener" class="font-mono text-xs truncate max-w-[140px] hover:underline" style="color:var(--text-3)" title="${skuEsc}">${skuEsc}</a>` : ''}
               </div>
               <div class="text-xs mt-0.5 max-w-xs truncate" style="color:var(--text-2)" title="${titleEsc}">${r.title}</div>
@@ -514,6 +518,21 @@
         body: JSON.stringify({ days })
       });
       patchBrand(brandId, 'leadTimes', asin, days);
+    }
+
+    async function saveCogsMarketplace(brandId, asin, marketplace, value) {
+      const cost = parseFloat(value);
+      if (isNaN(cost) || cost < 0) return;
+      await fetch(`/api/brands/${brandId}/asins/${asin}/cogs-marketplace`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ marketplace, cost })
+      });
+      const brand = brandsData.find(b => b.id === brandId);
+      if (brand) {
+        brand.cogsPerMarketplace = brand.cogsPerMarketplace || {};
+        brand.cogsPerMarketplace[asin] = brand.cogsPerMarketplace[asin] || {};
+        brand.cogsPerMarketplace[asin][marketplace] = cost;
+      }
     }
 
     async function saveCogs(brandId, asin, value) {
@@ -901,11 +920,19 @@
               class="text-xs hover:text-white underline decoration-dotted transition-colors" style="${typeColor}">${typeLabel}</button>
           </td>
           <td class="px-4 py-2.5 text-right">
-            <div class="flex items-center justify-end gap-1">
-              <span class="text-xs" style="color:var(--text-3)">${curSym}</span>
-              <input type="number" min="0" step="0.01" value="${r.cogs ?? ''}" placeholder="—"
-                class="rmc-input w-20 text-right" style="font-size:11px;padding:3px 6px"
-                onchange="saveCogs('${r.brandId}','${r.asin}',this.value)" />
+            <div class="flex flex-col gap-1 items-end">
+              <div class="flex items-center gap-1">
+                <span style="background:#1e3a5f;color:#60a5fa;font-size:9px;font-weight:700;padding:1px 4px;border-radius:3px">CA$</span>
+                <input type="number" min="0" step="0.01" value="${r.cogsCa ?? ''}" placeholder="—"
+                  class="rmc-input w-20 text-right" style="font-size:11px;padding:3px 6px"
+                  onchange="saveCogsMarketplace('${r.brandId}','${r.asin}','CA',this.value)" />
+              </div>
+              <div class="flex items-center gap-1">
+                <span style="background:#1a3a1a;color:#4ade80;font-size:9px;font-weight:700;padding:1px 4px;border-radius:3px">US$</span>
+                <input type="number" min="0" step="0.01" value="${r.cogsUs ?? ''}" placeholder="—"
+                  class="rmc-input w-20 text-right" style="font-size:11px;padding:3px 6px"
+                  onchange="saveCogsMarketplace('${r.brandId}','${r.asin}','US',this.value)" />
+              </div>
             </div>
           </td>
         </tr>`;
@@ -1003,7 +1030,10 @@
           // Expected columns: Brand(0) ASIN(1) Title(2) SKU(3) UPC(4) LeadTime(5) CasePack(6) StockNum(7) SupplierName(8)
           const header = rows[0].map(h => h.trim().toLowerCase());
           const col = name => header.findIndex(h => h.includes(name));
-          const iAsin = col('asin'), iUpc = col('upc'), iLead = col('lead'), iCase = col('case'), iStock = col('stock'), iSupplier = col('supplier'), iCogs = col('cogs');
+          const iAsin = col('asin'), iUpc = col('upc'), iLead = col('lead'), iCase = col('case'), iStock = col('stock'), iSupplier = col('supplier');
+          const iCogsCa = header.findIndex(h => h.includes('cogs') && h.includes('ca'));
+          const iCogsUs = header.findIndex(h => h.includes('cogs') && h.includes('us'));
+          const iCogs = iCogsCa >= 0 ? -1 : col('cogs');
 
           if (iAsin < 0) throw new Error('Could not find ASIN column in the uploaded CSV. Make sure you\'re using the downloaded template.');
 
@@ -1027,17 +1057,19 @@
             const newCase      = get(iCase);
             const newStock     = get(iStock);
             const newSupplier  = get(iSupplier);
-            const newCogs      = get(iCogs);
+            const newCogsCa    = iCogsCa >= 0 ? get(iCogsCa) : get(iCogs);
+            const newCogsUs    = iCogsUs >= 0 ? get(iCogsUs) : '';
 
             const curUpc      = brand.upcs?.[asin] || '';
             const curLead     = brand.leadTimes?.[asin] != null ? String(brand.leadTimes[asin]) : '';
             const curCase     = brand.casePacks?.[asin] != null ? String(brand.casePacks[asin]) : '';
             const curStock    = cfg.stockNumber || '';
             const curSupplier = cfg.supplierName || '';
-            const curCogs     = brand.cogs?.[asin] != null ? String(brand.cogs[asin]) : '';
+            const curCogsCa   = brand.cogsPerMarketplace?.[asin]?.CA != null ? String(brand.cogsPerMarketplace[asin].CA) : (brand.cogs?.[asin] != null && brand.marketplace !== 'US' ? String(brand.cogs[asin]) : '');
+            const curCogsUs   = brand.cogsPerMarketplace?.[asin]?.US != null ? String(brand.cogsPerMarketplace[asin].US) : (brand.cogs?.[asin] != null && brand.marketplace === 'US' ? String(brand.cogs[asin]) : '');
 
             const changed = (nv, cv) => nv !== '' && nv !== cv;
-            const hasChange = changed(newUpc, curUpc) || changed(newLead, curLead) || changed(newCase, curCase) || changed(newStock, curStock) || changed(newSupplier, curSupplier) || changed(newCogs, curCogs);
+            const hasChange = changed(newUpc, curUpc) || changed(newLead, curLead) || changed(newCase, curCase) || changed(newStock, curStock) || changed(newSupplier, curSupplier) || changed(newCogsCa, curCogsCa) || changed(newCogsUs, curCogsUs);
             if (!hasChange) continue;
 
             changes.push({
@@ -1048,7 +1080,8 @@
               casePack:     changed(newCase, curCase)         ? { old: curCase,     new: newCase }     : null,
               stockNumber:  changed(newStock, curStock)       ? { old: curStock,    new: newStock }    : null,
               supplierName: changed(newSupplier, curSupplier) ? { old: curSupplier, new: newSupplier } : null,
-              cogs:         changed(newCogs, curCogs)         ? { old: curCogs,     new: newCogs }     : null,
+              cogsCa:       changed(newCogsCa, curCogsCa)     ? { old: curCogsCa,   new: newCogsCa }   : null,
+              cogsUs:       changed(newCogsUs, curCogsUs)     ? { old: curCogsUs,   new: newCogsUs }   : null,
             });
           }
 
@@ -1073,12 +1106,12 @@
       document.getElementById('bulkErrorMsg').classList.add('hidden');
 
       if (!changes.length) {
-        tbody.innerHTML = '<tr><td colspan="7" class="text-center py-8" style="color:var(--text-3)">No changes detected — all values match what\'s already saved.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center py-8" style="color:var(--text-3)">No changes detected — all values match what\'s already saved.</td></tr>';
         countEl.textContent = '— nothing to update';
         return;
       }
 
-      const fieldCount = changes.reduce((n, c) => n + [c.upc, c.leadTime, c.casePack, c.stockNumber, c.supplierName, c.cogs].filter(Boolean).length, 0);
+      const fieldCount = changes.reduce((n, c) => n + [c.upc, c.leadTime, c.casePack, c.stockNumber, c.supplierName, c.cogsCa, c.cogsUs].filter(Boolean).length, 0);
       countEl.textContent = `— ${changes.length} ASIN${changes.length !== 1 ? 's' : ''}, ${fieldCount} field${fieldCount !== 1 ? 's' : ''} will be updated`;
 
       const cell = (change) => {
@@ -1098,7 +1131,8 @@
           <td class="px-4 py-2.5 text-center text-xs">${cell(c.casePack)}</td>
           <td class="px-4 py-2.5 text-xs">${cell(c.stockNumber)}</td>
           <td class="px-4 py-2.5 text-xs">${cell(c.supplierName)}</td>
-          <td class="px-4 py-2.5 text-right text-xs">${cell(c.cogs)}</td>
+          <td class="px-4 py-2.5 text-right text-xs">${cell(c.cogsCa)}</td>
+          <td class="px-4 py-2.5 text-right text-xs">${cell(c.cogsUs)}</td>
         </tr>`).join('');
     }
 
@@ -1116,7 +1150,8 @@
           casePack:     c.casePack     ? c.casePack.new     : null,
           stockNumber:  c.stockNumber  ? c.stockNumber.new  : null,
           supplierName: c.supplierName ? c.supplierName.new : null,
-          cogs:         c.cogs         ? c.cogs.new         : null,
+          cogsCa:       c.cogsCa       ? c.cogsCa.new       : null,
+          cogsUs:       c.cogsUs       ? c.cogsUs.new       : null,
         }));
         const res = await fetch('/api/bulk-update', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1176,7 +1211,7 @@
         <div class="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center flex-shrink-0 mt-0.5">1</div>
         <div class="flex-1">
           <p class="text-sm font-medium mb-1" style="color:var(--text)">Download Template</p>
-          <p class="text-xs mb-3" style="color:var(--text-3)">Pre-filled with all your ASINs. <strong style="color:var(--text-2)">Edit only the last 5 columns</strong> — Brand, ASIN, Title, and SKU are read-only reference columns and will be ignored on upload.</p>
+          <p class="text-xs mb-3" style="color:var(--text-3)">Pre-filled with all your ASINs. <strong style="color:var(--text-2)">Edit only the last 6 columns</strong> — Brand, ASIN, Title, and SKU are read-only reference columns and will be ignored on upload. COGS (CA) = cost in CAD for Canadian marketplace; COGS (US) = cost in USD for US marketplace.</p>
           <a href="/api/bulk-template" download class="btn-ghost inline-flex items-center gap-2" style="font-size:12px;padding:6px 14px;text-decoration:none">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
@@ -1220,7 +1255,8 @@
                   <th class="text-center" style="min-width:130px">Case Pack Size (units)</th>
                   <th class="text-left" style="min-width:110px">Stock #</th>
                   <th class="text-left" style="min-width:160px">Supplier Product Name</th>
-                  <th class="text-right" style="min-width:80px">COGS</th>
+                  <th class="text-right" style="min-width:80px">COGS (CA)</th>
+                  <th class="text-right" style="min-width:80px">COGS (US)</th>
                 </tr>
               </thead>
               <tbody id="bulkPreviewBody"></tbody>

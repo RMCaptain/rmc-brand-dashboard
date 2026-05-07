@@ -299,6 +299,23 @@ app.delete('/api/brands/:id/asins/:asin', async (req, res) => {
   res.json(brand);
 });
 
+// PUT set per-marketplace COGS for an ASIN
+app.put('/api/brands/:id/asins/:asin/cogs-marketplace', async (req, res) => {
+  const { marketplace, cost } = req.body;
+  if (!marketplace || cost == null || isNaN(cost) || cost < 0) return res.status(400).json({ error: 'Invalid input' });
+
+  const data = await loadBrands();
+  const brand = data.brands.find(b => b.id === req.params.id);
+  if (!brand) return res.status(404).json({ error: 'Brand not found' });
+
+  brand.cogsPerMarketplace = brand.cogsPerMarketplace || {};
+  const asin = req.params.asin.toUpperCase();
+  brand.cogsPerMarketplace[asin] = brand.cogsPerMarketplace[asin] || {};
+  brand.cogsPerMarketplace[asin][marketplace] = Number(cost);
+  await saveBrands(data);
+  res.json({ success: true });
+});
+
 // PUT set COGS (cost per unit) for an ASIN
 app.put('/api/brands/:id/asins/:asin/cogs', async (req, res) => {
   const { cost } = req.body;
@@ -1284,7 +1301,7 @@ app.get('/api/bulk-template', async (req, res) => {
     const preset = pm.presets?.last30d || pm.presets?.[Object.keys(pm.presets || {})[0]];
     const brandMetrics = preset?.brands || {};
 
-    const headers = ['Brand', 'ASIN', 'Title', 'SKU', 'UPC', 'Lead Time (days)', 'Case Pack Size (units)', 'Stock #', 'Supplier Product Name', 'COGS'];
+    const headers = ['Brand', 'ASIN', 'Title', 'SKU', 'UPC', 'Lead Time (days)', 'Case Pack Size (units)', 'Stock #', 'Supplier Product Name', 'COGS (CA)', 'COGS (US)'];
     const csvRows = [headers];
 
     for (const brand of brands.filter(b => b.id !== 'unknown-brand').sort((a, b) => a.name.localeCompare(b.name))) {
@@ -1302,7 +1319,8 @@ app.get('/api/bulk-template', async (req, res) => {
           brand.casePacks?.[asin] ?? '',
           cfg.stockNumber || '',
           cfg.supplierName || '',
-          brand.cogs?.[asin] ?? ''
+          brand.cogsPerMarketplace?.[asin]?.CA ?? brand.cogs?.[asin] ?? '',
+          brand.cogsPerMarketplace?.[asin]?.US ?? ''
         ]);
       }
     }
@@ -1353,9 +1371,15 @@ app.post('/api/bulk-update', async (req, res) => {
         if (u.stockNumber != null) brand.asinConfig[asin].stockNumber = u.stockNumber;
         if (u.supplierName != null) brand.asinConfig[asin].supplierName = u.supplierName;
       }
-      if (u.cogs !== '' && u.cogs != null) {
-        brand.cogs = brand.cogs || {};
-        brand.cogs[asin] = Number(u.cogs);
+      if (u.cogsCa !== '' && u.cogsCa != null) {
+        brand.cogsPerMarketplace = brand.cogsPerMarketplace || {};
+        brand.cogsPerMarketplace[asin] = brand.cogsPerMarketplace[asin] || {};
+        brand.cogsPerMarketplace[asin].CA = Number(u.cogsCa);
+      }
+      if (u.cogsUs !== '' && u.cogsUs != null) {
+        brand.cogsPerMarketplace = brand.cogsPerMarketplace || {};
+        brand.cogsPerMarketplace[asin] = brand.cogsPerMarketplace[asin] || {};
+        brand.cogsPerMarketplace[asin].US = Number(u.cogsUs);
       }
       updatedAsins++;
     }

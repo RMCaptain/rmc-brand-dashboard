@@ -515,9 +515,17 @@
       const invJson  = JSON.stringify(s.inventory ?? {}).replace(/"/g, '&quot;');
       const invTotal = ((s.inventory?.onHand ?? 0) + (s.inventory?.inbound ?? 0) + (s.inventory?.reserved ?? 0) + (s.inventory?.researching ?? 0) + (s.inventory?.unfulfillable ?? 0)).toLocaleString();
 
+      const mpBadgeHtml = (mp => {
+        const s2 = mp === 'CA' ? 'background:#1e3a5f;color:#60a5fa' : mp === 'US' ? 'background:#1a3a1a;color:#4ade80' : 'background:#2a2a2a;color:#888';
+        return '<span style="' + s2 + ';font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;letter-spacing:0.05em;vertical-align:middle;display:inline-block;margin-left:4px">' + mp + '</span>';
+      })(asinMp);
+
       return '<tr class="border-b border-slate-700/40 last:border-0 hover:bg-slate-700/20">' +
         '<td class="px-5 py-3 whitespace-nowrap">' +
-          '<a href="' + (asinMp === 'US' ? 'https://www.amazon.com' : 'https://www.amazon.ca') + '/dp/' + s.asin + '" target="_blank" rel="noopener" class="font-mono text-xs text-slate-400 hover:underline">' + s.asin + '</a>' +
+          '<div class="flex items-center gap-1">' +
+            '<a href="' + (asinMp === 'US' ? 'https://www.amazon.com' : 'https://www.amazon.ca') + '/dp/' + s.asin + '" target="_blank" rel="noopener" class="font-mono text-xs text-slate-400 hover:underline">' + s.asin + '</a>' +
+            mpBadgeHtml +
+          '</div>' +
           (asinSku ? '<a href="' + (asinMp === 'US' ? 'https://sellercentral.amazon.com' : 'https://sellercentral.amazon.ca') + '/skucentral?mSku=' + encodeURIComponent(asinSku) + '" target="_blank" rel="noopener" class="font-mono text-xs text-slate-500 mt-0.5 max-w-[160px] truncate hover:underline block" title="' + skuEsc + '">' + skuEsc + '</a>' : '') +
         '</td>' +
         '<td class="px-4 py-3 text-slate-300 text-xs max-w-xs truncate" title="' + titleEsc + '">' + titleEsc + '</td>' +
@@ -541,7 +549,16 @@
         '<td class="px-4 py-3 text-right text-slate-500 text-xs">' + velDisplay + ' u/d</td>' +
         '<td class="px-4 py-3 text-right ' + daysColor + '">' + (daysDisplay !== '—' ? daysDisplay + 'd' : '—') + '</td>' +
         '<td class="px-4 py-3 text-right text-xs" style="color:var(--text-2)">' + (leadTime != null ? leadTime + 'd' : '—') + '</td>' +
-        '<td class="px-4 py-3 text-right text-xs" style="color:var(--text-2)">' + (brand.cogs?.[s.asin] != null ? '$' + Number(brand.cogs[s.asin]).toFixed(2) : '—') + '</td>' +
+        (function() {
+          const cmp = brand.cogsPerMarketplace?.[s.asin];
+          const legacyCogs = brand.cogs?.[s.asin];
+          const cogsCA = cmp?.CA ?? (brand.marketplace !== 'US' ? legacyCogs : null);
+          const cogsUS = cmp?.US ?? (brand.marketplace === 'US' ? legacyCogs : null);
+          const parts = [];
+          if (cogsCA != null) parts.push('<span style="color:#60a5fa;font-size:9px;font-weight:600">CA</span> $' + Number(cogsCA).toFixed(2));
+          if (cogsUS != null) parts.push('<span style="color:#4ade80;font-size:9px;font-weight:600">US</span> $' + Number(cogsUS).toFixed(2));
+          return '<td class="px-4 py-3 text-right text-xs" style="color:var(--text-2)">' + (parts.length ? parts.join('<br>') : '—') + '</td>';
+        })() +
         '<td class="px-4 py-3 text-right text-xs font-mono" style="color:var(--text-2)">' + (brand.upcs?.[s.asin] || '—') + '</td>' +
         '<td class="px-4 py-3 text-right text-xs" style="color:var(--text-2)">' + (brand.casePacks?.[s.asin] ?? '—') + '</td>' +
         '<td class="px-4 py-3 text-center text-xs ' + typeColor + '"><a href="/products.html" title="Edit in Products" class="' + typeColor + ' hover:underline">' + typeLabel + '</a></td>' +

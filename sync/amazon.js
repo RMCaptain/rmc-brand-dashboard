@@ -663,10 +663,17 @@ function buildPresetMetrics(brands, stDatasets, marketplaceIds, listingsData, in
     const currency = MARKETPLACE_CURRENCY[marketplaceIds[i]] || 'USD';
     for (const [asin, d] of Object.entries(stDatasets[i])) {
       if (!stData[asin]) {
-        stData[asin] = { revenueCad: 0, revenueUsd: 0, units: 0, sessions: 0, pageViews: 0, buyBoxSamples: [], cvrSamples: [] };
+        stData[asin] = { revenueCad: 0, revenueUsd: 0, units: 0, unitsCad: 0, unitsUsd: 0, sessions: 0, sessionsCad: 0, sessionsUsd: 0, pageViews: 0, buyBoxSamples: [], cvrSamples: [] };
       }
-      if (currency === 'CAD') stData[asin].revenueCad += d.revenue;
-      else stData[asin].revenueUsd += d.revenue;
+      if (currency === 'CAD') {
+        stData[asin].revenueCad += d.revenue;
+        stData[asin].unitsCad += d.units;
+        stData[asin].sessionsCad += d.sessions;
+      } else {
+        stData[asin].revenueUsd += d.revenue;
+        stData[asin].unitsUsd += d.units;
+        stData[asin].sessionsUsd += d.sessions;
+      }
       stData[asin].units += d.units;
       stData[asin].sessions += d.sessions;
       stData[asin].pageViews += (d.pageViews || 0);
@@ -698,10 +705,16 @@ function buildPresetMetrics(brands, stDatasets, marketplaceIds, listingsData, in
         revenueCad: Math.round((st.revenueCad || 0) * 100) / 100,
         revenueUsd: Math.round((st.revenueUsd || 0) * 100) / 100,
         units: st.units || 0,
+        unitsCad: st.unitsCad || 0,
+        unitsUsd: st.unitsUsd || 0,
         sessions: st.sessions || 0,
         pageViews: st.pageViews || 0,
         buyBox: st.buyBox ?? null,
         cvr: st.cvr ?? null,
+        marketplaces: [
+          ...((st.unitsCad || 0) > 0 || (st.revenueCad || 0) > 0 ? ['CA'] : []),
+          ...((st.unitsUsd || 0) > 0 || (st.revenueUsd || 0) > 0 ? ['US'] : [])
+        ],
         inventory: inv.onHand !== undefined ? inv : { onHand: 0, inbound: 0, reserved: 0, researching: 0, unfulfillable: 0 },
         imageUrl: imageUrls[asin] || null
       };
@@ -756,10 +769,16 @@ function buildPresetMetrics(brands, stDatasets, marketplaceIds, listingsData, in
         revenueCad: Math.round((st.revenueCad || 0) * 100) / 100,
         revenueUsd: Math.round((st.revenueUsd || 0) * 100) / 100,
         units:      st.units || 0,
+        unitsCad:   st.unitsCad || 0,
+        unitsUsd:   st.unitsUsd || 0,
         sessions:   st.sessions || 0,
         pageViews:  st.pageViews || 0,
         buyBox:     st.buyBox ?? null,
         cvr:        st.cvr ?? null,
+        marketplaces: [
+          ...((st.unitsCad || 0) > 0 || (st.revenueCad || 0) > 0 ? ['CA'] : []),
+          ...((st.unitsUsd || 0) > 0 || (st.revenueUsd || 0) > 0 ? ['US'] : [])
+        ],
         inventory:  inventory[asin] || { onHand: 0, inbound: 0, reserved: 0, researching: 0, unfulfillable: 0 },
         imageUrl:   imageUrls[asin] || null
       });

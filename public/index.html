@@ -165,11 +165,13 @@
       for (const brand of brandsData) {
         const bm = presetMetrics.presets?.[presetKey]?.brands?.[brand.id];
         if (!bm?.skus) continue;
-        const isCA = brand.marketplace !== 'US';
         for (const sku of bm.skus) {
-          const cost = brand.cogs?.[sku.asin] || 0;
-          if (isCA) cad += (sku.units || 0) * cost;
-          else usd += (sku.units || 0) * cost;
+          const cogsCA = brand.cogsPerMarketplace?.[sku.asin]?.CA ?? (brand.marketplace !== 'US' ? brand.cogs?.[sku.asin] : null) ?? 0;
+          const cogsUS = brand.cogsPerMarketplace?.[sku.asin]?.US ?? (brand.marketplace === 'US' ? brand.cogs?.[sku.asin] : null) ?? 0;
+          const unitsCa = sku.unitsCad != null ? sku.unitsCad : (brand.marketplace !== 'US' ? sku.units : 0);
+          const unitsUs = sku.unitsUsd != null ? sku.unitsUsd : (brand.marketplace === 'US' ? sku.units : 0);
+          cad += unitsCa * cogsCA;
+          usd += unitsUs * cogsUS;
         }
       }
       return { cad: Math.round(cad * 100) / 100, usd: Math.round(usd * 100) / 100 };
@@ -410,6 +412,11 @@
     }
 
     // ── Product table ─────────────────────────────────────────────────────────
+    function mpBadge(mp) {
+      const s = mp === 'CA' ? 'background:#1e3a5f;color:#60a5fa' : mp === 'US' ? 'background:#1a3a1a;color:#4ade80' : 'background:#2a2a2a;color:#888';
+      return `<span style="${s};font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;letter-spacing:0.05em;vertical-align:middle;display:inline-block">${mp}</span>`;
+    }
+
     function getAllSkus(presetKey) {
       const preset = presetMetrics.presets?.[presetKey];
       if (!preset) return [];
@@ -418,28 +425,39 @@
         const bm = preset.brands?.[brand.id];
         if (!bm?.skus) continue;
         for (const sku of bm.skus) {
-          const costPerUnit = brand.cogs?.[sku.asin] || 0;
-          const rev = getNum(sku.revenueCad, sku.revenueUsd);
-          const totalCogs = sku.units * costPerUnit;
-          const grossProfit = costPerUnit > 0 ? rev - totalCogs : null;
-          const margin = grossProfit != null && rev > 0 ? (grossProfit / rev) * 100 : null;
-          const inv = sku.inventory || {};
-          const inventory = (inv.onHand ?? 0) + (inv.inbound ?? 0) + (inv.reserved ?? 0) + (inv.researching ?? 0) + (inv.unfulfillable ?? 0);
-          skus.push({
-            asin: sku.asin,
-            sellerSku: sku.sellerSku || '',
-            title: sku.title || brand.asinTitles?.[sku.asin] || sku.asin,
-            brand: brand.name, brandId: brand.id, brandColor: brand.color, marketplace: brand.marketplace,
-            status: sku.status,
-            units: sku.units || 0,
-            revenueCad: sku.revenueCad || 0, revenueUsd: sku.revenueUsd || 0,
-            revenue: rev,
-            sessions: sku.sessions || 0,
-            buyBox: sku.buyBox ?? null,
-            cvr: sku.cvr ?? null,
-            inventory, costPerUnit, totalCogs, grossProfit, margin,
-            imageUrl: sku.imageUrl || null
-          });
+          const mps = sku.marketplaces?.length ? sku.marketplaces
+            : (sku.revenueCad > 0 && sku.revenueUsd > 0 ? ['CA', 'US']
+               : sku.revenueUsd > 0 ? ['US'] : ['CA']);
+          for (const mp of mps) {
+            const isCA = mp === 'CA';
+            const costPerUnit = brand.cogsPerMarketplace?.[sku.asin]?.[mp] ?? brand.cogs?.[sku.asin] ?? 0;
+            const totalRev = (sku.revenueCad || 0) + (sku.revenueUsd || 0) * (fxRate?.usdToCad || 1.35);
+            const frac = mps.length > 1 ? (isCA ? (sku.revenueCad || 0) / (totalRev || 1) : (sku.revenueUsd || 0) * (fxRate?.usdToCad || 1.35) / (totalRev || 1)) : 1;
+            const unitsMp = sku.unitsCad != null
+              ? (isCA ? sku.unitsCad : sku.unitsUsd)
+              : Math.round((sku.units || 0) * frac);
+            const revCad = isCA ? (sku.revenueCad || 0) : 0;
+            const revUsd = isCA ? 0 : (sku.revenueUsd || 0);
+            const rev = getNum(revCad, revUsd);
+            const totalCogs = unitsMp * costPerUnit;
+            const grossProfit = costPerUnit > 0 ? rev - totalCogs : null;
+            const margin = grossProfit != null && rev > 0 ? (grossProfit / rev) * 100 : null;
+            const inv = sku.inventory || {};
+            const inventory = (inv.onHand ?? 0) + (inv.inbound ?? 0) + (inv.reserved ?? 0) + (inv.researching ?? 0) + (inv.unfulfillable ?? 0);
+            skus.push({
+              asin: sku.asin,
+              sellerSku: sku.sellerSku || '',
+              title: sku.title || brand.asinTitles?.[sku.asin] || sku.asin,
+              brand: brand.name, brandId: brand.id, brandColor: brand.color, marketplace: mp,
+              status: sku.status,
+              units: unitsMp,
+              revenueCad: revCad, revenueUsd: revUsd, revenue: rev,
+              sessions: sku.sessions || 0,
+              buyBox: sku.buyBox ?? null, cvr: sku.cvr ?? null,
+              inventory, costPerUnit, totalCogs, grossProfit, margin,
+              imageUrl: sku.imageUrl || null
+            });
+          }
         }
       }
       return skus;
@@ -574,6 +592,7 @@
               <div class="min-w-0">
                 <div class="flex items-center gap-2">
                   <a href="${s.marketplace === 'US' ? 'https://www.amazon.com' : 'https://www.amazon.ca'}/dp/${s.asin}" target="_blank" rel="noopener" class="font-mono text-slate-400 text-xs hover:underline">${s.asin}</a>
+                  ${mpBadge(s.marketplace)}
                   ${s.sellerSku ? `<a href="${s.marketplace === 'US' ? 'https://sellercentral.amazon.com' : 'https://sellercentral.amazon.ca'}/inventory?searchSKU=${encodeURIComponent(s.sellerSku)}" target="_blank" rel="noopener" class="font-mono text-slate-500 text-xs truncate max-w-[160px] hover:underline" title="${s.sellerSku}">${s.sellerSku}</a>` : ''}
                 </div>
                 <div class="text-slate-200 text-xs mt-0.5 max-w-xs truncate">${s.title}</div>
@@ -695,11 +714,13 @@
       let cad = 0, usd = 0;
       const bm = presetMetrics.presets?.[presetKey]?.brands?.[brand.id];
       if (!bm?.skus) return { cad: 0, usd: 0 };
-      const isCA = brand.marketplace !== 'US';
       for (const sku of bm.skus) {
-        const cost = brand.cogs?.[sku.asin] || 0;
-        if (isCA) cad += (sku.units || 0) * cost;
-        else usd += (sku.units || 0) * cost;
+        const cogsCA = brand.cogsPerMarketplace?.[sku.asin]?.CA ?? (brand.marketplace !== 'US' ? brand.cogs?.[sku.asin] : null) ?? 0;
+        const cogsUS = brand.cogsPerMarketplace?.[sku.asin]?.US ?? (brand.marketplace === 'US' ? brand.cogs?.[sku.asin] : null) ?? 0;
+        const unitsCa = sku.unitsCad != null ? sku.unitsCad : (brand.marketplace !== 'US' ? sku.units : 0);
+        const unitsUs = sku.unitsUsd != null ? sku.unitsUsd : (brand.marketplace === 'US' ? sku.units : 0);
+        cad += unitsCa * cogsCA;
+        usd += unitsUs * cogsUS;
       }
       return { cad: Math.round(cad * 100) / 100, usd: Math.round(usd * 100) / 100 };
     }
