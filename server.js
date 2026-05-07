@@ -438,7 +438,7 @@ app.post('/api/scrape-upcs', async (req, res) => {
 
 // PUT set ASIN config (type: single | multipack | bundle)
 app.put('/api/brands/:id/asins/:asin/config', async (req, res) => {
-  const { type, unitsPerPack, components } = req.body;
+  const { type, unitsPerPack, baseProductAsin, components } = req.body;
   const data = await loadBrands();
   const brand = data.brands.find(b => b.id === req.params.id);
   if (!brand) return res.status(404).json({ error: 'Brand not found' });
@@ -446,6 +446,7 @@ app.put('/api/brands/:id/asins/:asin/config', async (req, res) => {
   brand.asinConfig[req.params.asin.toUpperCase()] = {
     type: type || 'single',
     unitsPerPack: unitsPerPack ? Number(unitsPerPack) : null,
+    baseProductAsin: baseProductAsin || null,
     components: components || []
   };
   await saveBrands(data);
@@ -594,6 +595,27 @@ app.delete('/api/pos/:id', async (req, res) => {
 });
 
 // POST generate PO PDF
+// Consolidates PO lines for supplier download:
+// - Strips bundle-header rows (display only)
+// - Merges lines by Stock # → UPC → description
+function consolidatePOLines(lines) {
+  const supplierLines = (lines || []).filter(l => l._type !== 'bundle-header');
+  const groups = new Map();
+  for (const line of supplierLines) {
+    if (!line.description && !line.asin) continue;
+    const key = (line.stockNumber || '').trim() || (line.upc || '').trim() || (line.description || line.asin || '').trim();
+    if (!key) continue;
+    if (!groups.has(key)) {
+      groups.set(key, { ...line, quantity: 0, cases: 0 });
+    }
+    const g = groups.get(key);
+    g.quantity += Number(line.quantity) || 0;
+    const cp = Number(g.casePack) || 1;
+    g.cases = cp > 0 ? Math.ceil(g.quantity / cp) : 0;
+  }
+  return [...groups.values()];
+}
+
 app.post('/api/po/generate-pdf', async (req, res) => {
   try {
     const puppeteer = require('puppeteer');
@@ -622,7 +644,7 @@ app.post('/api/po/generate-pdf', async (req, res) => {
     colHeaders.push('Quantity', 'Total');
 
     let subtotal = 0;
-    const validLines = (lines || []).filter(l => l.description || l.asin);
+    const validLines = consolidatePOLines(lines).filter(l => l.description || l.asin);
     const lineRows = validLines.map(line => {
       const qty   = Number(line.quantity) || 0;
       const price = Number(line.price)    || 0;
@@ -1011,7 +1033,7 @@ app.post('/api/po/generate', async (req, res) => {
     let dataRow = headerRow + 1;
     let subtotal = 0;
 
-    for (const line of (lines || [])) {
+    for (const line of consolidatePOLines(lines)) {
       if (!line.description && !line.asin) continue;
       ws.getRow(dataRow).height = 16;
 

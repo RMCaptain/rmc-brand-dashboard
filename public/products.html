@@ -574,6 +574,55 @@
 
     // ── ASIN Config Modal ─────────────────────────────────────────────────────
     let cfgBrandId = null, cfgAsin = null, cfgComponents = [];
+    let cfgBaseProductAsin = null;
+
+    // Base product ASIN picker (for multipack config)
+    const _baseDropdown = document.createElement('div');
+    _baseDropdown.style.cssText = 'display:none;position:fixed;z-index:9999;background:var(--bg-surface,#1e293b);border:1px solid var(--border,#334155);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.5);overflow-y:auto;max-height:220px';
+    document.body.appendChild(_baseDropdown);
+
+    function cfgBaseProductSearch(query) {
+      const q = (query || '').toLowerCase().trim();
+      const input = document.getElementById('cfgBaseProductInput');
+      if (!input) return;
+      const rect = input.getBoundingClientRect();
+      const all = _cfgAllAsins().filter(x => x.asin !== cfgAsin);
+      const matches = q ? all.filter(x => x.asin.toLowerCase().includes(q) || x.title.toLowerCase().includes(q)).slice(0, 12) : all.slice(0, 20);
+      _baseDropdown.innerHTML = matches.length
+        ? matches.map(m => `
+          <div style="padding:8px 12px;cursor:pointer;border-bottom:1px solid #1e293b"
+            onmouseover="this.style.background='#1e293b'" onmouseout="this.style.background=''"
+            onmousedown="selectCfgBaseProduct('${m.asin}')">
+            <div style="font-size:11px;font-family:monospace;color:#818cf8">${m.asin}</div>
+            <div style="font-size:12px;color:var(--text,#e2e8f0);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${m.title || '<span style="color:var(--text-3)">No title</span>'}</div>
+            <div style="font-size:11px;color:var(--text-3,#64748b)">${m.brandName}</div>
+          </div>`).join('')
+        : '<div style="padding:8px 12px;font-size:12px;color:var(--text-3)">No ASINs found</div>';
+      _baseDropdown.style.display = 'block';
+      _baseDropdown.style.left = rect.left + 'px';
+      _baseDropdown.style.width = rect.width + 'px';
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const dropH = Math.min(220, matches.length * 52 + 8);
+      if (spaceBelow >= dropH || spaceBelow >= 120) { _baseDropdown.style.top = (rect.bottom + 2) + 'px'; _baseDropdown.style.bottom = ''; }
+      else { _baseDropdown.style.bottom = (window.innerHeight - rect.top + 2) + 'px'; _baseDropdown.style.top = ''; }
+    }
+
+    function selectCfgBaseProduct(asin) {
+      cfgBaseProductAsin = asin;
+      const match = _cfgAllAsins().find(x => x.asin === asin);
+      const display = match ? `${asin} — ${match.title}` : asin;
+      const input = document.getElementById('cfgBaseProductInput');
+      if (input) input.value = display;
+      const disp = document.getElementById('cfgBaseProductDisplay');
+      if (disp) disp.textContent = asin;
+      _baseDropdown.style.display = 'none';
+    }
+
+    document.addEventListener('click', e => {
+      if (e.target !== document.getElementById('cfgBaseProductInput') && !_baseDropdown.contains(e.target)) {
+        _baseDropdown.style.display = 'none';
+      }
+    });
 
     function openAsinConfig(brandId, asin) {
       cfgBrandId = brandId; cfgAsin = asin;
@@ -586,6 +635,16 @@
       cfgComponents = (cfg.components || []).map(c => ({
         type: c.type || (c.asin ? 'asin' : 'manual'), ...c
       }));
+      cfgBaseProductAsin = cfg.baseProductAsin || null;
+      const baseInput = document.getElementById('cfgBaseProductInput');
+      const baseDisp = document.getElementById('cfgBaseProductDisplay');
+      if (baseInput) {
+        if (cfgBaseProductAsin) {
+          const match = _cfgAllAsins().find(x => x.asin === cfgBaseProductAsin);
+          baseInput.value = match ? `${cfgBaseProductAsin} — ${match.title}` : cfgBaseProductAsin;
+        } else { baseInput.value = ''; }
+      }
+      if (baseDisp) baseDisp.textContent = cfgBaseProductAsin || '';
       showCfgSections(type);
       renderCfgComponents();
       document.getElementById('asinConfigModal').classList.remove('hidden');
@@ -755,15 +814,16 @@
     async function saveAsinConfig() {
       const type = document.querySelector('[name=cfgType]:checked')?.value || 'single';
       const unitsPerPack = type === 'multipack' ? Number(document.getElementById('cfgUnitsPerPack').value) || null : null;
+      const baseProductAsin = type === 'multipack' ? (cfgBaseProductAsin || null) : null;
       const components = type === 'bundle'
         ? cfgComponents.map(({ _searchQuery, _resolvedTitle, ...clean }) => clean)
         : [];
       await fetch(`/api/brands/${cfgBrandId}/asins/${cfgAsin}/config`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type, unitsPerPack, components })
+        body: JSON.stringify({ type, unitsPerPack, baseProductAsin, components })
       });
       const brand = brandsData.find(b => b.id === cfgBrandId);
-      if (brand) { brand.asinConfig = brand.asinConfig || {}; brand.asinConfig[cfgAsin] = { type, unitsPerPack, components }; }
+      if (brand) { brand.asinConfig = brand.asinConfig || {}; brand.asinConfig[cfgAsin] = { type, unitsPerPack, baseProductAsin, components }; }
       closeCfgModal();
       if (activeTab === 'data') renderDataTable(); else render();
     }
@@ -1307,9 +1367,21 @@
       </div>
 
       <div id="cfgMultipackSection" class="hidden mb-4 p-3 rounded-lg" style="background:var(--bg-well);border:1px solid var(--border)">
-        <label class="text-xs block mb-1" style="color:var(--text-2)">Units per pack</label>
-        <input id="cfgUnitsPerPack" type="number" min="1" placeholder="e.g. 3" class="w-32 rmc-input" />
-        <p class="text-xs mt-1.5" style="color:var(--text-3)">Velocity tracks packs sold. Ordering stays in packs.</p>
+        <div class="mb-3">
+          <label class="text-xs block mb-1" style="color:var(--text-2)">Units per pack</label>
+          <input id="cfgUnitsPerPack" type="number" min="1" placeholder="e.g. 3" class="w-32 rmc-input" />
+          <p class="text-xs mt-1.5" style="color:var(--text-3)">Velocity tracks packs sold. Ordering stays in packs.</p>
+        </div>
+        <div style="border-top:1px solid var(--border);padding-top:10px">
+          <label class="text-xs block mb-1 font-medium" style="color:var(--text-2)">Base product ASIN <span style="color:var(--text-3);font-weight:400">— for PO consolidation</span></label>
+          <input id="cfgBaseProductInput" type="text" placeholder="Search by ASIN or product name…"
+            class="rmc-input" style="width:100%;font-size:12px"
+            oninput="cfgBaseProductSearch(this.value)"
+            onfocus="cfgBaseProductSearch(this.value)"
+            autocomplete="off" />
+          <div id="cfgBaseProductDisplay" style="font-size:11px;font-family:monospace;color:#818cf8;margin-top:4px;min-height:16px"></div>
+          <p class="text-xs mt-1" style="color:var(--text-3)">Links this multipack to its single-unit product. Enables PO download to consolidate supplier orders by Stock #.</p>
+        </div>
       </div>
 
       <div id="cfgBundleSection" class="hidden mb-4 p-3 rounded-lg" style="background:var(--bg-well);border:1px solid var(--border)">

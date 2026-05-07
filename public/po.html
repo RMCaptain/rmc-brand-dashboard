@@ -348,19 +348,15 @@
       if (!selectedBrand) return;
       const brand = selectedBrand;
 
-      // Get velocity data from last30d preset
       const velocityPreset = presetMetrics.presets?.last30d || presetMetrics.presets?.lastMonth;
       const brandPreset = velocityPreset?.brands?.[brand.id];
 
-      // Calculate velocity: units per day from 30d data
       let velocityMap = {};
       if (brandPreset?.skus) {
         const days = velocityPreset.startDate && velocityPreset.endDate
           ? Math.max(1, Math.round((new Date(velocityPreset.endDate) - new Date(velocityPreset.startDate)) / 86400000) + 1)
           : 30;
-        brandPreset.skus.forEach(s => {
-          velocityMap[s.asin] = (s.units || 0) / days;
-        });
+        brandPreset.skus.forEach(s => { velocityMap[s.asin] = (s.units || 0) / days; });
       }
 
       lines = [];
@@ -372,23 +368,36 @@
         const leadTime = brand.leadTimes?.[asin] || 0;
         const reorderBuffer = brand.reorderBuffer ?? 30;
         const velocity = velocityMap[asin] || 0;
+        const stockNumber = cfg.stockNumber || '';
 
-        // Base qty in ASIN units, rounded to nearest case pack
         const rawQty = velocity * (leadTime + reorderBuffer);
         let qty = 0;
         if (rawQty > 0 && casePack > 0) qty = Math.ceil(rawQty / casePack) * casePack;
         const cases = casePack > 0 ? Math.ceil(qty / casePack) : 0;
 
-        const base = { stockNumber: '', wholesalePrice: '', discountPct: '',
+        const base = { stockNumber, wholesalePrice: '', discountPct: '',
           _velocity: velocity, _leadTime: leadTime, _reorderBuffer: reorderBuffer };
 
         if (cfg.type === 'bundle' && cfg.components?.length > 0) {
-          // Bundle: one PO line per component
+          // Bundle header row — display only, stripped from download
+          lines.push({
+            ...base,
+            _type: 'bundle-header',
+            asin,
+            description: title,
+            upc: brand.upcs?.[asin] || '',
+            price: 0,
+            casePack,
+            quantity: qty,
+            cases,
+            _asinUnits: qty,
+            _componentCount: cfg.components.length
+          });
+
           cfg.components.forEach(comp => {
             let compDesc, compUpc, compPrice, compStockNumber, compAsin;
             if (comp.type === 'asin' && comp.asin) {
-              // Linked catalog ASIN — pull data from brands
-              const compBrand = brands.find(b => b.asins.includes(comp.asin));
+              const compBrand = brands.find(b => b.asins?.includes(comp.asin));
               const compCfg = compBrand?.asinConfig?.[comp.asin] || {};
               compAsin = comp.asin;
               compDesc = compCfg.supplierName || compBrand?.asinTitles?.[comp.asin] || comp.asin;
@@ -396,7 +405,6 @@
               compPrice = compBrand?.cogs?.[comp.asin] || 0;
               compStockNumber = compCfg.stockNumber || '';
             } else {
-              // Manual component
               compAsin = asin;
               compDesc = comp.description || `Component of ${title}`;
               compUpc = comp.upc || '';
@@ -405,6 +413,7 @@
             }
             lines.push({
               ...base,
+              _type: 'bundle-component',
               asin: compAsin,
               description: compDesc,
               upc: compUpc,
@@ -420,29 +429,53 @@
 
         } else if (cfg.type === 'multipack') {
           const upp = cfg.unitsPerPack || 1;
-          // qty is in packs; multiply by upp to get individual units to order from supplier
-          const indivQty = qty * upp;
-          const indivCasePack = casePack * upp;
+          // Resolve base product so supplier line uses single-unit Stock# for consolidation
+          let baseDesc, baseUpc, basePrice, baseStockNumber, hasNoBaseProduct;
+          const baseAsin = cfg.baseProductAsin;
+          if (baseAsin) {
+            const baseBrand = brands.find(b => b.asins?.includes(baseAsin));
+            const baseCfg = baseBrand?.asinConfig?.[baseAsin] || {};
+            baseDesc = baseCfg.supplierName || baseBrand?.asinTitles?.[baseAsin] || baseAsin;
+            baseUpc = baseBrand?.upcs?.[baseAsin] || '';
+            basePrice = baseBrand?.cogs?.[baseAsin] || 0;
+            baseStockNumber = baseCfg.stockNumber || '';
+            hasNoBaseProduct = false;
+          } else {
+            baseDesc = title;
+            baseUpc = brand.upcs?.[asin] || '';
+            basePrice = brand.cogs?.[asin] || 0;
+            baseStockNumber = stockNumber;
+            hasNoBaseProduct = true;
+          }
+
+          const supplierQty = qty * upp;
+          const supplierCasePack = casePack * upp;
           lines.push({
             ...base,
+            _type: 'multipack',
             asin,
-            description: upp > 1 ? `${title} (individual units for ${upp}-Pack)` : title,
-            upc: brand.upcs?.[asin] || '',
-            price: brand.cogs?.[asin] || 0,
-            casePack: indivCasePack,
-            quantity: indivQty,
-            cases: indivCasePack > 0 ? Math.ceil(indivQty / indivCasePack) : 0,
+            description: baseDesc,
+            upc: baseUpc,
+            stockNumber: baseStockNumber,
+            price: basePrice,
+            casePack: supplierCasePack,
+            quantity: supplierQty,
+            cases: supplierCasePack > 0 ? Math.ceil(supplierQty / supplierCasePack) : 0,
+            _asinUnits: qty,
+            _asinTitle: title,
             _unitsPerPack: upp,
-            _totalUnits: indivQty
+            _baseProductAsin: baseAsin || null,
+            _hasNoBaseProduct: hasNoBaseProduct
           });
 
         } else {
-          // Single (default)
           lines.push({
             ...base,
+            _type: 'single',
             asin,
             description: title,
             upc: brand.upcs?.[asin] || '',
+            stockNumber,
             price: brand.cogs?.[asin] || 0,
             casePack,
             quantity: qty,
@@ -562,26 +595,54 @@
     }
 
     function renderLineRow(line, i, opts) {
+      // Bundle header — full-width display-only row, not editable
+      if (line._type === 'bundle-header') {
+        const numCols = 2
+          + (opts.asin ? 1 : 0) + (opts.stockNumber ? 1 : 0) + (opts.cases ? 1 : 0)
+          + 1 + (opts.wholesalePrice ? 1 : 0) + (opts.discountPct ? 1 : 0) + (opts.qtyPerCase ? 1 : 0)
+          + 2 + 1;
+        return `
+          <tr class="border-b border-slate-700/50" style="background:rgba(79,70,229,0.08)">
+            <td colspan="${numCols}" class="px-3 py-2">
+              <div class="flex items-center gap-3 flex-wrap">
+                <span class="text-xs font-semibold" style="color:#a5b4fc">${esc(line.description)}</span>
+                <span class="font-mono text-xs text-slate-500">${esc(line.asin)}</span>
+                <span class="text-xs px-2 py-0.5 rounded-full font-medium" style="background:rgba(99,102,241,0.18);color:#818cf8">
+                  Bundle &middot; ${line._asinUnits} ASIN unit${line._asinUnits !== 1 ? 's' : ''}
+                </span>
+                <span class="text-xs text-slate-500">${line._componentCount} component${line._componentCount !== 1 ? 's' : ''}</span>
+              </div>
+            </td>
+          </tr>`;
+      }
+
       const total = (Number(line.quantity) || 0) * (Number(line.price) || 0);
       const totalFmt = total > 0 ? '$' + total.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
       const velocityHint = line._velocity > 0
         ? `title="${line._velocity.toFixed(2)} u/d × (${line._leadTime}d lead + ${line._reorderBuffer}d buffer)"`
         : '';
 
-      const rowBg = line._isBundleComponent ? 'bg-indigo-950/20' : '';
+      const rowBg = line._type === 'bundle-component' ? 'style="background:rgba(79,70,229,0.04)"' : '';
+
+      let descAnnotation = '';
+      if (line._type === 'multipack') {
+        const supplierUnits = (Number(line._asinUnits) || 0) * (Number(line._unitsPerPack) || 1);
+        descAnnotation = `<div class="flex items-center gap-2 mt-0.5 flex-wrap">
+          <span class="text-xs" style="color:var(--text-3,#64748b)">${line._asinUnits} pack${line._asinUnits !== 1 ? 's' : ''} &times; ${line._unitsPerPack} units/pack = ${supplierUnits} supplier units</span>
+          ${line._hasNoBaseProduct ? `<span class="text-xs px-1.5 py-0.5 rounded font-medium" style="background:rgba(234,179,8,0.15);color:#fbbf24">&#9888; No base product linked</span>` : ''}
+        </div>`;
+      } else if (line._type === 'bundle-component') {
+        descAnnotation = `<div class="text-xs mt-0.5" style="color:rgba(165,180,252,0.6)">&#8627; ${esc(line._bundleParent)}</div>`;
+      } else if (line.asin) {
+        descAnnotation = `<div class="font-mono text-xs mt-0.5" style="color:#334155">${esc(line.asin)}</div>`;
+      }
 
       return `
-        <tr class="border-b border-slate-700/50 hover:bg-slate-700/20 ${rowBg}">
+        <tr class="border-b border-slate-700/50 hover:bg-slate-700/20" ${rowBg}>
           <td class="px-3 py-2" style="overflow:hidden">
-            ${line._bundleParent
-              ? `<div class="text-xs text-indigo-400/70 mb-1">↳ ${line._bundleParent}</div>`
-              : ''}
             <input class="line-input" style="width:100%" type="text" value="${esc(line.description)}"
               oninput="setLine(${i}, 'description', this.value)" />
-            <div class="flex items-center gap-2 mt-0.5">
-              ${!line._bundleParent && line.asin ? `<span class="font-mono text-slate-600 text-xs">${line.asin}</span>` : ''}
-              ${line._totalUnits ? `<span class="text-xs text-slate-500">${line._totalUnits.toLocaleString()} total units</span>` : ''}
-            </div>
+            ${descAnnotation}
           </td>
           <td class="px-3 py-2" style="overflow:hidden">
             <input class="line-input" style="width:100%" type="text" value="${esc(line.upc)}"
@@ -677,7 +738,10 @@
     }
 
     function updateSubtotal() {
-      const sub = lines.reduce((s, l) => s + (Number(l.quantity) || 0) * (Number(l.price) || 0), 0);
+      const sub = lines.reduce((s, l) => {
+        if (l._type === 'bundle-header') return s;
+        return s + (Number(l.quantity) || 0) * (Number(l.price) || 0);
+      }, 0);
       document.getElementById('subtotalDisplay').textContent = sub > 0
         ? 'Subtotal: $' + sub.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
         : '';
@@ -782,6 +846,13 @@
       if (!selectedBrand) { alert('Select a brand first.'); return; }
       if (!lines.length)  { alert('No line items.'); return; }
 
+      const missingBase = lines.filter(l => l._type === 'multipack' && l._hasNoBaseProduct);
+      if (missingBase.length) {
+        const names = missingBase.map(l => l._asinTitle || l.description).join(', ');
+        const proceed = confirm(`${missingBase.length} multipack ASIN${missingBase.length > 1 ? 's' : ''} have no base product linked (${names}).\n\nStock # consolidation on download may not work correctly. Continue?`);
+        if (!proceed) return;
+      }
+
       const format = fmt || selectedFormat;
       const opts = getOptionalCols();
 
@@ -794,6 +865,7 @@
         notes:       document.getElementById('poNotes').value,
         optionalCols: opts,
         lines: lines.map(l => ({
+          _type:         l._type || 'single',
           asin:          l.asin,
           description:   l.description,
           upc:           l.upc,
