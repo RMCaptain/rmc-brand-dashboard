@@ -62,9 +62,7 @@
           </div>
           <!-- Preset selector -->
           <div class="flex gap-1">
-            <button onclick="setBrandPreset('yesterday')" id="bp-yesterday" class="bp-btn">Yesterday</button>
             <button onclick="setBrandPreset('last30d')"   id="bp-last30d"   class="bp-btn">Last 30d</button>
-            <button onclick="setBrandPreset('thisMonth')" id="bp-thisMonth" class="bp-btn">This Month</button>
             <button onclick="setBrandPreset('lastMonth')" id="bp-lastMonth" class="bp-btn">Last Month</button>
           </div>
         </div>
@@ -137,9 +135,7 @@
     let pageSize = parseInt(localStorage.getItem('pageSize') || '20');
 
     const TILE_CONFIG = [
-      { key: 'yesterday', label: 'Yesterday',    color: 'from-blue-700 to-blue-800',    accent: '#3b82f6' },
       { key: 'last30d',   label: 'Last 30 Days', color: 'from-violet-700 to-violet-800', accent: '#7c3aed' },
-      { key: 'thisMonth', label: 'This Month',   color: 'from-teal-700 to-teal-800',    accent: '#0d9488' },
       { key: 'lastMonth', label: 'Last Month',   color: 'from-emerald-700 to-emerald-800', accent: '#059669' }
     ];
 

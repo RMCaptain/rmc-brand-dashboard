@@ -1421,6 +1421,7 @@ async function runFullSync(tag = 'Sync') {
 
     // Phase 1: kick off ads reports before SP sync starts
     let adHandles = {};
+    let adsPopulated = false;
     try {
       const fmt = d => d.toISOString().split('T')[0];
       const today = new Date(); today.setHours(0,0,0,0);
@@ -1442,6 +1443,29 @@ async function runFullSync(tag = 'Sync') {
       console.log(`[${tag}] Ads reports submitted — baking while SP sync runs...`);
     } catch (adsCreateErr) {
       console.warn(`[${tag}] Ads report creation failed (non-fatal):`, adsCreateErr.message);
+    }
+
+    // Seed image cache from Supabase so amazon.js doesn't try to re-fetch images already stored
+    try {
+      const existingPm = await loadPresetMetrics();
+      const supabaseImages = {};
+      for (const preset of Object.values(existingPm.presets || {})) {
+        for (const bm of Object.values(preset.brands || {})) {
+          for (const sku of (bm.skus || [])) {
+            if (sku.asin && sku.imageUrl) supabaseImages[sku.asin] = sku.imageUrl;
+          }
+        }
+      }
+      if (Object.keys(supabaseImages).length > 0) {
+        const imgCachePath = path.join(DATA_DIR, 'image-cache.json');
+        let existingCache = {};
+        try { existingCache = JSON.parse(fs.readFileSync(imgCachePath, 'utf8')); } catch {}
+        const merged = { ...supabaseImages, ...existingCache }; // disk wins if both have it
+        fs.writeFileSync(imgCachePath, JSON.stringify(merged));
+        console.log(`[${tag}] Seeded image cache: ${Object.keys(supabaseImages).length} from Supabase, ${Object.keys(merged).length} total`);
+      }
+    } catch (imgSeedErr) {
+      console.warn(`[${tag}] Image cache seed failed (non-fatal):`, imgSeedErr.message);
     }
 
     // Phase 2: SP-API sync
@@ -1515,6 +1539,7 @@ async function runFullSync(tag = 'Sync') {
         if (totalSpendCad > 0) preset.financials.CAD.adSpend = Math.round(totalSpendCad * 100) / 100;
         if (totalSpendUsd > 0) preset.financials.USD.adSpend = Math.round(totalSpendUsd * 100) / 100;
       }
+      adsPopulated = true;
       console.log(`[${tag}] Ads data merged`);
     } catch (adsErr) {
       console.warn(`[${tag}] Ads collection failed (non-fatal):`, adsErr.message);
@@ -1523,6 +1548,50 @@ async function runFullSync(tag = 'Sync') {
     const lastSync = new Date().toISOString();
     // Merge new preset data into existing (don't wipe presets not included in this sync)
     const existing = await loadPresetMetrics();
+
+    // If ads failed this sync, carry forward ad data from the previous sync
+    if (!adsPopulated) {
+      for (const [presetKey, preset] of Object.entries(presets)) {
+        const prev = existing.presets?.[presetKey];
+        if (!prev) continue;
+        // Preserve preset-level ad spend in financials
+        if (prev.financials?.CAD?.adSpend > 0 && !(preset.financials?.CAD?.adSpend > 0)) {
+          preset.financials = preset.financials || {};
+          preset.financials.CAD = preset.financials.CAD || {};
+          preset.financials.CAD.adSpend = prev.financials.CAD.adSpend;
+        }
+        if (prev.financials?.USD?.adSpend > 0 && !(preset.financials?.USD?.adSpend > 0)) {
+          preset.financials = preset.financials || {};
+          preset.financials.USD = preset.financials.USD || {};
+          preset.financials.USD.adSpend = prev.financials.USD.adSpend;
+        }
+        // Preserve per-brand adSummary + per-SKU ad fields
+        for (const [brandId, bm] of Object.entries(preset.brands || {})) {
+          const prevBm = prev.brands?.[brandId];
+          if (!prevBm) continue;
+          if (!bm.adSummary && prevBm.adSummary) bm.adSummary = prevBm.adSummary;
+          for (const sku of (bm.skus || [])) {
+            if (sku.spendCad != null) continue;
+            const prevSku = prevBm.skus?.find(s => s.asin === sku.asin);
+            if (!prevSku || prevSku.spendCad == null) continue;
+            sku.spendCad           = prevSku.spendCad;
+            sku.spendUsd           = prevSku.spendUsd;
+            sku.attributedSalesCad = prevSku.attributedSalesCad;
+            sku.attributedSalesUsd = prevSku.attributedSalesUsd;
+            sku.adClicks           = prevSku.adClicks;
+            sku.adImpressions      = prevSku.adImpressions;
+            sku.adOrders           = prevSku.adOrders;
+            sku.acos               = prevSku.acos;
+            sku.roas               = prevSku.roas;
+            sku.cpc                = prevSku.cpc;
+            sku.ctr                = prevSku.ctr;
+            sku.adCvr              = prevSku.adCvr;
+          }
+        }
+      }
+      console.log(`[${tag}] Ads creation failed — carried forward ad data from previous sync`);
+    }
+
     const mergedPresets = { ...(existing.presets || {}), ...presets };
     await savePresetMetrics({ lastSync, presets: mergedPresets });
     syncState = { status: 'done', lastSync, error: null };
