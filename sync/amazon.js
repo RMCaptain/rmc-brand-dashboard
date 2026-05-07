@@ -729,6 +729,46 @@ function buildPresetMetrics(brands, stDatasets, marketplaceIds, listingsData, in
       skus
     };
   }
+  // Catch any ASINs in S&T data not assigned to any brand — fold into Unknown Brand
+  // so aggregate revenue totals always match what Amazon reports
+  const allTrackedAsins = new Set(brands.flatMap(b => b.asins));
+  const orphaned = Object.entries(stData).filter(([asin]) => !allTrackedAsins.has(asin));
+
+  if (orphaned.length > 0) {
+    if (!brandMetrics['unknown-brand']) {
+      brandMetrics['unknown-brand'] = {
+        summary: { revenueCad: 0, revenueUsd: 0, units: 0, sessions: 0, buyBox: null, avgCvr: null, alerts: { suppressedListings: 0, lostBuyBox: 0 } },
+        skus: []
+      };
+    }
+    const ub = brandMetrics['unknown-brand'];
+    for (const [asin, st] of orphaned) {
+      ub.summary.revenueCad += st.revenueCad || 0;
+      ub.summary.revenueUsd += st.revenueUsd || 0;
+      ub.summary.units      += st.units || 0;
+      ub.summary.sessions   += st.sessions || 0;
+      ub.skus.push({
+        asin,
+        sellerSku:  listingsData[asin]?.sellerSku || '',
+        marketplace: listingsData[asin]?.marketplace || 'CA',
+        title:      listingsData[asin]?.title || '',
+        status:     'untracked',
+        revenueCad: Math.round((st.revenueCad || 0) * 100) / 100,
+        revenueUsd: Math.round((st.revenueUsd || 0) * 100) / 100,
+        units:      st.units || 0,
+        sessions:   st.sessions || 0,
+        pageViews:  st.pageViews || 0,
+        buyBox:     st.buyBox ?? null,
+        cvr:        st.cvr ?? null,
+        inventory:  inventory[asin] || { onHand: 0, inbound: 0, reserved: 0, researching: 0, unfulfillable: 0 },
+        imageUrl:   imageUrls[asin] || null
+      });
+    }
+    ub.summary.revenueCad = Math.round(ub.summary.revenueCad * 100) / 100;
+    ub.summary.revenueUsd = Math.round(ub.summary.revenueUsd * 100) / 100;
+    console.log(`[Sync] ${orphaned.length} untracked ASINs folded into Unknown Brand metrics`);
+  }
+
   return brandMetrics;
 }
 
