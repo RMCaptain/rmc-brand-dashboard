@@ -98,6 +98,39 @@ Then open `http://localhost:3000`
 
 ---
 
+## Authentication
+
+The dashboard is gated by **HTTP Basic Auth** (single shared credential). Credentials are set via
+`AUTH_USERNAME` / `AUTH_PASSWORD` env vars on the VPS only — NOT committed to git.
+
+If these env vars are unset (local dev), auth is bypassed.
+
+**Important:** values with special chars (e.g. `#`) MUST be quoted in `.env`:
+```
+AUTH_USERNAME="Admin"
+AUTH_PASSWORD="my#pass"
+```
+Unquoted `#` is parsed as a comment delimiter by dotenv.
+
+### Auth roadmap
+
+This basic auth is a temporary plug. Two upgrades planned:
+
+1. **Cloudflare Access (internal team SSO)** — proper auth for the team via Google SSO.
+   Requires pointing `dashboard.rockymountainco.ca` (or similar subdomain) at the VPS through
+   Cloudflare, then configuring an Access Application. Replaces Basic Auth for internal users.
+   Free for up to 50 users. Setup is ~15 min in the Cloudflare console after DNS propagates.
+
+2. **Supabase Auth (external brand portal)** — per-brand logins for client portal (#4 on roadmap).
+   Supabase is already in the stack; use its built-in email/password + magic link auth.
+   Role-based filtering so each brand only sees their own data.
+
+Both auth systems can coexist: Cloudflare Access for `/admin` or root paths (internal),
+Supabase Auth for `/portal/*` (external brand users). Mirrors how Stripe / GitHub split
+internal vs customer access.
+
+---
+
 ## Build Roadmap
 
 Features to build next, in priority order. Pick up from the top.
@@ -172,6 +205,13 @@ SP_API_CLIENT_SECRET=
 SP_API_REFRESH_TOKEN=
 SP_API_MARKETPLACE_IDS=A2EUQ1WTGCTBG2,ATVPDKIKX0DER
 PORT=3000
+
+# Auth (VPS only — unset locally to bypass). Quote any value containing # or other special chars.
+AUTH_USERNAME="Admin"
+AUTH_PASSWORD="your-password-here"
+
+# Daily sync gate — true on VPS, false locally to avoid burning Amazon API quota
+SYNC_ENABLED=true
 ```
 
 The `.env` file is NOT committed to GitHub. Copy it manually to each machine.

@@ -131,16 +131,6 @@
               <span class="text-sm text-slate-300">Stock Number</span>
             </label>
             <label class="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" id="col_wholesalePrice" onchange="renderLines()"
-                class="w-4 h-4 rounded border-slate-600 text-indigo-500 cursor-pointer" />
-              <span class="text-sm text-slate-300">Wholesale Price</span>
-            </label>
-            <label class="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" id="col_discountPct" onchange="renderLines()"
-                class="w-4 h-4 rounded border-slate-600 text-indigo-500 cursor-pointer" />
-              <span class="text-sm text-slate-300">Discount %</span>
-            </label>
-            <label class="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" id="col_qtyPerCase" onchange="renderLines()"
                 class="w-4 h-4 rounded border-slate-600 text-indigo-500 cursor-pointer" />
               <span class="text-sm text-slate-300">Qty / Case</span>
@@ -218,6 +208,18 @@
 
           <div id="noDataBanner" class="hidden px-5 py-8 text-center">
             <p class="text-sm text-slate-500">Select a brand to load ASINs.</p>
+          </div>
+
+          <div id="snapshotBanner" class="hidden px-5 py-3 border-b border-amber-700/40" style="background:rgba(245,158,11,0.08)">
+            <div class="flex items-center justify-between gap-3 flex-wrap">
+              <div class="text-xs text-amber-200">
+                <span class="font-semibold">Snapshot loaded</span>
+                <span class="text-amber-300/70">— saved on <span id="snapshotSavedAt">—</span>. Catalog may have changed since.</span>
+              </div>
+              <button onclick="refreshFromCatalog()" class="text-xs px-3 py-1.5 rounded-md bg-amber-600/20 text-amber-200 border border-amber-600/40 hover:bg-amber-600/30 transition-colors">
+                Refresh from catalog
+              </button>
+            </div>
           </div>
 
           <div id="linesTableWrap" class="hidden overflow-x-auto">
@@ -313,6 +315,9 @@
 
     async function onBrandChange() {
       const id = document.getElementById('brandSelect').value;
+      // Brand changed → no longer viewing a saved snapshot
+      hideSnapshotBanner();
+      currentPOId = null;
       if (!id) {
         selectedBrand = null;
         lines = [];
@@ -375,7 +380,7 @@
         if (rawQty > 0 && casePack > 0) qty = Math.ceil(rawQty / casePack) * casePack;
         const cases = casePack > 0 ? Math.ceil(qty / casePack) : 0;
 
-        const base = { stockNumber, wholesalePrice: '', discountPct: '',
+        const base = { stockNumber,
           _velocity: velocity, _leadTime: leadTime, _reorderBuffer: reorderBuffer };
 
         if (cfg.type === 'bundle' && cfg.components?.length > 0) {
@@ -492,8 +497,6 @@
         asin:          document.getElementById('col_asin').checked,
         cases:         document.getElementById('col_cases').checked,
         stockNumber:   document.getElementById('col_stockNumber').checked,
-        wholesalePrice: document.getElementById('col_wholesalePrice').checked,
-        discountPct:   document.getElementById('col_discountPct').checked,
         qtyPerCase:    document.getElementById('col_qtyPerCase').checked
       };
     }
@@ -501,7 +504,7 @@
     // ── Column resize state ─────────────────────────────────────────────────────
     const DEFAULT_COL_WIDTHS = {
       description: 480, asin: 105, upc: 115, stockNumber: 76, cases: 58,
-      price: 76, wholesalePrice: 82, discountPct: 62, qtyPerCase: 62,
+      price: 76, qtyPerCase: 62,
       quantity: 68, total: 82, del: 32
     };
     let colWidths = JSON.parse(localStorage.getItem('po_colWidths_v2') || 'null') || { ...DEFAULT_COL_WIDTHS };
@@ -584,8 +587,6 @@
       if (opts.stockNumber)    h.push({ label: 'Stock #',         key: 'stockNumber' });
       if (opts.cases)          h.push({ label: 'Cases',           key: 'cases' });
       h.push(                        { label: 'Price / unit',     key: 'price' });
-      if (opts.wholesalePrice) h.push({ label: 'Wholesale Price', key: 'wholesalePrice' });
-      if (opts.discountPct)    h.push({ label: 'Discount %',      key: 'discountPct' });
       if (opts.qtyPerCase)     h.push({ label: 'Qty / Case',      key: 'qtyPerCase' });
       h.push(
         { label: 'Quantity', key: 'quantity' },
@@ -599,7 +600,7 @@
       if (line._type === 'bundle-header') {
         const numCols = 2
           + (opts.asin ? 1 : 0) + (opts.stockNumber ? 1 : 0) + (opts.cases ? 1 : 0)
-          + 1 + (opts.wholesalePrice ? 1 : 0) + (opts.discountPct ? 1 : 0) + (opts.qtyPerCase ? 1 : 0)
+          + 1 + (opts.qtyPerCase ? 1 : 0)
           + 2 + 1;
         return `
           <tr class="border-b border-slate-700/50" style="background:rgba(79,70,229,0.08)">
@@ -661,14 +662,6 @@
             <input class="line-input" style="width:100%" type="number" min="0" step="0.01" value="${line.price || ''}"
               oninput="setLineAndRefreshTotal(${i}, 'price', this.value)" />
           </td>
-          ${opts.wholesalePrice ? `<td class="px-3 py-2" style="overflow:hidden">
-            <input class="line-input" style="width:100%" type="number" min="0" step="0.01" value="${line.wholesalePrice || ''}"
-              oninput="setLine(${i}, 'wholesalePrice', this.value)" />
-          </td>` : ''}
-          ${opts.discountPct ? `<td class="px-3 py-2" style="overflow:hidden">
-            <input class="line-input" style="width:100%" type="number" min="0" max="100" step="0.1" value="${line.discountPct || ''}"
-              oninput="setLine(${i}, 'discountPct', this.value)" />
-          </td>` : ''}
           ${opts.qtyPerCase ? `<td class="px-3 py-2" style="overflow:hidden">
             <input class="line-input" style="width:100%" type="number" min="1" value="${line.casePack || ''}"
               oninput="setCasesQty(${i}, 'casePack', this.value)" />
@@ -728,7 +721,7 @@
     }
 
     function addBlankLine() {
-      lines.push({ asin: '', description: '', upc: '', stockNumber: '', price: 0, wholesalePrice: '', discountPct: '', casePack: 1, quantity: 0, cases: 0 });
+      lines.push({ asin: '', description: '', upc: '', stockNumber: '', price: 0, casePack: 1, quantity: 0, cases: 0 });
       renderLines();
     }
 
@@ -871,8 +864,6 @@
           upc:           l.upc,
           stockNumber:   l.stockNumber,
           price:         Number(l.price) || 0,
-          wholesalePrice: Number(l.wholesalePrice) || 0,
-          discountPct:   l.discountPct !== '' ? Number(l.discountPct) : null,
           casePack:      Number(l.casePack) || 1,
           quantity:      Number(l.quantity) || 0,
           cases:         Number(l.cases) || 0
@@ -925,9 +916,22 @@
           date:         document.getElementById('poDate').value,
           notes:        document.getElementById('poNotes').value,
           optionalCols: getOptionalCols(),
-          lines
+          lines,
+          _savedAt:     new Date().toISOString()
         }
       };
+    }
+
+    function hideSnapshotBanner() {
+      document.getElementById('snapshotBanner').classList.add('hidden');
+    }
+
+    function refreshFromCatalog() {
+      if (!selectedBrand) { alert('Brand not loaded.'); return; }
+      if (!confirm('Rebuild line items from the current catalog? Any manual edits to this saved PO will be replaced.')) return;
+      buildLinesFromBrand();
+      renderLines();
+      hideSnapshotBanner();
     }
 
     async function savePO() {
@@ -958,6 +962,8 @@
         currentPOId = saved.id;
         label.textContent = 'Saved';
         setTimeout(() => { label.textContent = 'Save PO'; }, 2000);
+        // Just saved → data is fresh; banner no longer applies until reload
+        hideSnapshotBanner();
       } catch (err) {
         alert('Save failed: ' + err.message);
         label.textContent = 'Save PO';
@@ -1060,6 +1066,15 @@
         lines = po.data?.lines || [];
         currentPOId = po.id;
         document.getElementById('savePOLabel').textContent = 'Save PO';
+
+        // Snapshot banner — loaded data is frozen at _savedAt; user can refresh from catalog
+        const savedAt = po.data?._savedAt;
+        if (savedAt) {
+          document.getElementById('snapshotSavedAt').textContent = new Date(savedAt).toLocaleString();
+          document.getElementById('snapshotBanner').classList.remove('hidden');
+        } else {
+          hideSnapshotBanner();
+        }
 
         document.getElementById('noDataBanner').classList.add('hidden');
         document.getElementById('emptyLinesMsg').classList.add('hidden');

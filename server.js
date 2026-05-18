@@ -22,6 +22,45 @@ const supabase = createClient(
 let syncState = { status: 'idle', lastSync: null, error: null };
 
 app.use(cors());
+
+// HTTP Basic Auth — gates the entire dashboard. Skipped if AUTH_USERNAME / AUTH_PASSWORD
+// are unset (local dev). Temporary measure until Cloudflare Access (internal team) and
+// Supabase Auth (external brand portal) replace it.
+function basicAuth(req, res, next) {
+  const expectedUser = process.env.AUTH_USERNAME;
+  const expectedPass = process.env.AUTH_PASSWORD;
+  if (!expectedUser || !expectedPass) return next();
+
+  const header = req.headers.authorization || '';
+  if (!header.startsWith('Basic ')) {
+    res.setHeader('WWW-Authenticate', 'Basic realm="RMC Dashboard"');
+    return res.status(401).send('Authentication required');
+  }
+
+  let user = '', pass = '';
+  try {
+    const decoded = Buffer.from(header.slice(6), 'base64').toString();
+    const idx = decoded.indexOf(':');
+    user = decoded.slice(0, idx);
+    pass = decoded.slice(idx + 1);
+  } catch {}
+
+  const crypto = require('crypto');
+  const a = Buffer.from(user);
+  const b = Buffer.from(expectedUser);
+  const c = Buffer.from(pass);
+  const d = Buffer.from(expectedPass);
+  const userOk = a.length === b.length && crypto.timingSafeEqual(a, b);
+  const passOk = c.length === d.length && crypto.timingSafeEqual(c, d);
+
+  if (!userOk || !passOk) {
+    res.setHeader('WWW-Authenticate', 'Basic realm="RMC Dashboard"');
+    return res.status(401).send('Invalid credentials');
+  }
+  next();
+}
+app.use(basicAuth);
+
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -140,6 +179,25 @@ async function fetchFxRate() {
 
 function slugify(name) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
+// HTML-escape for safe interpolation into PDF template literals
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// Prevent Excel/CSV formula injection — prefix risky leading chars with '
+function safeExcelString(s) {
+  if (s == null) return '';
+  const str = String(s);
+  if (/^[=+\-@\t\r]/.test(str)) return "'" + str;
+  return str;
 }
 
 const BRAND_COLORS = [
@@ -527,6 +585,22 @@ async function savePoSettings(payload) {
   if (error) throw error;
 }
 
+// Atomic optimistic update of lastPoNumber. Returns true on success, false on conflict
+// (someone else changed lastPoNumber between our read and write). The single UPDATE with
+// a WHERE on the current value is atomic at the DB level — no two callers can both succeed.
+async function tryCommitLastPoNumber(expectedCurrent, newValue) {
+  const current = await loadPoSettings();
+  const newSettings = { ...current, lastPoNumber: newValue };
+  const { data, error } = await supabase
+    .from('po_settings')
+    .update({ data: newSettings, updated_at: new Date().toISOString() })
+    .eq('id', 'main')
+    .eq('data->>lastPoNumber', String(expectedCurrent))
+    .select();
+  if (error) throw error;
+  return Array.isArray(data) && data.length > 0;
+}
+
 app.get('/api/po/settings', async (req, res) => {
   res.json(await loadPoSettings());
 });
@@ -616,31 +690,17 @@ function consolidatePOLines(lines) {
   return [...groups.values()];
 }
 
-app.post('/api/po/generate-pdf', async (req, res) => {
-  try {
-    const puppeteer = require('puppeteer');
-    const { brandId, lines, status, notes, poNumber, date, optionalCols } = req.body;
-
-    const settings = await loadPoSettings();
-    const { brands } = await loadBrands();
-    const brand = brands.find(b => b.id === brandId);
-    if (!brand) return res.status(404).json({ error: 'Brand not found' });
-
-    const poNum = poNumber || (settings.lastPoNumber + 1);
-    settings.lastPoNumber = poNum;
-    await savePoSettings(settings);
-
-    const poDate = date || new Date().toLocaleDateString('en-CA');
+async function renderPoPdf({ brand, settings, poNum, lines, status, notes, date, optionalCols }) {
+  const puppeteer = require('puppeteer');
+  const poDate = date || new Date().toLocaleDateString('en-CA');
     const statusVal = status || 'Working';
     const isSubmitted = statusVal.toLowerCase() === 'submitted';
 
     const extras = optionalCols || {};
     const colHeaders = ['Item Description', 'UPC'];
-    if (extras.stockNumber)    colHeaders.push('Stock #');
+    if (extras.stockNumber) colHeaders.push('Stock #');
     colHeaders.push('# of Cases', 'Price');
-    if (extras.wholesalePrice) colHeaders.push('Wholesale Price');
-    if (extras.discountPct)    colHeaders.push('Discount %');
-    if (extras.qtyPerCase)     colHeaders.push('Qty/Case');
+    if (extras.qtyPerCase)  colHeaders.push('Qty/Case');
     colHeaders.push('Quantity', 'Total');
 
     let subtotal = 0;
@@ -652,14 +712,12 @@ app.post('/api/po/generate-pdf', async (req, res) => {
       subtotal += total;
       const fmt = v => '$' + Number(v).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
       const cells = [
-        `<td class="desc">${line.description || line.asin || ''}</td>`,
-        `<td>${line.upc || ''}</td>`,
-        extras.stockNumber    ? `<td>${line.stockNumber || ''}</td>` : '',
+        `<td class="desc">${escapeHtml(line.description || line.asin || '')}</td>`,
+        `<td>${escapeHtml(line.upc || '')}</td>`,
+        extras.stockNumber ? `<td>${escapeHtml(line.stockNumber || '')}</td>` : '',
         `<td>${line.cases || 0}</td>`,
         `<td>${fmt(price)}</td>`,
-        extras.wholesalePrice ? `<td>${fmt(Number(line.wholesalePrice)||0)}</td>` : '',
-        extras.discountPct    ? `<td>${line.discountPct != null ? Number(line.discountPct)+'%' : ''}</td>` : '',
-        extras.qtyPerCase     ? `<td>${line.casePack || ''}</td>` : '',
+        extras.qtyPerCase  ? `<td>${line.casePack || ''}</td>` : '',
         `<td>${qty}</td>`,
         `<td>${fmt(total)}</td>`,
       ].join('');
@@ -668,13 +726,14 @@ app.post('/api/po/generate-pdf', async (req, res) => {
 
     const fmt = v => '$' + Number(v).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 
-    const logoPath = 'C:\\Users\\jdsie\\Downloads\\RMC Logo PNG (1) (1).png';
+    const logoPath = path.join(__dirname, 'public', 'rmc-logo.png');
     let logoDataUrl = '';
     try {
-      const fs = require('fs');
       const imgBuf = fs.readFileSync(logoPath);
       logoDataUrl = `data:image/png;base64,${imgBuf.toString('base64')}`;
-    } catch {}
+    } catch (e) {
+      console.warn('[PO PDF] Logo not found at', logoPath, '-', e.message);
+    }
 
     const html = `<!DOCTYPE html>
 <html>
@@ -744,11 +803,11 @@ app.post('/api/po/generate-pdf', async (req, res) => {
       </div>
       <div class="status-block">
         <span class="status-label">PO Status</span>
-        <span class="status-badge">${statusVal}</span>
+        <span class="status-badge">${escapeHtml(statusVal)}</span>
       </div>
       <div class="date-block">
         <span class="date-label">Date:</span>
-        <span class="date-val">${poDate}</span>
+        <span class="date-val">${escapeHtml(poDate)}</span>
       </div>
     </div>
   </div>
@@ -756,25 +815,25 @@ app.post('/api/po/generate-pdf', async (req, res) => {
   <!-- Info grid -->
   <div class="info-grid">
     <div class="info-col">
-      <div class="info-row"><span class="info-lbl">Name of Vendor:</span><span class="info-val">${brand.vendor?.name || ''}</span></div>
-      <div class="info-row"><span class="info-lbl">Vendor Address:</span><span class="info-val">${brand.vendor?.address || ''}</span></div>
-      <div class="info-row"><span class="info-lbl">City/Province/Postal:</span><span class="info-val">${brand.vendor?.city || ''}</span></div>
-      <div class="info-row"><span class="info-lbl">Vendor Phone:</span><span class="info-val">${brand.vendor?.phone || ''}</span></div>
+      <div class="info-row"><span class="info-lbl">Name of Vendor:</span><span class="info-val">${escapeHtml(brand.vendor?.name || '')}</span></div>
+      <div class="info-row"><span class="info-lbl">Vendor Address:</span><span class="info-val">${escapeHtml(brand.vendor?.address || '')}</span></div>
+      <div class="info-row"><span class="info-lbl">City/Province/Postal:</span><span class="info-val">${escapeHtml(brand.vendor?.city || '')}</span></div>
+      <div class="info-row"><span class="info-lbl">Vendor Phone:</span><span class="info-val">${escapeHtml(brand.vendor?.phone || '')}</span></div>
       <div class="info-row"><span class="info-lbl">&nbsp;</span><span class="info-val"></span></div>
     </div>
     <div class="info-col">
-      <div class="info-row"><span class="info-lbl">Bill To (Name):</span><span class="info-val">${settings.billTo.name}</span></div>
-      <div class="info-row"><span class="info-lbl">Bill To Address:</span><span class="info-val">${settings.billTo.address}</span></div>
-      <div class="info-row"><span class="info-lbl">Bill To City/State/Zip:</span><span class="info-val">${settings.billTo.city}</span></div>
-      <div class="info-row"><span class="info-lbl">Bill To Phone:</span><span class="info-val">${settings.billTo.phone}</span></div>
-      <div class="info-row"><span class="info-lbl">Bill To Email:</span><span class="info-val">${settings.billTo.email}</span></div>
+      <div class="info-row"><span class="info-lbl">Bill To (Name):</span><span class="info-val">${escapeHtml(settings.billTo.name)}</span></div>
+      <div class="info-row"><span class="info-lbl">Bill To Address:</span><span class="info-val">${escapeHtml(settings.billTo.address)}</span></div>
+      <div class="info-row"><span class="info-lbl">Bill To City/State/Zip:</span><span class="info-val">${escapeHtml(settings.billTo.city)}</span></div>
+      <div class="info-row"><span class="info-lbl">Bill To Phone:</span><span class="info-val">${escapeHtml(settings.billTo.phone)}</span></div>
+      <div class="info-row"><span class="info-lbl">Bill To Email:</span><span class="info-val">${escapeHtml(settings.billTo.email)}</span></div>
     </div>
     <div class="info-col">
-      <div class="info-row"><span class="info-lbl">Ship To (Name):</span><span class="info-val">${settings.shipTo.name}</span></div>
-      <div class="info-row"><span class="info-lbl">Ship To Address:</span><span class="info-val">${settings.shipTo.address}</span></div>
-      <div class="info-row"><span class="info-lbl">Ship To City/State/Zip:</span><span class="info-val">${settings.shipTo.city}</span></div>
-      <div class="info-row"><span class="info-lbl">Ship To Phone:</span><span class="info-val">${settings.shipTo.phone}</span></div>
-      <div class="info-row"><span class="info-lbl">Ship To Email:</span><span class="info-val">${settings.shipTo.email}</span></div>
+      <div class="info-row"><span class="info-lbl">Ship To (Name):</span><span class="info-val">${escapeHtml(settings.shipTo.name)}</span></div>
+      <div class="info-row"><span class="info-lbl">Ship To Address:</span><span class="info-val">${escapeHtml(settings.shipTo.address)}</span></div>
+      <div class="info-row"><span class="info-lbl">Ship To City/State/Zip:</span><span class="info-val">${escapeHtml(settings.shipTo.city)}</span></div>
+      <div class="info-row"><span class="info-lbl">Ship To Phone:</span><span class="info-val">${escapeHtml(settings.shipTo.phone)}</span></div>
+      <div class="info-row"><span class="info-lbl">Ship To Email:</span><span class="info-val">${escapeHtml(settings.shipTo.email)}</span></div>
     </div>
   </div>
 
@@ -784,12 +843,10 @@ app.post('/api/po/generate-pdf', async (req, res) => {
       <tr>
         <th class="desc">Item Description</th>
         <th>UPC</th>
-        ${extras.stockNumber    ? '<th>Stock #</th>' : ''}
+        ${extras.stockNumber ? '<th>Stock #</th>' : ''}
         <th># of Cases</th>
         <th>Price</th>
-        ${extras.wholesalePrice ? '<th>Wholesale Price</th>' : ''}
-        ${extras.discountPct    ? '<th>Discount %</th>' : ''}
-        ${extras.qtyPerCase     ? '<th>Qty/Case</th>' : ''}
+        ${extras.qtyPerCase  ? '<th>Qty/Case</th>' : ''}
         <th>Quantity</th>
         <th>Total</th>
       </tr>
@@ -809,7 +866,7 @@ app.post('/api/po/generate-pdf', async (req, res) => {
 
   <!-- Notes -->
   <div class="notes-header">Comments / Notes</div>
-  <div class="notes-body">${notes || ''}</div>
+  <div class="notes-body">${escapeHtml(notes || '')}</div>
 
 </div>
 </body>
@@ -832,35 +889,50 @@ app.post('/api/po/generate-pdf', async (req, res) => {
     });
     await browser.close();
 
-    const pdfBuf = Buffer.isBuffer(pdfData) ? pdfData : Buffer.from(pdfData);
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Length', pdfBuf.length);
-    res.setHeader('Content-Disposition', `attachment; filename="PO-${poNum}-${brand.name.replace(/[^a-z0-9]/gi, '-')}.pdf"`);
-    res.end(pdfBuf);
+    return Buffer.isBuffer(pdfData) ? pdfData : Buffer.from(pdfData);
+}
 
+app.post('/api/po/generate-pdf', async (req, res) => {
+  try {
+    const { brandId, lines, status, notes, poNumber, date, optionalCols } = req.body;
+    const { brands } = await loadBrands();
+    const brand = brands.find(b => b.id === brandId);
+    if (!brand) return res.status(404).json({ error: 'Brand not found' });
+
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const settings = await loadPoSettings();
+      const expected = settings.lastPoNumber;
+      const poNum = poNumber || (expected + 1);
+
+      const pdfBuf = await renderPoPdf({ brand, settings, poNum, lines, status, notes, date, optionalCols });
+
+      // Atomically commit the new lastPoNumber. If user provided a custom poNumber, only bump
+      // the counter forward (never roll back). Skip the commit if no bump is needed.
+      const targetLastPo = poNumber ? Math.max(expected, Number(poNum)) : poNum;
+      if (targetLastPo > expected) {
+        const committed = await tryCommitLastPoNumber(expected, targetLastPo);
+        if (!committed) {
+          console.warn(`[PO PDF] PO# ${poNum} conflict on attempt ${attempt + 1}, retrying`);
+          continue;
+        }
+      }
+
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Length', pdfBuf.length);
+      res.setHeader('Content-Disposition', `attachment; filename="PO-${poNum}-${brand.name.replace(/[^a-z0-9]/gi, '-')}.pdf"`);
+      return res.end(pdfBuf);
+    }
+
+    res.status(409).json({ error: 'Could not allocate PO number due to concurrent updates. Please try again.' });
   } catch (err) {
     console.error('[PO PDF] Error:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// POST generate PO Excel
-app.post('/api/po/generate', async (req, res) => {
-  try {
-    const ExcelJS = require('exceljs');
-    const { brandId, lines, status, notes, poNumber, date, optionalCols } = req.body;
-
-    const settings = await loadPoSettings();
-    const { brands } = await loadBrands();
-    const brand = brands.find(b => b.id === brandId);
-    if (!brand) return res.status(404).json({ error: 'Brand not found' });
-
-    // Increment PO number
-    const poNum = poNumber || (settings.lastPoNumber + 1);
-    settings.lastPoNumber = poNum;
-    await savePoSettings(settings);
-
-    const wb = new ExcelJS.Workbook();
+async function renderPoExcel({ brand, settings, poNum, lines, status, notes, date, optionalCols }) {
+  const ExcelJS = require('exceljs');
+  const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Purchase Order');
 
     // Optional columns config
@@ -870,9 +942,7 @@ app.post('/api/po/generate', async (req, res) => {
     const colHeaders = ['Item Description', 'UPC'];
     if (extras.stockNumber)    colHeaders.push('Stock #');
     colHeaders.push('# of Cases', 'Price');
-    if (extras.wholesalePrice) colHeaders.push('Wholesale Price');
-    if (extras.discountPct)    colHeaders.push('Discount %');
-    if (extras.qtyPerCase)     colHeaders.push('Qty/Case');
+    if (extras.qtyPerCase) colHeaders.push('Qty/Case');
     colHeaders.push('Quantity', 'Total');
     const lastDataCol = 2 + colHeaders.length; // data cols start at 3, so last = 2 + count
 
@@ -882,12 +952,10 @@ app.post('/api/po/generate', async (req, res) => {
       { key: 'b', width: 16 },  // logo column
       { key: 'c', width: 38 },  // Item Description
       { key: 'd', width: 18 },  // UPC
-      ...(extras.stockNumber    ? [{ key: 'sn', width: 14 }] : []),
+      ...(extras.stockNumber ? [{ key: 'sn', width: 14 }] : []),
       { key: 'e', width: 12 },  // # of Cases
       { key: 'f', width: 14 },  // Price
-      ...(extras.wholesalePrice ? [{ key: 'wp', width: 14 }] : []),
-      ...(extras.discountPct    ? [{ key: 'dp', width: 12 }] : []),
-      ...(extras.qtyPerCase     ? [{ key: 'qc', width: 14 }] : []),
+      ...(extras.qtyPerCase  ? [{ key: 'qc', width: 14 }] : []),
       { key: 'g', width: 12 },  // Quantity
       { key: 'h', width: 16 },  // Total
     ];
@@ -926,11 +994,13 @@ app.post('/api/po/generate', async (req, res) => {
     const lastCol   = totalCols;
 
     // ── Logo ─────────────────────────────────────────────────────────
-    const logoPath = 'C:\\Users\\jdsie\\Downloads\\RMC Logo PNG (1) (1).png';
+    const logoPath = path.join(__dirname, 'public', 'rmc-logo.png');
     try {
       const logoId = wb.addImage({ filename: logoPath, extension: 'png' });
       ws.addImage(logoId, { tl: { col: 0, row: 0 }, br: { col: 2, row: 5 }, editAs: 'oneCell' });
-    } catch {}
+    } catch (e) {
+      console.warn('[PO Excel] Logo not found at', logoPath, '-', e.message);
+    }
 
     // ── Row 1: blank ─────────────────────────────────────────────────
     ws.getRow(1).height = 8;
@@ -957,7 +1027,7 @@ app.post('/api/po/generate', async (req, res) => {
     poStatusLabel.value = 'PO Status';
     poStatusLabel.font = { name: 'Calibri', bold: true, size: 10 };
     poStatusLabel.alignment = right;
-    mergeStyle(2, 7, 8, status || 'Working', { name: 'Calibri', bold: true, size: 10, color: { argb: 'FF' + statusTextColor } }, statusColor, center);
+    mergeStyle(2, 7, 8, safeExcelString(status || 'Working'), { name: 'Calibri', bold: true, size: 10, color: { argb: 'FF' + statusTextColor } }, statusColor, center);
 
     // "Date:" label in I(9), date value in J(10)
     const dateLabelCell = cell(2, 9);
@@ -965,7 +1035,7 @@ app.post('/api/po/generate', async (req, res) => {
     dateLabelCell.font = { name: 'Calibri', bold: true, size: 10 };
     dateLabelCell.alignment = right;
     const dateValCell = cell(2, 10);
-    dateValCell.value = date || new Date().toLocaleDateString('en-CA');
+    dateValCell.value = safeExcelString(date || new Date().toLocaleDateString('en-CA'));
     dateValCell.font = { name: 'Calibri', bold: true, size: 10 };
     dateValCell.alignment = left;
 
@@ -975,11 +1045,11 @@ app.post('/api/po/generate', async (req, res) => {
 
     // ── Rows 5-9: Vendor | Bill To | Ship To ─────────────────────────
     const infoRows = [
-      ['Name of Vendor:', brand.vendor?.name || '', 'Bill To (Name):', settings.billTo.name, 'Ship To (Name):', settings.shipTo.name],
-      ['Vendor Address:', brand.vendor?.address || '', 'Bill To Address:', settings.billTo.address, 'Ship To Address:', settings.shipTo.address],
-      ['Vendor City/Province/Area Code:', brand.vendor?.city || '', 'Bill To City/State/Zip:', settings.billTo.city, 'Ship To City/State/Zip:', settings.shipTo.city],
-      ['Vendor Phone:', brand.vendor?.phone || '', 'Bill To Phone:', settings.billTo.phone, 'Ship To Phone:', settings.shipTo.phone],
-      ['', '', 'Bill To Email:', settings.billTo.email, 'Ship To Email:', settings.shipTo.email],
+      ['Name of Vendor:', safeExcelString(brand.vendor?.name || ''), 'Bill To (Name):', safeExcelString(settings.billTo.name), 'Ship To (Name):', safeExcelString(settings.shipTo.name)],
+      ['Vendor Address:', safeExcelString(brand.vendor?.address || ''), 'Bill To Address:', safeExcelString(settings.billTo.address), 'Ship To Address:', safeExcelString(settings.shipTo.address)],
+      ['Vendor City/Province/Area Code:', safeExcelString(brand.vendor?.city || ''), 'Bill To City/State/Zip:', safeExcelString(settings.billTo.city), 'Ship To City/State/Zip:', safeExcelString(settings.shipTo.city)],
+      ['Vendor Phone:', safeExcelString(brand.vendor?.phone || ''), 'Bill To Phone:', safeExcelString(settings.billTo.phone), 'Ship To Phone:', safeExcelString(settings.shipTo.phone)],
+      ['', '', 'Bill To Email:', safeExcelString(settings.billTo.email), 'Ship To Email:', safeExcelString(settings.shipTo.email)],
     ];
 
     // 3-block layout: [labelCol, valStart, valEnd]
@@ -1053,13 +1123,11 @@ app.post('/api/po/generate', async (req, res) => {
         cl.border = { bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } } };
       };
 
-      setCell('Item Description', line.description || line.asin);
-      setCell('UPC', line.upc || '');
-      if (extras.stockNumber)    setCell('Stock #',         line.stockNumber || '');
+      setCell('Item Description', safeExcelString(line.description || line.asin));
+      setCell('UPC', safeExcelString(line.upc || ''));
+      if (extras.stockNumber)    setCell('Stock #',         safeExcelString(line.stockNumber || ''));
       setCell('# of Cases',      line.cases || 0);
       setCell('Price',           price,  money);
-      if (extras.wholesalePrice) setCell('Wholesale Price', Number(line.wholesalePrice) || 0, money);
-      if (extras.discountPct)    setCell('Discount %',      line.discountPct != null ? Number(line.discountPct) / 100 : 0, '0.0%');
       if (extras.qtyPerCase)     setCell('Qty/Case',        line.casePack || '');
       setCell('Quantity',        qty);
       setCell('Total',           total, money);
@@ -1108,16 +1176,44 @@ app.post('/api/po/generate', async (req, res) => {
     mergeStyle(dataRow, 3, lastDataCol, 'Comments / Notes', hdrFont, BLUE, left);
     dataRow++;
     ws.getRow(dataRow).height = 60;
-    mergeStyle(dataRow, 3, lastDataCol, notes || '', bodyFont, SALMON, { ...left, wrapText: true });
+    mergeStyle(dataRow, 3, lastDataCol, safeExcelString(notes || ''), bodyFont, SALMON, { ...left, wrapText: true });
 
-    // ── Send file ─────────────────────────────────────────────────────
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="PO-${poNum}-${brand.name.replace(/[^a-z0-9]/gi, '-')}.xlsx"`);
-    await wb.xlsx.write(res);
-    res.end();
+    const buf = await wb.xlsx.writeBuffer();
+    return Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
+}
 
+app.post('/api/po/generate', async (req, res) => {
+  try {
+    const { brandId, lines, status, notes, poNumber, date, optionalCols } = req.body;
+    const { brands } = await loadBrands();
+    const brand = brands.find(b => b.id === brandId);
+    if (!brand) return res.status(404).json({ error: 'Brand not found' });
+
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const settings = await loadPoSettings();
+      const expected = settings.lastPoNumber;
+      const poNum = poNumber || (expected + 1);
+
+      const xlsxBuf = await renderPoExcel({ brand, settings, poNum, lines, status, notes, date, optionalCols });
+
+      const targetLastPo = poNumber ? Math.max(expected, Number(poNum)) : poNum;
+      if (targetLastPo > expected) {
+        const committed = await tryCommitLastPoNumber(expected, targetLastPo);
+        if (!committed) {
+          console.warn(`[PO Excel] PO# ${poNum} conflict on attempt ${attempt + 1}, retrying`);
+          continue;
+        }
+      }
+
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Length', xlsxBuf.length);
+      res.setHeader('Content-Disposition', `attachment; filename="PO-${poNum}-${brand.name.replace(/[^a-z0-9]/gi, '-')}.xlsx"`);
+      return res.end(xlsxBuf);
+    }
+
+    res.status(409).json({ error: 'Could not allocate PO number due to concurrent updates. Please try again.' });
   } catch (err) {
-    console.error('[PO] Generate error:', err);
+    console.error('[PO Excel] Error:', err);
     res.status(500).json({ error: err.message });
   }
 });
