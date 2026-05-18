@@ -91,6 +91,11 @@
           <span id="healthBrandsAffected" class="text-sm text-slate-500"></span>
         </div>
         <span id="healthGeneratedAt" class="text-xs text-slate-600"></span>
+        <button onclick="sendDigestNow(this)" id="sendDigestBtn"
+          class="text-xs font-medium px-3 py-1.5 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 border border-indigo-600/40 rounded-lg transition-colors"
+          title="Post the current alerts to Slack now (otherwise auto-posts daily at 7am UTC)">
+          Send to Slack
+        </button>
         <button onclick="loadHealth(true)" id="healthRefreshBtn"
           class="text-xs font-medium px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg transition-colors">
           Refresh
@@ -697,6 +702,33 @@
     let healthData = null;
     let healthLoading = false;
 
+    async function sendDigestNow(btn) {
+      btn.disabled = true;
+      const original = btn.textContent;
+      btn.textContent = 'Sending…';
+      try {
+        const res = await fetch('/api/health/digest', { method: 'POST' });
+        const j = await res.json();
+        if (!res.ok) throw new Error(j.error || 'Failed');
+        if (j.posted) {
+          btn.textContent = 'Sent ✓';
+          setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 2500);
+        } else if (j.reason === 'no_webhook') {
+          alert('SLACK_WEBHOOK_URL is not configured on the server.');
+          btn.textContent = original;
+          btn.disabled = false;
+        } else {
+          alert('Slack rejected the message: ' + (j.body || j.reason || 'unknown'));
+          btn.textContent = original;
+          btn.disabled = false;
+        }
+      } catch (err) {
+        alert('Digest failed: ' + err.message);
+        btn.textContent = original;
+        btn.disabled = false;
+      }
+    }
+
     async function loadHealth(force = false) {
       if (healthLoading) return;
       if (healthData && !force) { renderHealth(); return; }
@@ -750,10 +782,14 @@
       }
 
       const typeIcons = {
-        suppressed:    { icon: '⛔', label: 'Suppressed' },
-        buybox_lost:   { icon: '🔴', label: 'Buy Box Lost' },
-        unfulfillable: { icon: '⚠', label: 'Stranded' },
-        low_stock:     { icon: '📦', label: 'Low Stock' },
+        suppressed:       { icon: '⛔', label: 'Suppressed' },
+        buybox_lost:      { icon: '🔴', label: 'Buy Box Lost' },
+        unfulfillable:    { icon: '⚠', label: 'Stranded' },
+        out_of_stock:     { icon: '📦', label: 'Out of Stock' },
+        low_stock:        { icon: '⏳', label: 'Low Stock' },
+        content_changed:  { icon: '✎',  label: 'Content Changed' },
+        variation_broken: { icon: '🔗', label: 'Variation Broken' },
+        general_inactive: { icon: '🔒', label: 'Listing Inactive' },
       };
 
       const grouped = {};

@@ -1378,84 +1378,145 @@ app.get('/api/preset-metrics', async (req, res) => {
   res.json(await loadPresetMetrics());
 });
 
-app.get('/api/health', async (req, res) => {
-  try {
-    const [{ brands }, pm] = await Promise.all([loadBrands(), loadPresetMetrics()]);
-    const preset = pm.presets?.last30d || pm.presets?.[Object.keys(pm.presets || {})[0]];
-    const brandMetrics = preset?.brands || {};
-    const alerts = [];
+async function computeHealthReport({ sinceIso = null } = {}) {
+  const [{ brands }, pm] = await Promise.all([loadBrands(), loadPresetMetrics()]);
+  const preset = pm.presets?.last30d || pm.presets?.[Object.keys(pm.presets || {})[0]];
+  const brandMetrics = preset?.brands || {};
+  const alerts = [];
 
-    for (const brand of brands) {
-      if (brand.id === 'unknown-brand') continue;
-      const bm = brandMetrics[brand.id];
-      if (!bm?.skus?.length) continue;
+  for (const brand of brands) {
+    if (brand.id === 'unknown-brand') continue;
+    const bm = brandMetrics[brand.id];
 
-      for (const sku of bm.skus) {
-        const asin = sku.asin;
-        const title = sku.title || brand.asinTitles?.[asin] || asin;
-        const leadTime = brand.leadTimes?.[asin] || 30;
-        const inv = sku.inventory || {};
-        const onHand = inv.onHand || 0;
-        const inbound = inv.inbound || 0;
-        const units = sku.units || 0;
-        const dailyVelocity = units / 30;
-        const daysOfStock = dailyVelocity > 0 ? Math.round(onHand / dailyVelocity) : null;
-
-        if (sku.status && sku.status !== 'Active') {
-          alerts.push({
-            brandId: brand.id, brandName: brand.name, brandColor: brand.color,
-            asin, title, severity: 'critical', type: 'suppressed',
-            message: `Listing status: ${sku.status}`,
-            detail: { status: sku.status }
-          });
-        }
-
-        if (sku.buyBox != null && sku.buyBox < 20 && units > 0) {
-          alerts.push({
-            brandId: brand.id, brandName: brand.name, brandColor: brand.color,
-            asin, title, severity: 'critical', type: 'buybox_lost',
-            message: `Buy Box ${sku.buyBox.toFixed(1)}% with ${units} units sold`,
-            detail: { buyBox: sku.buyBox, units }
-          });
-        }
-
-        if ((inv.unfulfillable || 0) > 0) {
-          alerts.push({
-            brandId: brand.id, brandName: brand.name, brandColor: brand.color,
-            asin, title, severity: 'critical', type: 'unfulfillable',
-            message: `${inv.unfulfillable} unfulfillable units`,
-            detail: { unfulfillable: inv.unfulfillable }
-          });
-        }
-
-        if (daysOfStock != null && daysOfStock < leadTime && inbound === 0 && onHand > 0) {
-          alerts.push({
-            brandId: brand.id, brandName: brand.name, brandColor: brand.color,
-            asin, title, severity: 'warning', type: 'low_stock',
-            message: `${daysOfStock}d of stock · lead time ${leadTime}d · no inbound`,
-            detail: { daysOfStock, leadTime, onHand, inbound }
-          });
-        }
-      }
+    // ── Event-based alerts from enrichment (content changed, variation broken, etc.) ──
+    // Only include alerts since `sinceIso` to avoid re-firing old events in the digest.
+    for (const ev of (brand.recentAlerts || [])) {
+      if (sinceIso && ev.detectedAt && ev.detectedAt <= sinceIso) continue;
+      const title = brand.asinTitles?.[ev.asin] || ev.asin;
+      alerts.push({
+        brandId: brand.id, brandName: brand.name, brandColor: brand.color,
+        asin: ev.asin, title,
+        severity: ev.severity, type: ev.type,
+        message: ev.message,
+        detail: ev.detail,
+        detectedAt: ev.detectedAt,
+      });
     }
 
-    alerts.sort((a, b) => {
-      const sev = { critical: 0, warning: 1, info: 2 };
-      if (sev[a.severity] !== sev[b.severity]) return sev[a.severity] - sev[b.severity];
-      return a.brandName.localeCompare(b.brandName);
-    });
+    if (!bm?.skus?.length) continue;
 
-    const critical = alerts.filter(a => a.severity === 'critical').length;
-    const warning  = alerts.filter(a => a.severity === 'warning').length;
-    const brandsAffected = new Set(alerts.map(a => a.brandId)).size;
+    // ── State-based alerts from current sync data ─────────────────────────────────────
+    for (const sku of bm.skus) {
+      const asin = sku.asin;
+      const title = sku.title || brand.asinTitles?.[asin] || asin;
+      const leadTime = brand.leadTimes?.[asin] || 30;
+      const inv = sku.inventory || {};
+      const onHand = inv.onHand || 0;
+      const inbound = inv.inbound || 0;
+      const units = sku.units || 0;
+      const dailyVelocity = units / 30;
+      const daysOfStock = dailyVelocity > 0 ? Math.round(onHand / dailyVelocity) : null;
+      const bbOwner = brand.buyBoxOwners?.[asin];
 
-    res.json({
-      generatedAt: new Date().toISOString(),
-      alerts,
-      summary: { critical, warning, total: alerts.length, brandsAffected }
-    });
+      if (sku.status && sku.status !== 'Active') {
+        alerts.push({
+          brandId: brand.id, brandName: brand.name, brandColor: brand.color,
+          asin, title, severity: 'critical', type: 'suppressed',
+          message: `Listing status: ${sku.status}`,
+          detail: { status: sku.status }
+        });
+      }
+
+      if (sku.buyBox != null && sku.buyBox < 20 && units > 0) {
+        // Append "won by SellerX at $Y" if we have buy-box-winner data and they're not us
+        let extra = '';
+        if (bbOwner?.sellerName && bbOwner.sellerId && bbOwner.sellerId !== process.env.SP_API_SELLER_ID) {
+          const price = bbOwner.price != null ? ` at $${bbOwner.price.toFixed(2)}` : '';
+          extra = ` · won by ${bbOwner.sellerName}${price}${bbOwner.isFba ? ' (FBA)' : ''}`;
+        }
+        alerts.push({
+          brandId: brand.id, brandName: brand.name, brandColor: brand.color,
+          asin, title, severity: 'critical', type: 'buybox_lost',
+          message: `Buy Box ${sku.buyBox.toFixed(1)}% with ${units} units sold${extra}`,
+          detail: { buyBox: sku.buyBox, units, winner: bbOwner }
+        });
+      }
+
+      if ((inv.unfulfillable || 0) > 0) {
+        alerts.push({
+          brandId: brand.id, brandName: brand.name, brandColor: brand.color,
+          asin, title, severity: 'critical', type: 'unfulfillable',
+          message: `${inv.unfulfillable} unfulfillable units`,
+          detail: { unfulfillable: inv.unfulfillable }
+        });
+      }
+
+      // Out of stock — onHand=0 with recent velocity (lost sales happening now)
+      if (onHand === 0 && units > 0) {
+        alerts.push({
+          brandId: brand.id, brandName: brand.name, brandColor: brand.color,
+          asin, title, severity: 'critical', type: 'out_of_stock',
+          message: `Out of stock — was selling ${dailyVelocity.toFixed(1)}/day${inbound > 0 ? ` · ${inbound} inbound` : ' · NO inbound'}`,
+          detail: { onHand, inbound, dailyVelocity }
+        });
+      }
+
+      if (daysOfStock != null && daysOfStock < leadTime && inbound === 0 && onHand > 0) {
+        alerts.push({
+          brandId: brand.id, brandName: brand.name, brandColor: brand.color,
+          asin, title, severity: 'warning', type: 'low_stock',
+          message: `${daysOfStock}d of stock · lead time ${leadTime}d · no inbound`,
+          detail: { daysOfStock, leadTime, onHand, inbound }
+        });
+      }
+    }
+  }
+
+  alerts.sort((a, b) => {
+    const sev = { critical: 0, warning: 1, info: 2 };
+    if (sev[a.severity] !== sev[b.severity]) return sev[a.severity] - sev[b.severity];
+    return a.brandName.localeCompare(b.brandName);
+  });
+
+  const critical = alerts.filter(a => a.severity === 'critical').length;
+  const warning  = alerts.filter(a => a.severity === 'warning').length;
+  const brandsAffected = new Set(alerts.map(a => a.brandId)).size;
+
+  return {
+    generatedAt: new Date().toISOString(),
+    alerts,
+    summary: { critical, warning, total: alerts.length, brandsAffected }
+  };
+}
+
+app.get('/api/health', async (req, res) => {
+  try {
+    // Browser view shows recent events from the last 7 days
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    res.json(await computeHealthReport({ sinceIso: sevenDaysAgo }));
   } catch (err) {
     console.error('[health]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Trigger the Slack digest manually (for testing or on-demand). Cron also fires this daily.
+app.post('/api/health/digest', async (req, res) => {
+  try {
+    const settings = await loadPoSettings();
+    const sinceIso = settings.lastDigestAt || new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+    const report = await computeHealthReport({ sinceIso });
+    const { postSlackDigest } = require('./slack/digest');
+    const result = await postSlackDigest({
+      ...report,
+      dashboardUrl: process.env.DASHBOARD_URL || 'http://localhost:3000/brands.html'
+    });
+    if (result.posted) {
+      await savePoSettings({ ...settings, lastDigestAt: new Date().toISOString() });
+    }
+    res.json({ ...result, summary: report.summary });
+  } catch (err) {
+    console.error('[health/digest]', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -1807,6 +1868,18 @@ async function runFullSync(tag = 'Sync') {
       await saveBrands(freshForUpc);
       console.log(`[${tag}] UPC scrape done — ${Object.values(upcMap).filter(Boolean).length} new UPCs`);
     }
+
+    // Listing health enrichment — buy box owners, content snapshots, variations.
+    // Mutates brands.buyBoxOwners / listingSnapshots / recentAlerts in place.
+    try {
+      const { enrichListingHealth } = require('./sync/amazon');
+      const freshForHealth = await loadBrands();
+      await enrichListingHealth(freshForHealth.brands);
+      await saveBrands(freshForHealth);
+      console.log(`[${tag}] Listing health enrichment complete`);
+    } catch (healthErr) {
+      console.warn(`[${tag}] Listing health enrichment failed (non-fatal):`, healthErr.message);
+    }
   } catch (err) {
     syncState = { status: 'error', lastSync: null, error: err.message };
     console.error(`[${tag}] Error:`, err.message);
@@ -1829,7 +1902,29 @@ function scheduleDailySync() {
     console.log('[AutoSync] 12pm UTC backup cron fired');
     runFullSync('AutoSync-12pm');
   });
-  console.log('[AutoSync] Crons scheduled: 6am, 9am, 12pm UTC');
+
+  // Slack digest at 7am UTC — fires after 6am sync completes (~10 min duration).
+  // Runs independently of sync so a sync failure doesn't suppress the digest.
+  cron.schedule('0 7 * * *', async () => {
+    console.log('[SlackDigest] 7am UTC cron fired');
+    try {
+      const settings = await loadPoSettings();
+      const sinceIso = settings.lastDigestAt || new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+      const report = await computeHealthReport({ sinceIso });
+      const { postSlackDigest } = require('./slack/digest');
+      const result = await postSlackDigest({
+        ...report,
+        dashboardUrl: process.env.DASHBOARD_URL || 'http://localhost:3000/brands.html'
+      });
+      if (result.posted) {
+        await savePoSettings({ ...settings, lastDigestAt: new Date().toISOString() });
+      }
+    } catch (err) {
+      console.error('[SlackDigest] cron error:', err.message);
+    }
+  });
+
+  console.log('[AutoSync] Crons scheduled: sync 6am/9am/12pm UTC, Slack digest 7am UTC');
 
   // On startup: catch-up if data is more than 23h old AND no attempt in last 4h
   (async () => {

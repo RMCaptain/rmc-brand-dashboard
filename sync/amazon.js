@@ -1246,4 +1246,217 @@ async function fetchFinancialEvents() {
   return financialsMap;
 }
 
-module.exports = { syncBrandMetrics, importBrandsFromAmazon, fetchUpcsForAsins, fetchFinancialEvents };
+// ───────────────────────────────────────────────────────────────────────────────
+// Listing Health enrichment — buy box owners, catalog content snapshots, variations
+// ───────────────────────────────────────────────────────────────────────────────
+
+const crypto = require('crypto');
+
+// Fetch the buy-box winning seller + total offer count per ASIN.
+// Uses /products/pricing/v0/items/.../offers per-ASIN (the batch endpoint is rate-limited
+// more aggressively in practice). Returns { [asin]: { sellerId, sellerName, price, offerCount, isFba } }
+async function getBuyBoxOwners(asins, marketplaceId, token) {
+  const result = {};
+  if (!asins?.length) return result;
+  console.log(`[Health] Fetching buy-box owners for ${asins.length} ASINs on ${marketplaceId}...`);
+  let ok = 0, miss = 0;
+  for (const asin of asins) {
+    const path = `/products/pricing/v0/items/${encodeURIComponent(asin)}/offers?MarketplaceId=${marketplaceId}&ItemCondition=New`;
+    try {
+      let res = await spRequest('GET', path, token);
+      if (res.status === 429) {
+        await sleep(5000);
+        res = await spRequest('GET', path, token);
+      }
+      if (res.status !== 200) { miss++; continue; }
+      const payload = res.body?.payload || res.body;
+      const summary = payload?.Summary || {};
+      const offers = payload?.Offers || [];
+      const offerCount = summary?.TotalOfferCount ?? offers.length;
+      const winner = offers.find(o => o?.IsBuyBoxWinner === true) || null;
+      if (winner) {
+        const price = (winner.ListingPrice?.Amount || 0) + (winner.Shipping?.Amount || 0);
+        result[asin] = {
+          sellerId:  winner.SellerId || null,
+          sellerName: winner.SellerName || winner.SellerFeedbackRating?.SellerName || null,
+          price,
+          currency: winner.ListingPrice?.CurrencyCode || null,
+          isFba: winner.IsFulfilledByAmazon === true,
+          offerCount,
+        };
+      } else {
+        result[asin] = { sellerId: null, sellerName: null, price: null, currency: null, isFba: null, offerCount };
+      }
+      ok++;
+    } catch (err) {
+      console.warn(`[Health] BB owner ${asin} error: ${err.message}`);
+      miss++;
+    }
+    await sleep(700); // ~1.4 rps; Pricing API limit is 0.5 rps + burst 1
+  }
+  console.log(`[Health] Buy-box owners: ${ok} found, ${miss} missed`);
+  return result;
+}
+
+// Fetch catalog content (title, bullets, main image, variation children) per ASIN.
+// Uses searchCatalogItems batched up to 20 ASINs per call (2 rps limit).
+async function getCatalogSnapshots(asins, marketplaceId, token) {
+  const result = {};
+  if (!asins?.length) return result;
+  console.log(`[Health] Fetching catalog snapshots for ${asins.length} ASINs on ${marketplaceId}...`);
+
+  const BATCH = 20;
+  for (let i = 0; i < asins.length; i += BATCH) {
+    const slice = asins.slice(i, i + BATCH);
+    const ids = slice.join(',');
+    const path = `/catalog/2022-04-01/items?identifiers=${ids}&identifiersType=ASIN&marketplaceIds=${marketplaceId}&includedData=attributes,images,relationships,summaries`;
+    try {
+      let res = await spRequest('GET', path, token);
+      if (res.status === 429) {
+        await sleep(5000);
+        res = await spRequest('GET', path, token);
+      }
+      if (res.status !== 200) { console.warn(`[Health] Catalog batch failed: ${res.status}`); await sleep(600); continue; }
+      const items = res.body?.items || [];
+      for (const item of items) {
+        const asin = item.asin;
+        const summary = (item.summaries || []).find(s => s.marketplaceId === marketplaceId) || item.summaries?.[0] || {};
+        const attrs = item.attributes || {};
+        const title = summary.itemName || attrs.item_name?.[0]?.value || null;
+        const bullets = (attrs.bullet_point || []).map(b => b.value).filter(Boolean);
+        const imgs = (item.images || []).find(g => g.marketplaceId === marketplaceId)?.images || item.images?.[0]?.images || [];
+        const main = imgs.find(i => i.variant === 'MAIN') || imgs[0];
+        const mainImage = main?.link || null;
+        // Variations: children of this parent
+        const rels = (item.relationships || []).find(r => r.marketplaceId === marketplaceId)?.relationships || item.relationships?.[0]?.relationships || [];
+        const varChildren = rels
+          .filter(r => r.type === 'VARIATION' && Array.isArray(r.childAsins))
+          .flatMap(r => r.childAsins)
+          .filter(Boolean);
+
+        const hash = crypto.createHash('sha256')
+          .update(JSON.stringify({ title, bullets, mainImage }))
+          .digest('hex')
+          .slice(0, 16);
+
+        result[asin] = { title, bullets, mainImage, varChildren, hash };
+      }
+    } catch (err) {
+      console.warn(`[Health] Catalog batch error: ${err.message}`);
+    }
+    await sleep(600); // 2 rps limit
+  }
+  console.log(`[Health] Catalog snapshots: ${Object.keys(result).length}/${asins.length}`);
+  return result;
+}
+
+// Run the listing-health enrichment pass. Compares current snapshots to stored ones
+// on each brand and emits change events. Returns the updated brands (caller persists).
+//
+// Mutates `brand.buyBoxOwners`, `brand.listingSnapshots`, and `brand.recentAlerts` (FIFO,
+// capped at 500 per brand).
+async function enrichListingHealth(brands) {
+  const token = await getAccessToken();
+  const mpIds = getMarketplaceIds();
+
+  // Group ASINs by marketplace (CA brand → A2EUQ1WTGCTBG2, US brand → ATVPDKIKX0DER)
+  const CA_MP = 'A2EUQ1WTGCTBG2';
+  const US_MP = 'ATVPDKIKX0DER';
+  const byMp = { [CA_MP]: new Set(), [US_MP]: new Set() };
+
+  for (const brand of brands) {
+    if (brand.id === 'unknown-brand') continue;
+    const mp = brand.marketplace === 'US' ? US_MP : CA_MP;
+    for (const asin of brand.asins || []) byMp[mp].add(asin);
+  }
+
+  // Per-marketplace fetches
+  const buyBox = {};
+  const catalog = {};
+  for (const mp of [CA_MP, US_MP]) {
+    if (!mpIds.includes(mp)) continue;
+    const asins = [...byMp[mp]];
+    if (!asins.length) continue;
+    const [bb, cat] = await Promise.all([
+      getBuyBoxOwners(asins, mp, token),
+      getCatalogSnapshots(asins, mp, token),
+    ]);
+    Object.assign(buyBox, bb);
+    Object.assign(catalog, cat);
+  }
+
+  const now = new Date().toISOString();
+
+  for (const brand of brands) {
+    if (brand.id === 'unknown-brand') continue;
+    brand.buyBoxOwners     = brand.buyBoxOwners     || {};
+    brand.listingSnapshots = brand.listingSnapshots || {};
+    brand.recentAlerts     = brand.recentAlerts     || [];
+
+    for (const asin of brand.asins || []) {
+      // ── Buy box owner update ────────────────────────────────────────────────
+      if (buyBox[asin]) {
+        brand.buyBoxOwners[asin] = { ...buyBox[asin], capturedAt: now };
+      }
+
+      // ── Catalog snapshot + change detection ─────────────────────────────────
+      const cur = catalog[asin];
+      if (!cur) continue;
+      const prev = brand.listingSnapshots[asin];
+
+      if (prev && prev.hash && prev.hash !== cur.hash) {
+        const diff = [];
+        if (prev.title !== cur.title) diff.push('title');
+        const oldBullets = JSON.stringify(prev.bullets || []);
+        const newBullets = JSON.stringify(cur.bullets || []);
+        if (oldBullets !== newBullets) diff.push('bullets');
+        if (prev.mainImage !== cur.mainImage) diff.push('main image');
+        brand.recentAlerts.push({
+          asin, severity: 'critical', type: 'content_changed',
+          message: `Listing content changed${diff.length ? ' (' + diff.join(', ') + ')' : ''}`,
+          detail: { from: { title: prev.title }, to: { title: cur.title }, fields: diff },
+          detectedAt: now,
+        });
+      }
+
+      // ── Variation tracking ──────────────────────────────────────────────────
+      const prevKids = prev?.varChildren || [];
+      const curKids  = cur.varChildren    || [];
+      if (prevKids.length > 0 && curKids.length < prevKids.length) {
+        const lost = prevKids.filter(c => !curKids.includes(c));
+        brand.recentAlerts.push({
+          asin, severity: 'critical', type: 'variation_broken',
+          message: `Variation children dropped from ${prevKids.length} to ${curKids.length}` + (lost.length ? ` (lost: ${lost.slice(0, 3).join(', ')}${lost.length > 3 ? '…' : ''})` : ''),
+          detail: { prevCount: prevKids.length, curCount: curKids.length, lost },
+          detectedAt: now,
+        });
+      }
+
+      // ── General "no offers" check — listing is restricted on marketplace ────
+      const offerCount = buyBox[asin]?.offerCount;
+      if (offerCount === 0) {
+        // Only alert once per state-change: previously had offers, now zero
+        const prevCount = brand.buyBoxOwners[asin]?.offerCount;
+        if (prevCount == null || prevCount > 0) {
+          brand.recentAlerts.push({
+            asin, severity: 'critical', type: 'general_inactive',
+            message: `Listing has zero offers — restricted or delisted on marketplace`,
+            detail: { offerCount: 0 },
+            detectedAt: now,
+          });
+        }
+      }
+
+      brand.listingSnapshots[asin] = { ...cur, capturedAt: now };
+    }
+
+    // Cap recentAlerts per brand at 500 (FIFO)
+    if (brand.recentAlerts.length > 500) {
+      brand.recentAlerts = brand.recentAlerts.slice(-500);
+    }
+  }
+
+  return brands;
+}
+
+module.exports = { syncBrandMetrics, importBrandsFromAmazon, fetchUpcsForAsins, fetchFinancialEvents, enrichListingHealth };
