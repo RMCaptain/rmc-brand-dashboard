@@ -1382,6 +1382,8 @@ async function computeHealthReport({ sinceIso = null } = {}) {
   const [{ brands }, pm] = await Promise.all([loadBrands(), loadPresetMetrics()]);
   const preset = pm.presets?.last30d || pm.presets?.[Object.keys(pm.presets || {})[0]];
   const brandMetrics = preset?.brands || {};
+  // Last 7d preset used to gate OOS alert (only fire if actively selling)
+  const last7dBrandMetrics = pm.presets?.last7d?.brands || {};
   const alerts = [];
 
   for (const brand of brands) {
@@ -1404,6 +1406,12 @@ async function computeHealthReport({ sinceIso = null } = {}) {
     }
 
     if (!bm?.skus?.length) continue;
+
+    // Index 7d sales per ASIN for this brand (used by OOS gate)
+    const last7dByAsin = {};
+    for (const s of (last7dBrandMetrics[brand.id]?.skus || [])) {
+      last7dByAsin[s.asin] = s.units || 0;
+    }
 
     // ── State-based alerts from current sync data ─────────────────────────────────────
     for (const sku of bm.skus) {
@@ -1470,26 +1478,19 @@ async function computeHealthReport({ sinceIso = null } = {}) {
         });
       }
 
-      // Out of stock — onHand=0 with recent velocity (lost sales happening now).
-      // ONLY fire for FBA-tracked ASINs — FBM listings never appear in FBA inventory so
-      // onHand is permanently 0 for them, which would mass-false-positive without this gate.
-      if (inv.fbaTracked && onHand === 0 && units > 0) {
+      // Out of stock — onHand=0 with recent velocity (last 7d sales > 0).
+      // Gates: FBA-tracked (FBM stock isn't visible) AND sold in last 7 days (not a slow mover).
+      const units7d = last7dByAsin[asin] || 0;
+      if (inv.fbaTracked && onHand === 0 && units7d > 0) {
         alerts.push({
           brandId: brand.id, brandName: brand.name, brandColor: brand.color,
           asin, title, severity: 'critical', type: 'out_of_stock',
           message: `Out of stock${inbound > 0 ? ` · ${inbound} inbound` : ' · NO inbound'}`,
-          detail: { onHand, inbound, dailyVelocity }
+          detail: { onHand, inbound, units7d, dailyVelocity: units7d / 7 }
         });
       }
 
-      if (inv.fbaTracked && daysOfStock != null && daysOfStock < leadTime && inbound === 0 && onHand > 0) {
-        alerts.push({
-          brandId: brand.id, brandName: brand.name, brandColor: brand.color,
-          asin, title, severity: 'warning', type: 'low_stock',
-          message: `${daysOfStock}d of stock · lead time ${leadTime}d · no inbound`,
-          detail: { daysOfStock, leadTime, onHand, inbound }
-        });
-      }
+      // low_stock alert removed — handled by reorder/PO flow elsewhere
     }
   }
 

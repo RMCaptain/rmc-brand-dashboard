@@ -650,6 +650,7 @@ function getPresetRanges() {
   }
 
   return {
+    last7d:    r(d7,             y,            'Last 7 Days'),
     last30d:   r(d30,            y,            'Last 30 Days'),
     lastMonth: r(lastMonthStart, lastMonthEnd, 'Last Month')
   };

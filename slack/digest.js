@@ -31,7 +31,6 @@ const TYPE_PRIORITY = [
   'unfulfillable',
   'variation_broken',
   'content_changed',
-  'low_stock',
 ];
 
 // Score alerts within a type so the most impactful surface first
