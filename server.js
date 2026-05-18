@@ -1420,27 +1420,44 @@ async function computeHealthReport({ sinceIso = null } = {}) {
 
       // Amazon returns "active" / "Active" / sometimes other cases — normalize
       const statusNorm = (sku.status || '').toLowerCase();
+      // Statuses that mean the listing is dead vs. just missing some attributes:
+      //   critical: inactive, suppressed, restricted, blocked
+      //   warning:  incomplete, unknown, anything else non-active
+      // "incomplete" often appears on new/setup ASINs that are still sellable on Amazon —
+      // not a critical-grade alert.
+      const CRITICAL_STATUSES = new Set(['inactive', 'suppressed', 'restricted', 'blocked']);
       if (statusNorm && statusNorm !== 'active') {
+        const isCritical = CRITICAL_STATUSES.has(statusNorm);
         alerts.push({
           brandId: brand.id, brandName: brand.name, brandColor: brand.color,
-          asin, title, severity: 'critical', type: 'suppressed',
+          asin, title, severity: isCritical ? 'critical' : 'warning', type: 'suppressed',
           message: `Listing status: ${sku.status}`,
           detail: { status: sku.status }
         });
       }
 
-      if (sku.buyBox != null && sku.buyBox < 20 && units > 0) {
-        // Append "won by SellerX at $Y" if we have buy-box-winner data and they're not us
-        let extra = '';
-        if (bbOwner?.sellerName && bbOwner.sellerId && bbOwner.sellerId !== process.env.SP_API_SELLER_ID) {
-          const price = bbOwner.price != null ? ` at $${bbOwner.price.toFixed(2)}` : '';
-          extra = ` · won by ${bbOwner.sellerName}${price}${bbOwner.isFba ? ' (FBA)' : ''}`;
+      // Buy Box lost — look at the captured winner history over the last 24h.
+      // Fire ONLY if we have at least one captured snapshot where a non-RMC seller won.
+      // The S&T buyBox % is a 30-day average and not actionable on its own.
+      const ourSellerId = process.env.SP_API_SELLER_ID;
+      const hist = brand.buyBoxOwnerHistory?.[asin] || [];
+      const cutoff24h = Date.now() - 24 * 60 * 60 * 1000;
+      const recent = hist.filter(h => new Date(h.capturedAt).getTime() > cutoff24h && h.sellerId && h.sellerId !== ourSellerId);
+      if (recent.length > 0) {
+        // Dedupe by sellerId, keep most recent occurrence's name
+        const seen = new Map();
+        for (const h of recent) {
+          if (!seen.has(h.sellerId)) seen.set(h.sellerId, h);
         }
+        const winners = [...seen.values()];
+        const winnerStr = winners
+          .map(w => `${w.sellerName || w.sellerId}${w.isFba ? ' (FBA)' : ''}`)
+          .join(', ');
         alerts.push({
           brandId: brand.id, brandName: brand.name, brandColor: brand.color,
           asin, title, severity: 'warning', type: 'buybox_lost',
-          message: `Buy Box ${sku.buyBox.toFixed(1)}%${extra}`,
-          detail: { buyBox: sku.buyBox, units, winner: bbOwner }
+          message: `Won by ${winnerStr}`,
+          detail: { winners, snapshots: recent.length }
         });
       }
 
@@ -1453,8 +1470,10 @@ async function computeHealthReport({ sinceIso = null } = {}) {
         });
       }
 
-      // Out of stock — onHand=0 with recent velocity (lost sales happening now)
-      if (onHand === 0 && units > 0) {
+      // Out of stock — onHand=0 with recent velocity (lost sales happening now).
+      // ONLY fire for FBA-tracked ASINs — FBM listings never appear in FBA inventory so
+      // onHand is permanently 0 for them, which would mass-false-positive without this gate.
+      if (inv.fbaTracked && onHand === 0 && units > 0) {
         alerts.push({
           brandId: brand.id, brandName: brand.name, brandColor: brand.color,
           asin, title, severity: 'critical', type: 'out_of_stock',
@@ -1463,7 +1482,7 @@ async function computeHealthReport({ sinceIso = null } = {}) {
         });
       }
 
-      if (daysOfStock != null && daysOfStock < leadTime && inbound === 0 && onHand > 0) {
+      if (inv.fbaTracked && daysOfStock != null && daysOfStock < leadTime && inbound === 0 && onHand > 0) {
         alerts.push({
           brandId: brand.id, brandName: brand.name, brandColor: brand.color,
           asin, title, severity: 'warning', type: 'low_stock',

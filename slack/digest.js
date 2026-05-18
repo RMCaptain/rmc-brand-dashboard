@@ -38,10 +38,10 @@ const TYPE_PRIORITY = [
 function scoreAlert(a) {
   const d = a.detail || {};
   switch (a.type) {
-    case 'buybox_lost':   return (d.units || 0) * (100 - (d.buyBox || 0));
+    case 'buybox_lost':   return d.snapshots || 0;       // more snapshots = lost more consistently
     case 'out_of_stock':  return d.dailyVelocity || 0;
     case 'unfulfillable': return d.unfulfillable || 0;
-    case 'low_stock':     return -(d.daysOfStock || 0); // fewer days = worse
+    case 'low_stock':     return -(d.daysOfStock || 0);  // fewer days = worse
     case 'suppressed':    return 1;
     default:              return 0;
   }

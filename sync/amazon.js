@@ -424,7 +424,8 @@ function parseInventoryItems(items, inventory) {
       inbound:       existing.inbound       + (d.inboundWorkingQuantity || 0) + (d.inboundShippedQuantity || 0) + (d.inboundReceivingQuantity || 0),
       reserved:      existing.reserved      + (d.reservedQuantity?.totalReservedQuantity || 0),
       researching:   existing.researching   + (d.researchingQuantity?.totalResearchingQuantity || 0),
-      unfulfillable: existing.unfulfillable + (d.unfulfillableQuantity?.totalUnfulfillableQuantity || 0)
+      unfulfillable: existing.unfulfillable + (d.unfulfillableQuantity?.totalUnfulfillableQuantity || 0),
+      fbaTracked:    true, // ASIN appeared in FBA inventory response (vs absent = FBM-only)
     };
   }
 }
@@ -1393,10 +1394,26 @@ async function enrichListingHealth(brands) {
     brand.listingSnapshots = brand.listingSnapshots || {};
     brand.recentAlerts     = brand.recentAlerts     || [];
 
+    brand.buyBoxOwnerHistory = brand.buyBoxOwnerHistory || {};
+
     for (const asin of brand.asins || []) {
       // ── Buy box owner update ────────────────────────────────────────────────
       if (buyBox[asin]) {
         brand.buyBoxOwners[asin] = { ...buyBox[asin], capturedAt: now };
+
+        // Append to history (keep last 30 days; cap 50 entries per ASIN as safety)
+        const hist = brand.buyBoxOwnerHistory[asin] = brand.buyBoxOwnerHistory[asin] || [];
+        hist.push({
+          sellerId: buyBox[asin].sellerId,
+          sellerName: buyBox[asin].sellerName,
+          isFba: buyBox[asin].isFba,
+          price: buyBox[asin].price,
+          capturedAt: now,
+        });
+        const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+        brand.buyBoxOwnerHistory[asin] = hist
+          .filter(h => new Date(h.capturedAt).getTime() > cutoff)
+          .slice(-50);
       }
 
       // ── Catalog snapshot + change detection ─────────────────────────────────
