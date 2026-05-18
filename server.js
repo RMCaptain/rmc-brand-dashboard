@@ -1418,7 +1418,9 @@ async function computeHealthReport({ sinceIso = null } = {}) {
       const daysOfStock = dailyVelocity > 0 ? Math.round(onHand / dailyVelocity) : null;
       const bbOwner = brand.buyBoxOwners?.[asin];
 
-      if (sku.status && sku.status !== 'Active') {
+      // Amazon returns "active" / "Active" / sometimes other cases — normalize
+      const statusNorm = (sku.status || '').toLowerCase();
+      if (statusNorm && statusNorm !== 'active') {
         alerts.push({
           brandId: brand.id, brandName: brand.name, brandColor: brand.color,
           asin, title, severity: 'critical', type: 'suppressed',
