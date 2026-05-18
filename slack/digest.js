@@ -2,21 +2,20 @@
 // No-ops gracefully if the env var is not set.
 
 const TYPE_META = {
-  suppressed:    { icon: ':no_entry:',         label: 'Suppressed' },
-  buybox_lost:   { icon: ':red_circle:',       label: 'Buy Box Lost' },
-  unfulfillable: { icon: ':warning:',          label: 'Stranded' },
-  out_of_stock:  { icon: ':package:',          label: 'Out of Stock' },
-  low_stock:     { icon: ':hourglass_flowing_sand:', label: 'Low Stock' },
-  // Phase 2 / 3 — wired here so future types render correctly:
-  content_changed:   { icon: ':pencil2:',  label: 'Content Changed' },
-  variation_broken:  { icon: ':link:',     label: 'Variation Broken' },
-  general_inactive:  { icon: ':lock:',     label: 'Listing Inactive' },
+  suppressed:       { label: 'Suppressed' },
+  buybox_lost:      { label: 'Buy Box Lost' },
+  unfulfillable:    { label: 'Stranded' },
+  out_of_stock:     { label: 'Out of Stock' },
+  low_stock:        { label: 'Low Stock' },
+  content_changed:  { label: 'Content Changed' },
+  variation_broken: { label: 'Variation Broken' },
+  general_inactive: { label: 'Listing Inactive' },
 };
 
 const SEV_META = {
-  critical: { label: 'CRITICAL', emoji: ':rotating_light:' },
-  warning:  { label: 'WARNINGS', emoji: ':warning:' },
-  info:     { label: 'INFO',     emoji: ':information_source:' },
+  critical: { label: 'CRITICAL' },
+  warning:  { label: 'WARNINGS' },
+  info:     { label: 'INFO' },
 };
 
 // Per-type top-N cap inside each severity section. Keeps the digest scannable when
@@ -49,9 +48,8 @@ function scoreAlert(a) {
 }
 
 function fmtAlert(a) {
-  const t = TYPE_META[a.type] || { icon: ':bell:', label: a.type };
   const shortTitle = (a.title || '').length > 70 ? a.title.slice(0, 70) + '…' : (a.title || '');
-  return `${t.icon} *[${a.brandName}]* \`${a.asin}\` — ${a.message}` + (shortTitle ? `\n_${shortTitle}_` : '');
+  return `*[${a.brandName}]* \`${a.asin}\` — ${a.message}` + (shortTitle ? `\n_${shortTitle}_` : '');
 }
 
 function buildHealthDigestBlocks({ alerts, summary, generatedAt, dashboardUrl }) {
@@ -64,7 +62,7 @@ function buildHealthDigestBlocks({ alerts, summary, generatedAt, dashboardUrl })
   if (summary.total === 0) {
     blocks.push({
       type: 'section',
-      text: { type: 'mrkdwn', text: ':white_check_mark: *All clear* — no listing issues detected across any brand.' }
+      text: { type: 'mrkdwn', text: '*All clear* — no listing issues detected across any brand.' }
     });
   } else {
     const summaryParts = [];
@@ -89,7 +87,7 @@ function buildHealthDigestBlocks({ alerts, summary, generatedAt, dashboardUrl })
       blocks.push({ type: 'divider' });
       blocks.push({
         type: 'section',
-        text: { type: 'mrkdwn', text: `${m.emoji} *${m.label}* · ${list.length}` }
+        text: { type: 'mrkdwn', text: `*${m.label}* · ${list.length}` }
       });
 
       // Bucket by type
@@ -108,7 +106,7 @@ function buildHealthDigestBlocks({ alerts, summary, generatedAt, dashboardUrl })
         ts.sort((a, b) => scoreAlert(b) - scoreAlert(a));
         const top = ts.slice(0, PER_TYPE_CAP);
         const extra = ts.length - top.length;
-        const meta = TYPE_META[type] || { icon: ':bell:', label: type };
+        const meta = TYPE_META[type] || { label: type };
 
         // Type subheader with count + breakdown of top brands
         const brandCounts = ts.reduce((m, a) => { m[a.brandName] = (m[a.brandName] || 0) + 1; return m; }, {});
@@ -118,7 +116,7 @@ function buildHealthDigestBlocks({ alerts, summary, generatedAt, dashboardUrl })
           .map(([b, c]) => `${b} ${c}`).join(', ');
         blocks.push({
           type: 'section',
-          text: { type: 'mrkdwn', text: `${meta.icon} *${meta.label}* · ${ts.length}${brandStr ? `  _(${brandStr}${Object.keys(brandCounts).length > 3 ? '…' : ''})_` : ''}` }
+          text: { type: 'mrkdwn', text: `*${meta.label}* · ${ts.length}${brandStr ? `  _(${brandStr}${Object.keys(brandCounts).length > 3 ? '…' : ''})_` : ''}` }
         });
 
         const lines = top.map(fmtAlert).join('\n\n');

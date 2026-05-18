@@ -1438,8 +1438,8 @@ async function computeHealthReport({ sinceIso = null } = {}) {
         }
         alerts.push({
           brandId: brand.id, brandName: brand.name, brandColor: brand.color,
-          asin, title, severity: 'critical', type: 'buybox_lost',
-          message: `Buy Box ${sku.buyBox.toFixed(1)}% with ${units} units sold${extra}`,
+          asin, title, severity: 'warning', type: 'buybox_lost',
+          message: `Buy Box ${sku.buyBox.toFixed(1)}%${extra}`,
           detail: { buyBox: sku.buyBox, units, winner: bbOwner }
         });
       }
@@ -1458,7 +1458,7 @@ async function computeHealthReport({ sinceIso = null } = {}) {
         alerts.push({
           brandId: brand.id, brandName: brand.name, brandColor: brand.color,
           asin, title, severity: 'critical', type: 'out_of_stock',
-          message: `Out of stock — was selling ${dailyVelocity.toFixed(1)}/day${inbound > 0 ? ` · ${inbound} inbound` : ' · NO inbound'}`,
+          message: `Out of stock${inbound > 0 ? ` · ${inbound} inbound` : ' · NO inbound'}`,
           detail: { onHand, inbound, dailyVelocity }
         });
       }
