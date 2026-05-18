@@ -222,6 +222,23 @@
             </div>
           </div>
 
+          <div id="draftBanner" class="hidden px-5 py-3 border-b border-indigo-700/40" style="background:rgba(99,102,241,0.08)">
+            <div class="flex items-center justify-between gap-3 flex-wrap">
+              <div class="text-xs text-indigo-200">
+                <span class="font-semibold">Unsaved draft found</span>
+                <span class="text-indigo-300/70">— last edited <span id="draftSavedAt">—</span>.</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <button onclick="restoreDraft()" class="text-xs px-3 py-1.5 rounded-md bg-indigo-600/30 text-indigo-100 border border-indigo-600/40 hover:bg-indigo-600/40 transition-colors">
+                  Restore
+                </button>
+                <button onclick="discardDraft()" class="text-xs px-3 py-1.5 rounded-md bg-slate-700/40 text-slate-300 border border-slate-600 hover:bg-slate-700/60 transition-colors">
+                  Discard
+                </button>
+              </div>
+            </div>
+          </div>
+
           <div id="linesTableWrap" class="hidden overflow-x-auto">
             <table id="linesTable" class="text-xs" style="width:100%;table-layout:fixed;border-collapse:collapse">
               <colgroup id="linesColgroup"></colgroup>
@@ -309,14 +326,18 @@
       renderSettingsSummary();
       populateSettingsForm();
       document.getElementById('noDataBanner').classList.remove('hidden');
+
+      // If there's a saved draft from a previous session, offer to restore it
+      showDraftBanner();
     }
 
     // ── Brand change ────────────────────────────────────────────────────────────
 
     async function onBrandChange() {
       const id = document.getElementById('brandSelect').value;
-      // Brand changed → no longer viewing a saved snapshot
+      // Brand changed → no longer viewing a saved snapshot, draft banner no longer relevant
       hideSnapshotBanner();
+      hideDraftBanner();
       currentPOId = null;
       if (!id) {
         selectedBrand = null;
@@ -433,7 +454,7 @@
           });
 
         } else if (cfg.type === 'multipack') {
-          const upp = cfg.unitsPerPack || 1;
+          const upp = Math.max(1, Number(cfg.unitsPerPack) || 1);
           // Resolve base product so supplier line uses single-unit Stock# for consolidation
           let baseDesc, baseUpc, basePrice, baseStockNumber, hasNoBaseProduct;
           const baseAsin = cfg.baseProductAsin;
@@ -681,11 +702,19 @@
         </tr>`;
     }
 
-    function esc(v) { return String(v || '').replace(/"/g, '&quot;'); }
+    function esc(v) {
+      return String(v == null ? '' : v)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
 
     function setLine(i, field, value) {
       lines[i][field] = value;
       updateSubtotal();
+      markDirty();
     }
 
     function setLineAndRefreshTotal(i, field, value) {
@@ -701,6 +730,7 @@
           ? '$' + total.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
           : '—';
       }
+      markDirty();
     }
 
     function setCasesQty(i, field, value) {
@@ -712,22 +742,27 @@
       } else if (field === 'quantity') {
         lines[i].cases = cp > 0 ? Math.ceil(n / cp) : 0;
       } else if (field === 'casePack') {
-        lines[i].casePack = n || 1;
-        // Recompute cases from current qty
+        // Snap invalid casePack (0, negative, NaN) back to 1 and re-render so input reflects it
+        const safe = n > 0 ? n : 1;
+        lines[i].casePack = safe;
         const qty = Number(lines[i].quantity) || 0;
-        lines[i].cases = n > 0 ? Math.ceil(qty / n) : 0;
+        lines[i].cases = Math.ceil(qty / safe);
+        if (safe !== n) renderLines();
       }
       updateSubtotal();
+      markDirty();
     }
 
     function addBlankLine() {
       lines.push({ asin: '', description: '', upc: '', stockNumber: '', price: 0, casePack: 1, quantity: 0, cases: 0 });
       renderLines();
+      markDirty();
     }
 
     function removeLine(i) {
       lines.splice(i, 1);
       renderLines();
+      markDirty();
     }
 
     function updateSubtotal() {
@@ -905,10 +940,112 @@
     // ── PO Save / Load ──────────────────────────────────────────────────────────
 
     let currentPOId = null;
+    let dirty = false;
+    const DRAFT_KEY = 'po_draft_v1';
+    let _autosaveTimer = null;
+
+    function markDirty() {
+      dirty = true;
+      if (_autosaveTimer) clearTimeout(_autosaveTimer);
+      _autosaveTimer = setTimeout(autosaveDraft, 2000);
+    }
+
+    function autosaveDraft() {
+      if (!selectedBrand || lines.length === 0) return;
+      try {
+        const draft = {
+          savedAt: new Date().toISOString(),
+          currentPOId,
+          brandId: selectedBrand.id,
+          poNumber: document.getElementById('poNumber').value,
+          poStatus: document.getElementById('poStatus').value,
+          poDate:   document.getElementById('poDate').value,
+          poNotes:  document.getElementById('poNotes').value,
+          optionalCols: getOptionalCols(),
+          lines
+        };
+        localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+      } catch {}
+    }
+
+    function clearDraft() {
+      try { localStorage.removeItem(DRAFT_KEY); } catch {}
+      dirty = false;
+    }
+
+    function getDraft() {
+      try {
+        const raw = localStorage.getItem(DRAFT_KEY);
+        if (!raw) return null;
+        const d = JSON.parse(raw);
+        // Expire drafts older than 7 days
+        if (d.savedAt && (Date.now() - new Date(d.savedAt).getTime()) > 7 * 24 * 60 * 60 * 1000) {
+          localStorage.removeItem(DRAFT_KEY);
+          return null;
+        }
+        return d;
+      } catch { return null; }
+    }
+
+    function showDraftBanner() {
+      const d = getDraft();
+      if (!d || !d.lines || d.lines.length === 0) return;
+      document.getElementById('draftSavedAt').textContent = new Date(d.savedAt).toLocaleString();
+      document.getElementById('draftBanner').classList.remove('hidden');
+    }
+
+    function hideDraftBanner() {
+      document.getElementById('draftBanner').classList.add('hidden');
+    }
+
+    async function restoreDraft() {
+      const d = getDraft();
+      if (!d) { hideDraftBanner(); return; }
+      // Restore the brand (and its data) first so selectedBrand is populated
+      document.getElementById('brandSelect').value = d.brandId || '';
+      if (d.brandId) {
+        const brandRes = await fetch(`/api/brands/${d.brandId}`).then(r => r.json()).catch(() => null);
+        if (brandRes) selectedBrand = brandRes;
+      }
+      if (d.poNumber) document.getElementById('poNumber').value = d.poNumber;
+      if (d.poStatus) document.getElementById('poStatus').value = d.poStatus;
+      if (d.poDate)   document.getElementById('poDate').value = d.poDate;
+      if (d.poNotes)  document.getElementById('poNotes').value = d.poNotes;
+      if (d.optionalCols) {
+        Object.entries(d.optionalCols).forEach(([col, checked]) => {
+          const el = document.getElementById(`col_${col}`);
+          if (el) el.checked = checked;
+        });
+      }
+      lines = d.lines || [];
+      currentPOId = d.currentPOId || null;
+      document.getElementById('noDataBanner').classList.add('hidden');
+      document.getElementById('emptyLinesMsg').classList.add('hidden');
+      document.getElementById('linesTableWrap').classList.remove('hidden');
+      renderLines();
+      hideDraftBanner();
+    }
+
+    function discardDraft() {
+      if (!confirm('Discard the unsaved draft?')) return;
+      clearDraft();
+      hideDraftBanner();
+    }
+
+    // Warn on unload if there's unsaved work. Browsers ignore custom messages now —
+    // just calling preventDefault() / returnValue triggers the generic confirmation.
+    window.addEventListener('beforeunload', e => {
+      if (dirty && lines.length > 0) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    });
 
     function collectPOPayload() {
+      const rawPoNum = document.getElementById('poNumber').value;
+      const poNumber = rawPoNum !== '' ? Number(rawPoNum) : null;
       return {
-        po_number: document.getElementById('poNumber').value || null,
+        po_number: Number.isFinite(poNumber) ? poNumber : null,
         brand_id:  selectedBrand?.id || null,
         brand_name: selectedBrand?.name || null,
         status: document.getElementById('poStatus').value,
@@ -964,6 +1101,8 @@
         setTimeout(() => { label.textContent = 'Save PO'; }, 2000);
         // Just saved → data is fresh; banner no longer applies until reload
         hideSnapshotBanner();
+        // Committed to Supabase — draft is now redundant
+        clearDraft();
       } catch (err) {
         alert('Save failed: ' + err.message);
         label.textContent = 'Save PO';

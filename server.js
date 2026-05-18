@@ -570,8 +570,10 @@ async function loadPoSettings() {
     billTo: { name: '2207192 Alberta Ltd.', address: '3620 98 Street NW', city: 'Edmonton, Alberta T6E 6B4', phone: '780-218-7540', email: 'finance@rockymountainco.ca' },
     shipTo: { name: 'RockyMountainCo', address: '3620 98 Street NW', city: 'Edmonton, Alberta T6E 6B4', phone: '780-218-7540', email: 'niklas@rockymountainco.ca' }
   };
-  const { data, error } = await supabase.from('po_settings').select('data').eq('id', 'main').single();
-  if (error || !data?.data) return defaults;
+  const { data, error } = await supabase.from('po_settings').select('data').eq('id', 'main').maybeSingle();
+  // PGRST116 = no rows; otherwise it's a real DB error and we should fail loud
+  if (error) throw new Error('po_settings unavailable: ' + error.message);
+  if (!data?.data) return defaults;
   return {
     ...defaults,
     ...data.data,
@@ -606,11 +608,13 @@ app.get('/api/po/settings', async (req, res) => {
 });
 
 app.put('/api/po/settings', async (req, res) => {
+  // Only billTo / shipTo are editable here. lastPoNumber is managed atomically inside
+  // the PO generation routes via tryCommitLastPoNumber — accepting it from a request body
+  // would let any caller rewind or skip the counter.
   const settings = await loadPoSettings();
-  const { billTo, shipTo, lastPoNumber } = req.body;
+  const { billTo, shipTo } = req.body;
   if (billTo) settings.billTo = { ...settings.billTo, ...billTo };
   if (shipTo) settings.shipTo = { ...settings.shipTo, ...shipTo };
-  if (lastPoNumber != null) settings.lastPoNumber = lastPoNumber;
   await savePoSettings(settings);
   res.json(settings);
 });
@@ -631,9 +635,34 @@ app.get('/api/pos', async (req, res) => {
 app.post('/api/pos', async (req, res) => {
   try {
     const { po_number, brand_id, brand_name, status, data } = req.body;
+    const poNum = po_number != null && po_number !== '' ? Number(po_number) : null;
+    if (poNum != null && (!Number.isFinite(poNum) || poNum < 0)) {
+      return res.status(400).json({ error: 'po_number must be a non-negative number' });
+    }
+
+    // Idempotency guard: if a row with the same po_number + brand already exists, update it
+    // instead of creating a duplicate. Prevents double-clicks / retries from forking saves.
+    if (poNum != null && brand_id) {
+      const { data: existing } = await supabase
+        .from('purchase_orders')
+        .select('id')
+        .eq('po_number', poNum)
+        .eq('brand_id', brand_id)
+        .maybeSingle();
+      if (existing?.id) {
+        const { data: updated, error: uerr } = await supabase
+          .from('purchase_orders')
+          .update({ brand_name, status: status || 'draft', data, updated_at: new Date().toISOString() })
+          .eq('id', existing.id)
+          .select().single();
+        if (uerr) throw uerr;
+        return res.json(updated);
+      }
+    }
+
     const { data: row, error } = await supabase
       .from('purchase_orders')
-      .insert({ po_number, brand_id, brand_name, status: status || 'draft', data, updated_at: new Date().toISOString() })
+      .insert({ po_number: poNum, brand_id, brand_name, status: status || 'draft', data, updated_at: new Date().toISOString() })
       .select().single();
     if (error) throw error;
     res.json(row);
@@ -651,9 +680,13 @@ app.get('/api/pos/:id', async (req, res) => {
 app.put('/api/pos/:id', async (req, res) => {
   try {
     const { po_number, brand_id, brand_name, status, data } = req.body;
+    const poNum = po_number != null && po_number !== '' ? Number(po_number) : null;
+    if (poNum != null && (!Number.isFinite(poNum) || poNum < 0)) {
+      return res.status(400).json({ error: 'po_number must be a non-negative number' });
+    }
     const { data: row, error } = await supabase
       .from('purchase_orders')
-      .update({ po_number, brand_id, brand_name, status, data, updated_at: new Date().toISOString() })
+      .update({ po_number: poNum, brand_id, brand_name, status, data, updated_at: new Date().toISOString() })
       .eq('id', req.params.id).select().single();
     if (error) throw error;
     res.json(row);
@@ -675,10 +708,19 @@ app.delete('/api/pos/:id', async (req, res) => {
 function consolidatePOLines(lines) {
   const supplierLines = (lines || []).filter(l => l._type !== 'bundle-header');
   const groups = new Map();
+  let blankCounter = 0;
   for (const line of supplierLines) {
     if (!line.description && !line.asin) continue;
-    const key = (line.stockNumber || '').trim() || (line.upc || '').trim() || (line.description || line.asin || '').trim();
-    if (!key) continue;
+    // Composite key: stockNumber|upc|asin|description. Each part is included so two lines
+    // only merge if every key field matches. A blank line (no stock#, no UPC, no ASIN, no
+    // description) gets a unique counter so blank rows don't collapse into each other.
+    const stockNumber = (line.stockNumber || '').trim();
+    const upc = (line.upc || '').trim();
+    const asin = (line.asin || '').trim();
+    const description = (line.description || '').trim();
+    if (!stockNumber && !upc && !asin && !description) continue;
+    let key = `${stockNumber}|${upc}|${asin}|${description}`;
+    if (!stockNumber && !upc && !asin) key = `${key}|__blank_${blankCounter++}`;
     if (!groups.has(key)) {
       groups.set(key, { ...line, quantity: 0, cases: 0 });
     }
@@ -695,6 +737,7 @@ async function renderPoPdf({ brand, settings, poNum, lines, status, notes, date,
   const poDate = date || new Date().toLocaleDateString('en-CA');
     const statusVal = status || 'Working';
     const isSubmitted = statusVal.toLowerCase() === 'submitted';
+    const currency = brand.marketplace === 'US' ? 'USD' : 'CAD';
 
     const extras = optionalCols || {};
     const colHeaders = ['Item Description', 'UPC'];
@@ -857,6 +900,7 @@ async function renderPoPdf({ brand, settings, poNum, lines, status, notes, date,
   <!-- Totals -->
   <div class="totals">
     <table class="totals-table">
+      <tr><td class="lbl">Currency</td><td class="val">${currency}</td></tr>
       <tr><td class="lbl">Subtotal</td><td class="val">${fmt(subtotal)}</td></tr>
       <tr><td class="lbl">Tax</td><td class="val">$0.00</td></tr>
       <tr><td class="lbl">Shipping</td><td class="val">$0.00</td></tr>
@@ -878,7 +922,8 @@ async function renderPoPdf({ brand, settings, poNum, lines, status, notes, date,
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath()
     });
     const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: 'networkidle0' });
+    // 'load' is enough — HTML has no external resources (logo is inlined base64).
+    await page.setContent(html, { waitUntil: 'load' });
     // Measure actual content height so PDF never clips regardless of item count
     const contentHeight = await page.evaluate(() => document.body.scrollHeight);
     const pdfData = await page.pdf({
@@ -934,6 +979,7 @@ async function renderPoExcel({ brand, settings, poNum, lines, status, notes, dat
   const ExcelJS = require('exceljs');
   const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Purchase Order');
+    const currency = brand.marketplace === 'US' ? 'USD' : 'CAD';
 
     // Optional columns config
     const extras = optionalCols || {};
@@ -1139,17 +1185,19 @@ async function renderPoExcel({ brand, settings, poNum, lines, status, notes, dat
     dataRow++;
 
     // ── Totals block ──────────────────────────────────────────────────
+    // Rows: ['label', value, isMoney]
     const totals = [
-      ['Subtotal', subtotal],
-      ['Tax', 0],
-      ['Shipping', 0],
-      ['Grand Total', subtotal],
+      ['Currency', currency, false],
+      ['Subtotal', subtotal, true],
+      ['Tax', 0, true],
+      ['Shipping', 0, true],
+      ['Grand Total', subtotal, true],
     ];
 
     const totalLabelCol = lastDataCol - 1;  // Quantity col = second-to-last data col
     const totalValueCol = lastDataCol;      // Total col = last data col
 
-    totals.forEach(([label, value], i) => {
+    totals.forEach(([label, value, isMoney], i) => {
       const r = dataRow + i;
       ws.getRow(r).height = 16;
       const lc = cell(r, totalLabelCol);
@@ -1160,7 +1208,7 @@ async function renderPoExcel({ brand, settings, poNum, lines, status, notes, dat
       const vc = cell(r, totalValueCol);
       vc.value = value;
       vc.font = { name: 'Calibri', bold: label === 'Grand Total', size: 10 };
-      vc.numFmt = money;
+      if (isMoney) vc.numFmt = money;
       vc.alignment = right;
 
       if (label === 'Grand Total') {
