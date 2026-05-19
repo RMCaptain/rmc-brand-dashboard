@@ -1352,6 +1352,72 @@ async function getCatalogSnapshots(asins, marketplaceId, token) {
   return result;
 }
 
+// Scrape seller display names from public Amazon seller profile pages.
+// Returns { [sellerId]: { name, scrapedAt } }. Errors are caught per-seller; missing entries
+// just stay un-named in the cache (caller falls back to seller ID).
+async function scrapeSellerNames(sellerIds, marketplace) {
+  const result = {};
+  if (!sellerIds?.length) return result;
+  const tld = marketplace === 'US' ? 'com' : 'ca';
+  const host = `www.amazon.${tld}`;
+  console.log(`[SellerScrape] Fetching ${sellerIds.length} seller names from ${host}...`);
+
+  for (const sellerId of sellerIds) {
+    try {
+      const html = await new Promise((resolve, reject) => {
+        const req = https.request({
+          hostname: host,
+          path: `/sp?seller=${encodeURIComponent(sellerId)}`,
+          method: 'GET',
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-CA,en;q=0.9',
+          }
+        }, res => {
+          let body = '';
+          res.on('data', c => body += c);
+          res.on('end', () => resolve(body));
+          res.on('error', reject);
+        });
+        req.on('error', reject);
+        req.setTimeout(15000, () => req.destroy(new Error('timeout')));
+        req.end();
+      });
+
+      // Try several patterns — Amazon's profile page changes layout occasionally.
+      let name = null;
+      const h1 = html.match(/<h1[^>]*id=["']seller-name["'][^>]*>\s*([^<]+?)\s*<\/h1>/i);
+      if (h1) name = h1[1];
+      if (!name) {
+        const t = html.match(/<title>\s*(?:Amazon\.[a-z.]+\s*Seller Profile:\s*)?([^<]+?)\s*(?:\s*[-:]\s*Amazon)?<\/title>/i);
+        if (t) name = t[1];
+      }
+      if (!name) {
+        // Some pages use a meta tag
+        const meta = html.match(/<meta[^>]+name=["']title["'][^>]+content=["'](?:Amazon\.[a-z.]+\s*Seller Profile:\s*)?([^"']+?)["']/i);
+        if (meta) name = meta[1];
+      }
+      // Sanitize: trim, collapse whitespace, drop trailing colons/separators
+      if (name) {
+        name = name.replace(/\s+/g, ' ').trim();
+        if (/^amazon\b/i.test(name)) name = null; // generic "Amazon.ca" page = scrape failed
+      }
+
+      if (name) {
+        result[sellerId] = { name, scrapedAt: new Date().toISOString(), marketplace };
+        console.log(`[SellerScrape] ${sellerId} → ${name}`);
+      } else {
+        console.warn(`[SellerScrape] ${sellerId}: no name found in HTML`);
+      }
+    } catch (err) {
+      console.warn(`[SellerScrape] ${sellerId} error: ${err.message}`);
+    }
+    await sleep(2000); // throttle — be polite + avoid bot detection
+  }
+  return result;
+}
+
 // Run the listing-health enrichment pass. Compares current snapshots to stored ones
 // on each brand and emits change events. Returns the updated brands (caller persists).
 //
@@ -1477,4 +1543,4 @@ async function enrichListingHealth(brands) {
   return brands;
 }
 
-module.exports = { syncBrandMetrics, importBrandsFromAmazon, fetchUpcsForAsins, fetchFinancialEvents, enrichListingHealth };
+module.exports = { syncBrandMetrics, importBrandsFromAmazon, fetchUpcsForAsins, fetchFinancialEvents, enrichListingHealth, scrapeSellerNames };

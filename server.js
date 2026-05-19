@@ -587,6 +587,28 @@ async function savePoSettings(payload) {
   if (error) throw error;
 }
 
+// ─── Seller Names Cache ────────────────────────────────────────────────────────
+// Caches seller IDs → display names so the digest can render "Won by QuickShip" instead
+// of "Won by A1LKQ3UQVG7Q72". Populated by scraping Amazon seller profile pages
+// (SP-API doesn't return seller display names).
+async function loadSellerNames() {
+  const { data, error } = await supabase.from('po_settings').select('data').eq('id', 'seller_names').maybeSingle();
+  if (error) {
+    console.warn('[SellerNames] load error:', error.message);
+    return {};
+  }
+  return data?.data || {};
+}
+
+async function saveSellerNames(map) {
+  const { error } = await supabase.from('po_settings').upsert({ id: 'seller_names', data: map, updated_at: new Date().toISOString() });
+  if (error) throw error;
+}
+
+// Brands to exclude from the health digest entirely (still tracked elsewhere in dashboard,
+// just not noisy in the daily Slack ping).
+const DIGEST_EXCLUDE_BRANDS = new Set(['unknown-brand', 'general-wholesale']);
+
 // Atomic optimistic update of lastPoNumber. Returns true on success, false on conflict
 // (someone else changed lastPoNumber between our read and write). The single UPDATE with
 // a WHERE on the current value is atomic at the DB level — no two callers can both succeed.
@@ -1379,7 +1401,7 @@ app.get('/api/preset-metrics', async (req, res) => {
 });
 
 async function computeHealthReport({ sinceIso = null } = {}) {
-  const [{ brands }, pm] = await Promise.all([loadBrands(), loadPresetMetrics()]);
+  const [{ brands }, pm, sellerNames] = await Promise.all([loadBrands(), loadPresetMetrics(), loadSellerNames()]);
   const preset = pm.presets?.last30d || pm.presets?.[Object.keys(pm.presets || {})[0]];
   const brandMetrics = preset?.brands || {};
   // Last 7d preset used to gate OOS alert (only fire if actively selling)
@@ -1387,7 +1409,7 @@ async function computeHealthReport({ sinceIso = null } = {}) {
   const alerts = [];
 
   for (const brand of brands) {
-    if (brand.id === 'unknown-brand') continue;
+    if (DIGEST_EXCLUDE_BRANDS.has(brand.id)) continue;
     const bm = brandMetrics[brand.id];
 
     // ── Event-based alerts from enrichment (content changed, variation broken, etc.) ──
@@ -1458,12 +1480,14 @@ async function computeHealthReport({ sinceIso = null } = {}) {
           if (!seen.has(h.sellerId)) seen.set(h.sellerId, h);
         }
         const winners = [...seen.values()];
-        // SP-API only returns seller IDs (no display names). Link each seller ID to
-        // its public Amazon profile so the team can click to identify the competitor.
+        // Resolve seller display names from the cache (populated by scraping in sync).
+        // Fall back to seller ID with a profile link if we don't have a name yet.
         const tld = brand.marketplace === 'US' ? 'com' : 'ca';
         const winnerStr = winners
           .map(w => {
-            const label = w.sellerName || w.sellerId;
+            const cached = sellerNames[w.sellerId];
+            const name = cached?.name || w.sellerName || null;
+            const label = name || w.sellerId;
             const url = `https://www.amazon.${tld}/sp?seller=${w.sellerId}`;
             const linked = w.sellerId ? `<${url}|${label}>` : label;
             return `${linked}${w.isFba ? ' (FBA)' : ''}`;
@@ -1526,6 +1550,46 @@ app.get('/api/health', async (req, res) => {
     res.json(await computeHealthReport({ sinceIso: sevenDaysAgo }));
   } catch (err) {
     console.error('[health]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Trigger seller name scraping on-demand. Scrapes any non-cached or stale seller IDs
+// that appear in buyBoxOwnerHistory (excluding General Wholesale + Unknown Brand).
+app.post('/api/health/scrape-seller-names', async (req, res) => {
+  try {
+    const { scrapeSellerNames } = require('./sync/amazon');
+    const { brands } = await loadBrands();
+    const sellerNames = await loadSellerNames();
+    const REFRESH_MS = 30 * 24 * 60 * 60 * 1000;
+    const ourSellerId = process.env.SP_API_SELLER_ID;
+    const skip = new Set(['general-wholesale', 'unknown-brand']);
+    const idsByMp = { CA: new Set(), US: new Set() };
+    for (const b of brands) {
+      if (skip.has(b.id)) continue;
+      const mp = b.marketplace === 'US' ? 'US' : 'CA';
+      for (const hist of Object.values(b.buyBoxOwnerHistory || {})) {
+        for (const h of hist) {
+          if (!h.sellerId || h.sellerId === ourSellerId) continue;
+          const cached = sellerNames[h.sellerId];
+          const stale = cached?.scrapedAt && (Date.now() - new Date(cached.scrapedAt).getTime() > REFRESH_MS);
+          if (!cached || stale) idsByMp[mp].add(h.sellerId);
+        }
+      }
+    }
+    const [caNames, usNames] = await Promise.all([
+      scrapeSellerNames([...idsByMp.CA], 'CA'),
+      scrapeSellerNames([...idsByMp.US], 'US'),
+    ]);
+    const updated = { ...sellerNames, ...caNames, ...usNames };
+    await saveSellerNames(updated);
+    res.json({
+      scraped: { CA: Object.keys(caNames).length, US: Object.keys(usNames).length },
+      attempted: { CA: idsByMp.CA.size, US: idsByMp.US.size },
+      cacheSize: Object.keys(updated).length,
+    });
+  } catch (err) {
+    console.error('[health/scrape-seller-names]', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -1902,11 +1966,44 @@ async function runFullSync(tag = 'Sync') {
     // Listing health enrichment — buy box owners, content snapshots, variations.
     // Mutates brands.buyBoxOwners / listingSnapshots / recentAlerts in place.
     try {
-      const { enrichListingHealth } = require('./sync/amazon');
+      const { enrichListingHealth, scrapeSellerNames } = require('./sync/amazon');
       const freshForHealth = await loadBrands();
       await enrichListingHealth(freshForHealth.brands);
       await saveBrands(freshForHealth);
       console.log(`[${tag}] Listing health enrichment complete`);
+
+      // Scrape seller names for any non-RMC winners we don't have a name for yet.
+      // Ignore General Wholesale + Unknown Brand to keep the scrape list short.
+      const sellerNames = await loadSellerNames();
+      const REFRESH_MS = 30 * 24 * 60 * 60 * 1000; // refresh names >30 days old
+      const ourSellerId = process.env.SP_API_SELLER_ID;
+      const skip = new Set(['general-wholesale', 'unknown-brand']);
+      const idsByMp = { CA: new Set(), US: new Set() };
+      for (const b of freshForHealth.brands) {
+        if (skip.has(b.id)) continue;
+        const mp = b.marketplace === 'US' ? 'US' : 'CA';
+        for (const hist of Object.values(b.buyBoxOwnerHistory || {})) {
+          for (const h of hist) {
+            if (!h.sellerId || h.sellerId === ourSellerId) continue;
+            const cached = sellerNames[h.sellerId];
+            const stale = cached?.scrapedAt && (Date.now() - new Date(cached.scrapedAt).getTime() > REFRESH_MS);
+            if (!cached || stale) idsByMp[mp].add(h.sellerId);
+          }
+        }
+      }
+      const toScrapeCa = [...idsByMp.CA];
+      const toScrapeUs = [...idsByMp.US];
+      if (toScrapeCa.length || toScrapeUs.length) {
+        const [caNames, usNames] = await Promise.all([
+          scrapeSellerNames(toScrapeCa, 'CA'),
+          scrapeSellerNames(toScrapeUs, 'US'),
+        ]);
+        const updated = { ...sellerNames, ...caNames, ...usNames };
+        await saveSellerNames(updated);
+        console.log(`[${tag}] Seller name cache updated: +${Object.keys(caNames).length + Object.keys(usNames).length} new`);
+      } else {
+        console.log(`[${tag}] Seller name cache up to date — no new IDs to scrape`);
+      }
     } catch (healthErr) {
       console.warn(`[${tag}] Listing health enrichment failed (non-fatal):`, healthErr.message);
     }
