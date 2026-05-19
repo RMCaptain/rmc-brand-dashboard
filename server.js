@@ -1458,8 +1458,16 @@ async function computeHealthReport({ sinceIso = null } = {}) {
           if (!seen.has(h.sellerId)) seen.set(h.sellerId, h);
         }
         const winners = [...seen.values()];
+        // SP-API only returns seller IDs (no display names). Link each seller ID to
+        // its public Amazon profile so the team can click to identify the competitor.
+        const tld = brand.marketplace === 'US' ? 'com' : 'ca';
         const winnerStr = winners
-          .map(w => `${w.sellerName || w.sellerId}${w.isFba ? ' (FBA)' : ''}`)
+          .map(w => {
+            const label = w.sellerName || w.sellerId;
+            const url = `https://www.amazon.${tld}/sp?seller=${w.sellerId}`;
+            const linked = w.sellerId ? `<${url}|${label}>` : label;
+            return `${linked}${w.isFba ? ' (FBA)' : ''}`;
+          })
           .join(', ');
         alerts.push({
           brandId: brand.id, brandName: brand.name, brandColor: brand.color,
