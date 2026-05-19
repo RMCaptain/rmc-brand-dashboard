@@ -18,9 +18,9 @@ const SEV_META = {
   info:     { label: 'INFO' },
 };
 
-// Per-type top-N cap inside each severity section. Keeps the digest scannable when
-// any one type explodes (e.g. 70 suppressed wouldn't drown out 47 buy box losses).
-const PER_TYPE_CAP = 8;
+// Slack section text limit is 3000 chars. Pack alerts into sections, splitting when
+// we'd exceed this. No per-type cap — show everything.
+const SECTION_CHAR_BUDGET = 2800;
 
 // Ordering of types within a severity — most actionable first
 const TYPE_PRIORITY = [
@@ -101,10 +101,7 @@ function buildHealthDigestBlocks({ alerts, summary, generatedAt, dashboardUrl })
 
       for (const type of orderedTypes) {
         const ts = byType[type];
-        // Sort by impact, take top N
         ts.sort((a, b) => scoreAlert(b) - scoreAlert(a));
-        const top = ts.slice(0, PER_TYPE_CAP);
-        const extra = ts.length - top.length;
         const meta = TYPE_META[type] || { label: type };
 
         // Type subheader with count + breakdown of top brands
@@ -118,21 +115,19 @@ function buildHealthDigestBlocks({ alerts, summary, generatedAt, dashboardUrl })
           text: { type: 'mrkdwn', text: `*${meta.label}* · ${ts.length}${brandStr ? `  _(${brandStr}${Object.keys(brandCounts).length > 3 ? '…' : ''})_` : ''}` }
         });
 
-        const lines = top.map(fmtAlert).join('\n\n');
-        if (lines.length > 2800) {
-          const half = Math.ceil(top.length / 2);
-          blocks.push({ type: 'section', text: { type: 'mrkdwn', text: top.slice(0, half).map(fmtAlert).join('\n\n') } });
-          blocks.push({ type: 'section', text: { type: 'mrkdwn', text: top.slice(half).map(fmtAlert).join('\n\n') } });
-        } else if (lines.length > 0) {
-          blocks.push({ type: 'section', text: { type: 'mrkdwn', text: lines } });
+        // Pack all alerts into sections that stay under SECTION_CHAR_BUDGET
+        let buf = '';
+        const lines = ts.map(fmtAlert);
+        for (const line of lines) {
+          const extra = (buf ? '\n\n' : '') + line;
+          if (buf && buf.length + extra.length > SECTION_CHAR_BUDGET) {
+            blocks.push({ type: 'section', text: { type: 'mrkdwn', text: buf } });
+            buf = line;
+          } else {
+            buf += extra;
+          }
         }
-
-        if (extra > 0) {
-          blocks.push({
-            type: 'context',
-            elements: [{ type: 'mrkdwn', text: `_…and ${extra} more ${meta.label.toLowerCase()} on the dashboard._` }]
-          });
-        }
+        if (buf) blocks.push({ type: 'section', text: { type: 'mrkdwn', text: buf } });
       }
     }
   }
