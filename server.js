@@ -1414,8 +1414,18 @@ async function computeHealthReport({ sinceIso = null } = {}) {
 
     // ── Event-based alerts from enrichment (content changed, variation broken, etc.) ──
     // Only include alerts since `sinceIso` to avoid re-firing old events in the digest.
+    // Dedupe by (asin, type) — multiple syncs in the window can record the same event;
+    // we only want one row per ASIN per change-type, keeping the most recent.
+    const eventByKey = new Map();
     for (const ev of (brand.recentAlerts || [])) {
       if (sinceIso && ev.detectedAt && ev.detectedAt <= sinceIso) continue;
+      const key = `${ev.asin}|${ev.type}`;
+      const prev = eventByKey.get(key);
+      if (!prev || new Date(ev.detectedAt) > new Date(prev.detectedAt)) {
+        eventByKey.set(key, ev);
+      }
+    }
+    for (const ev of eventByKey.values()) {
       const title = brand.asinTitles?.[ev.asin] || ev.asin;
       alerts.push({
         brandId: brand.id, brandName: brand.name, brandColor: brand.color,
@@ -1550,6 +1560,30 @@ app.get('/api/health', async (req, res) => {
     res.json(await computeHealthReport({ sinceIso: sevenDaysAgo }));
   } catch (err) {
     console.error('[health]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// One-time cleanup: filter specific alert types out of brand.recentAlerts. Used to
+// clear stale false-positive events after fixing detection logic.
+//   POST /api/health/clear-alerts  { "types": ["content_changed"] }
+app.post('/api/health/clear-alerts', async (req, res) => {
+  try {
+    const types = Array.isArray(req.body?.types) ? new Set(req.body.types) : null;
+    if (!types || types.size === 0) return res.status(400).json({ error: 'body.types required (array of alert types to clear)' });
+
+    const data = await loadBrands();
+    let removed = 0;
+    for (const b of data.brands) {
+      if (!b.recentAlerts?.length) continue;
+      const before = b.recentAlerts.length;
+      b.recentAlerts = b.recentAlerts.filter(a => !types.has(a.type));
+      removed += before - b.recentAlerts.length;
+    }
+    await saveBrands(data);
+    res.json({ removed, types: [...types] });
+  } catch (err) {
+    console.error('[health/clear-alerts]', err);
     res.status(500).json({ error: err.message });
   }
 });

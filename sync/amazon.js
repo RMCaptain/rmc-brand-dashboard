@@ -1329,6 +1329,12 @@ async function getCatalogSnapshots(asins, marketplaceId, token) {
         const imgs = (item.images || []).find(g => g.marketplaceId === marketplaceId)?.images || item.images?.[0]?.images || [];
         const main = imgs.find(i => i.variant === 'MAIN') || imgs[0];
         const mainImage = main?.link || null;
+        // Extract stable image ID from Amazon CDN URL — strips size variants so
+        // ._SL1500_.jpg, ._SX300_.jpg, etc. of the same image all hash the same.
+        // Pattern: /images/I/{imageId}._{variant}_.{ext} → just keep imageId.
+        const mainImageId = mainImage
+          ? (mainImage.match(/\/images\/I\/([A-Za-z0-9+-]+)/)?.[1] || mainImage)
+          : null;
         // Variations: children of this parent
         const rels = (item.relationships || []).find(r => r.marketplaceId === marketplaceId)?.relationships || item.relationships?.[0]?.relationships || [];
         const varChildren = rels
@@ -1337,11 +1343,11 @@ async function getCatalogSnapshots(asins, marketplaceId, token) {
           .filter(Boolean);
 
         const hash = crypto.createHash('sha256')
-          .update(JSON.stringify({ title, bullets, mainImage }))
+          .update(JSON.stringify({ title, bullets, mainImageId }))
           .digest('hex')
           .slice(0, 16);
 
-        result[asin] = { title, bullets, mainImage, varChildren, hash };
+        result[asin] = { title, bullets, mainImage, mainImageId, varChildren, hash };
       }
     } catch (err) {
       console.warn(`[Health] Catalog batch error: ${err.message}`);
@@ -1494,13 +1500,20 @@ async function enrichListingHealth(brands) {
         const oldBullets = JSON.stringify(prev.bullets || []);
         const newBullets = JSON.stringify(cur.bullets || []);
         if (oldBullets !== newBullets) diff.push('bullets');
-        if (prev.mainImage !== cur.mainImage) diff.push('main image');
-        brand.recentAlerts.push({
-          asin, severity: 'critical', type: 'content_changed',
-          message: `Listing content changed${diff.length ? ' (' + diff.join(', ') + ')' : ''}`,
-          detail: { from: { title: prev.title }, to: { title: cur.title }, fields: diff },
-          detectedAt: now,
-        });
+        // Only flag image changes when both snapshots have stable image IDs. Old snapshots
+        // pre-dating the mainImageId field will silently re-baseline without alerting —
+        // avoids a flood of false positives during migration.
+        if (prev.mainImageId && cur.mainImageId && prev.mainImageId !== cur.mainImageId) {
+          diff.push('main image');
+        }
+        if (diff.length > 0) {
+          brand.recentAlerts.push({
+            asin, severity: 'critical', type: 'content_changed',
+            message: `Listing content changed (${diff.join(', ')})`,
+            detail: { from: { title: prev.title }, to: { title: cur.title }, fields: diff },
+            detectedAt: now,
+          });
+        }
       }
 
       // ── Variation tracking ──────────────────────────────────────────────────
