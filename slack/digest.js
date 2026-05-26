@@ -1,145 +1,239 @@
 // Slack daily health digest — posts to SLACK_WEBHOOK_URL (Incoming Webhook).
 // No-ops gracefully if the env var is not set.
 
-const TYPE_META = {
-  suppressed:       { label: 'Suppressed' },
-  buybox_lost:      { label: 'Buy Box Lost' },
-  unfulfillable:    { label: 'Stranded' },
-  out_of_stock:     { label: 'Out of Stock' },
-  low_stock:        { label: 'Low Stock' },
-  content_changed:  { label: 'Content Changed' },
-  variation_broken: { label: 'Variation Broken' },
-  general_inactive: { label: 'Listing Inactive' },
-};
-
-const SEV_META = {
-  critical: { label: 'CRITICAL' },
-  warning:  { label: 'WARNINGS' },
-  info:     { label: 'INFO' },
-};
-
-// Slack section text limit is 3000 chars. Pack alerts into sections, splitting when
-// we'd exceed this. No per-type cap — show everything.
-const SECTION_CHAR_BUDGET = 2800;
-
-// Ordering of types within a severity — most actionable first
-const TYPE_PRIORITY = [
-  'buybox_lost',     // active revenue loss to competitors
-  'out_of_stock',    // active revenue loss to nothing
-  'suppressed',      // listing dead
-  'general_inactive',
-  'unfulfillable',
-  'variation_broken',
-  'content_changed',
-];
-
-// Score alerts within a type so the most impactful surface first
-function scoreAlert(a) {
-  const d = a.detail || {};
-  switch (a.type) {
-    case 'buybox_lost':   return d.snapshots || 0;       // more snapshots = lost more consistently
-    case 'out_of_stock':  return d.dailyVelocity || 0;
-    case 'unfulfillable': return d.unfulfillable || 0;
-    case 'low_stock':     return -(d.daysOfStock || 0);  // fewer days = worse
-    case 'suppressed':    return 1;
-    default:              return 0;
-  }
+// Strip Slack mrkdwn link syntax <url|text> → text
+function stripLinks(str) {
+  return (str || '').replace(/<[^|>]+\|([^>]+)>/g, '$1').replace(/<([^>]+)>/g, '$1');
 }
 
-function fmtAlert(a) {
-  const shortTitle = (a.title || '').length > 70 ? a.title.slice(0, 70) + '…' : (a.title || '');
-  return `*[${a.brandName}]* \`${a.asin}\` — ${a.message}` + (shortTitle ? `\n_${shortTitle}_` : '');
+// Shorten a product title: strip leading brand name prefix, truncate
+function shortTitle(title, brandName) {
+  if (!title) return '';
+  let t = title;
+  // Strip brand name prefix if present
+  const brandRegex = new RegExp('^' + brandName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*[-–,]?\\s*', 'i');
+  t = t.replace(brandRegex, '').trim();
+  return t.length > 55 ? t.slice(0, 55) + '…' : t;
+}
+
+// Extract seller names + FBA status from a buybox_lost message
+// Message format: "Won by <url|Name> (FBA), <url|Name2>"
+function parseWinners(message) {
+  const raw = stripLinks(message || '');
+  const body = raw.replace(/^Won by /i, '');
+  return body.split(',').map(s => {
+    const isFba = /\(FBA\)/i.test(s);
+    const name = s.replace(/\s*\(FBA\)/gi, '').trim();
+    return { name, isFba };
+  }).filter(w => w.name);
+}
+
+// Build condensed per-brand bullet lines
+function buildBrandLines(brandName, alerts) {
+  const lines = [];
+
+  // ── Stranded ──────────────────────────────────────────────────────────────
+  const stranded = alerts.filter(a => a.type === 'stranded');
+  for (const a of stranded) {
+    const qty = a.detail?.qty || parseInt((a.message || '').match(/(\d+)/)?.[1] || '0', 10);
+    const reason = a.detail?.reason ? ` (${a.detail.reason})` : '';
+    lines.push(`Stranded: ${qty} unit${qty !== 1 ? 's' : ''} — ${shortTitle(a.title, brandName)}${reason}`);
+  }
+
+  // ── Suppressed ────────────────────────────────────────────────────────────
+  const suppressed = alerts.filter(a => a.type === 'suppressed');
+  for (const a of suppressed) {
+    lines.push(`Suppressed: ${shortTitle(a.title, brandName)}`);
+  }
+
+  // ── Buybox lost ───────────────────────────────────────────────────────────
+  const bbAlerts = alerts.filter(a => a.type === 'buybox_lost');
+  if (bbAlerts.length) {
+    // Count recurring sellers across all buybox losses for this brand
+    const sellerCount = {};
+    const sellerFba = {};
+    for (const a of bbAlerts) {
+      for (const w of parseWinners(a.message)) {
+        if (!w.name || w.name.match(/^[A-Z0-9]{13,14}$/)) continue;
+        sellerCount[w.name] = (sellerCount[w.name] || 0) + 1;
+        sellerFba[w.name] = w.isFba;
+      }
+    }
+    const recurring = Object.entries(sellerCount).filter(([, c]) => c >= 3).sort((a, b) => b[1] - a[1]);
+    const nonFbaOutliers = bbAlerts
+      .flatMap(a => parseWinners(a.message).filter(w => !w.isFba && !w.name.match(/^[A-Z0-9]{13,14}$/)))
+      .map(w => w.name)
+      .filter((v, i, arr) => arr.indexOf(v) === i);
+
+    if (recurring.length && recurring[0][1] === bbAlerts.length) {
+      // One seller sweeping everything
+      const [seller, count] = recurring[0];
+      const fba = sellerFba[seller] ? ' (FBA)' : ' (non-FBA)';
+      lines.push(`All ${count} buybox losses → ${seller}${fba}`);
+    } else if (recurring.length) {
+      // Mix of recurring + isolated
+      const recurringStr = recurring.map(([s, c]) => `${s} (${c} ASINs)`).join(', ');
+      lines.push(`Recurring buybox winners: ${recurringStr}`);
+      // List isolated losses individually
+      const recurringNames = new Set(recurring.map(([s]) => s));
+      const isolated = bbAlerts.filter(a => {
+        const winners = parseWinners(a.message);
+        return winners.every(w => !recurringNames.has(w.name));
+      });
+      for (const a of isolated) {
+        const winners = parseWinners(a.message);
+        const sellerStr = winners.map(w => w.name + (w.isFba ? ' (FBA)' : '')).join(', ');
+        const price = a.detail?.winners?.[0]?.price ? ` @ $${a.detail.winners[0].price}` : '';
+        lines.push(`Buybox lost on ${shortTitle(a.title, brandName)} → ${sellerStr}${price}`);
+      }
+    } else {
+      // No recurring — list each individually
+      for (const a of bbAlerts) {
+        const winners = parseWinners(a.message);
+        const sellerStr = winners.map(w => {
+          const rawId = w.name.match(/^[A-Z0-9]{13,14}$/) ? `seller ID ${w.name}` : w.name;
+          return rawId + (w.isFba ? ' (FBA)' : '');
+        }).join(', ');
+        const price = a.detail?.winners?.[0]?.price ? ` @ $${a.detail.winners[0].price}` : '';
+        lines.push(`Buybox lost on ${shortTitle(a.title, brandName)} → ${sellerStr}${price}`);
+      }
+    }
+
+    if (nonFbaOutliers.length) {
+      lines.push(`Non-FBA outliers: ${nonFbaOutliers.join(', ')} — likely grey market / dropship`);
+    }
+  }
+
+  // ── Unfulfillable ─────────────────────────────────────────────────────────
+  const unfulfilAlerts = alerts.filter(a => a.type === 'unfulfillable');
+  if (unfulfilAlerts.length) {
+    const totalQty = unfulfilAlerts.reduce((sum, a) => {
+      return sum + (a.detail?.unfulfillable || parseInt((a.message || '').match(/(\d+)/)?.[1] || '0', 10));
+    }, 0);
+    const qtys = unfulfilAlerts.map(a => a.detail?.unfulfillable || parseInt((a.message || '').match(/(\d+)/)?.[1] || '0', 10));
+    const minQ = Math.min(...qtys);
+    const maxQ = Math.max(...qtys);
+    const qtyRange = minQ === maxQ ? `${minQ} unit${minQ !== 1 ? 's' : ''} each` : `${minQ}–${maxQ} units each`;
+    lines.push(`${totalQty} unfulfillable unit${totalQty !== 1 ? 's' : ''} across ${unfulfilAlerts.length} SKU${unfulfilAlerts.length !== 1 ? 's' : ''} (${qtyRange})`);
+  }
+
+  // ── Out of stock ──────────────────────────────────────────────────────────
+  const oos = alerts.filter(a => a.type === 'out_of_stock');
+  for (const a of oos) {
+    lines.push(`Out of stock: ${shortTitle(a.title, brandName)}`);
+  }
+
+  return lines;
+}
+
+// Cross-brand key patterns
+function buildPatterns(alerts) {
+  const patterns = [];
+
+  // Recurring sellers across brands
+  const sellerHits = {};
+  for (const a of alerts) {
+    if (a.type !== 'buybox_lost') continue;
+    for (const w of parseWinners(a.message)) {
+      if (!w.name || w.name.match(/^[A-Z0-9]{13,14}$/)) continue;
+      if (!sellerHits[w.name]) sellerHits[w.name] = { count: 0, brands: new Set() };
+      sellerHits[w.name].count++;
+      sellerHits[w.name].brands.add(a.brandName);
+    }
+  }
+  const recurring = Object.entries(sellerHits).filter(([, v]) => v.count >= 3).sort((a, b) => b[1].count - a[1].count);
+  for (const [seller, data] of recurring) {
+    const brandList = [...data.brands].join(', ');
+    const across = data.brands.size > 1 ? `across ${data.brands.size} brands (${brandList})` : `across ${brandList}`;
+    patterns.push(`*${seller}* is systematically winning the buybox on ${data.count} ASINs ${across} — worth flagging to the brand`);
+  }
+
+  // Unfulfillable noise check
+  const unfulfTotal = alerts.filter(a => a.type === 'unfulfillable').reduce((s, a) => {
+    return s + (a.detail?.unfulfillable || parseInt((a.message || '').match(/(\d+)/)?.[1] || '0', 10));
+  }, 0);
+  if (unfulfTotal > 0) {
+    patterns.push(`Unfulfillable units are noise — all small quantities, typical FBA returns cycle`);
+  }
+
+  // Stranded
+  const strandedBrands = [...new Set(alerts.filter(a => a.type === 'stranded').map(a => a.brandName))];
+  if (strandedBrands.length) {
+    patterns.push(`Stranded inventory flagged for ${strandedBrands.join(', ')} — check Seller Central for listing issue`);
+  }
+
+  return patterns;
 }
 
 function buildHealthDigestBlocks({ alerts, summary, generatedAt, dashboardUrl }) {
   const date = new Date(generatedAt).toLocaleDateString('en-CA', { weekday: 'long', month: 'short', day: 'numeric' });
 
   const blocks = [
-    { type: 'header', text: { type: 'plain_text', text: `RMC Brand Health · ${date}` } },
+    { type: 'header', text: { type: 'plain_text', text: `RMC LISTING HEALTH REPORT` } },
   ];
 
   if (summary.total === 0) {
     blocks.push({
       type: 'section',
-      text: { type: 'mrkdwn', text: '*All clear* — no listing issues detected across any brand.' }
+      text: { type: 'mrkdwn', text: `*All clear* — no listing issues detected. ${date}` }
     });
   } else {
-    const summaryParts = [];
-    if (summary.critical > 0) summaryParts.push(`*${summary.critical} critical*`);
-    if (summary.warning > 0)  summaryParts.push(`*${summary.warning} warnings*`);
-    summaryParts.push(`${summary.brandsAffected} brand${summary.brandsAffected !== 1 ? 's' : ''} affected`);
+    // Summary line
+    const parts = [];
+    parts.push(`${summary.critical} Critical`);
+    parts.push(`${summary.warning} Warnings`);
+    parts.push(`${summary.brandsAffected} Brands Affected`);
     blocks.push({
       type: 'section',
-      text: { type: 'mrkdwn', text: summaryParts.join(' · ') }
+      text: { type: 'mrkdwn', text: parts.join('  |  ') }
     });
 
-    // Group by severity then by type
-    const grouped = {};
+    // Group by brand
+    const byBrand = {};
     for (const a of alerts) {
-      (grouped[a.severity] = grouped[a.severity] || []).push(a);
+      (byBrand[a.brandName] = byBrand[a.brandName] || { name: a.brandName, color: a.brandColor, alerts: [] }).alerts.push(a);
     }
 
-    for (const sev of ['critical', 'warning', 'info']) {
-      const list = grouped[sev];
-      if (!list?.length) continue;
-      const m = SEV_META[sev];
-      blocks.push({ type: 'divider' });
+    const sortedBrands = Object.values(byBrand).sort((a, b) => {
+      const ac = a.alerts.some(x => x.severity === 'critical');
+      const bc = b.alerts.some(x => x.severity === 'critical');
+      if (ac !== bc) return ac ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    blocks.push({ type: 'divider' });
+
+    for (const bg of sortedBrands) {
+      const total = bg.alerts.length;
+      const crits = bg.alerts.filter(a => a.severity === 'critical').length;
+      const count = crits > 0 ? `${crits} critical, ${total - crits} warning` : `${total} warning${total !== 1 ? 's' : ''}`;
+
+      const lines = buildBrandLines(bg.name, bg.alerts);
+      const bulletText = lines.map(l => `• ${l}`).join('\n');
+
       blocks.push({
         type: 'section',
-        text: { type: 'mrkdwn', text: `*${m.label}* · ${list.length}` }
+        text: { type: 'mrkdwn', text: `*${bg.name}* — ${count}\n\n${bulletText}` }
       });
+    }
 
-      // Bucket by type
-      const byType = {};
-      for (const a of list) (byType[a.type] = byType[a.type] || []).push(a);
-
-      // Iterate types in priority order, fallback to any leftover types alphabetically
-      const orderedTypes = [
-        ...TYPE_PRIORITY.filter(t => byType[t]),
-        ...Object.keys(byType).filter(t => !TYPE_PRIORITY.includes(t)).sort(),
-      ];
-
-      for (const type of orderedTypes) {
-        const ts = byType[type];
-        ts.sort((a, b) => scoreAlert(b) - scoreAlert(a));
-        const meta = TYPE_META[type] || { label: type };
-
-        // Type subheader with count + breakdown of top brands
-        const brandCounts = ts.reduce((m, a) => { m[a.brandName] = (m[a.brandName] || 0) + 1; return m; }, {});
-        const brandStr = Object.entries(brandCounts)
-          .sort((a, b) => b[1] - a[1])
-          .slice(0, 3)
-          .map(([b, c]) => `${b} ${c}`).join(', ');
-        blocks.push({
-          type: 'section',
-          text: { type: 'mrkdwn', text: `*${meta.label}* · ${ts.length}${brandStr ? `  _(${brandStr}${Object.keys(brandCounts).length > 3 ? '…' : ''})_` : ''}` }
-        });
-
-        // Pack all alerts into sections that stay under SECTION_CHAR_BUDGET
-        let buf = '';
-        const lines = ts.map(fmtAlert);
-        for (const line of lines) {
-          const extra = (buf ? '\n\n' : '') + line;
-          if (buf && buf.length + extra.length > SECTION_CHAR_BUDGET) {
-            blocks.push({ type: 'section', text: { type: 'mrkdwn', text: buf } });
-            buf = line;
-          } else {
-            buf += extra;
-          }
-        }
-        if (buf) blocks.push({ type: 'section', text: { type: 'mrkdwn', text: buf } });
-      }
+    // Key patterns
+    const patterns = buildPatterns(alerts);
+    if (patterns.length) {
+      blocks.push({ type: 'divider' });
+      const patternText = '*Key patterns:*\n' + patterns.map(p => `• ${p}`).join('\n');
+      blocks.push({ type: 'section', text: { type: 'mrkdwn', text: patternText } });
     }
   }
 
   if (dashboardUrl) {
     blocks.push({
       type: 'context',
-      elements: [{ type: 'mrkdwn', text: `<${dashboardUrl}|Open dashboard>` }]
+      elements: [{ type: 'mrkdwn', text: `<${dashboardUrl}|Open dashboard>  ·  ${date}` }]
     });
   }
 
-  // Slack hard-caps a single message at 50 blocks — truncate gracefully if we exceed
+  // Slack hard-caps at 50 blocks
   if (blocks.length > 50) {
     const overflow = blocks.length - 49;
     blocks.length = 49;
@@ -160,7 +254,6 @@ async function postSlackDigest({ alerts, summary, generatedAt, dashboardUrl }) {
   }
 
   const blocks = buildHealthDigestBlocks({ alerts, summary, generatedAt, dashboardUrl });
-  // Plain-text fallback for notifications + clients that can't render blocks
   const fallback = summary.total === 0
     ? `RMC Brand Health: All clear — no issues today.`
     : `RMC Brand Health: ${summary.critical} critical, ${summary.warning} warnings, ${summary.brandsAffected} brands affected.`;

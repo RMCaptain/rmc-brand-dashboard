@@ -13,7 +13,7 @@
 
   <!-- Nav -->
   <nav class="rmc-nav">
-    <div class="max-w-screen-xl mx-auto px-8 py-5 flex items-center justify-between">
+    <div class="max-w-screen-2xl mx-auto px-8 py-5 flex items-center justify-between">
       <div class="flex items-center gap-6">
         <a href="/" class="nav-logo">
           <img src="/rmc-logo.png" alt="RMC" />
@@ -34,7 +34,7 @@
     </div>
   </nav>
 
-  <div class="max-w-screen-xl mx-auto px-6 py-6">
+  <div class="max-w-screen-2xl mx-auto px-6 py-6">
 
     <!-- Header -->
     <div class="flex items-center justify-between mb-4">
@@ -126,10 +126,11 @@
                 <th class="text-center" style="min-width:130px">Case Pack Size (units)</th>
                 <th class="text-center" style="min-width:90px">Type</th>
                 <th class="text-right" style="min-width:100px">COGS</th>
+                <th class="text-right" style="min-width:110px">Buy Cost</th>
               </tr>
             </thead>
             <tbody id="dataTableBody">
-              <tr><td colspan="7" class="text-center py-8" style="color:var(--text-3)">Loading...</td></tr>
+              <tr><td colspan="9" class="text-center py-8" style="color:var(--text-3)">Loading...</td></tr>
             </tbody>
           </table>
           <div id="dataPagination"></div>
@@ -249,6 +250,7 @@
             cogs: brand.cogs?.[asin] ?? null,
             cogsCa: brand.cogsPerMarketplace?.[asin]?.CA ?? (brand.marketplace !== 'US' ? brand.cogs?.[asin] : null) ?? null,
             cogsUs: brand.cogsPerMarketplace?.[asin]?.US ?? (brand.marketplace === 'US' ? brand.cogs?.[asin] : null) ?? null,
+            buyCost: brand.buyCost?.[asin] ?? null,
             marketplaces: s?.marketplaces || [],
             upc: brand.upcs?.[asin] ?? '',
             casePack: brand.casePacks?.[asin] ?? null,
@@ -442,7 +444,7 @@
           <div class="flex items-center gap-3">
             <div class="w-9 h-9 rounded flex-shrink-0 relative flex items-center justify-center" style="background:rgba(255,255,255,0.05)">
               <div class="w-1.5 h-1.5 rounded-full" style="background:${r.brandColor}"></div>
-              <img src="${r.imageUrl || `https://images-na.ssl-images-amazon.com/images/P/${r.asin}.01._SX100_.jpg`}" loading="lazy" onerror="this.style.display='none'" class="w-9 h-9 object-contain rounded absolute inset-0" />
+              ${r.imageUrl ? `<img src="${r.imageUrl}" loading="lazy" onerror="this.style.display='none'" class="w-9 h-9 object-contain rounded absolute inset-0" />` : ''}
             </div>
             <div class="min-w-0">
               <div class="flex items-center gap-2 flex-wrap">
@@ -918,7 +920,7 @@
       const paginated = rows.slice((dataPage - 1) * pageSize, dataPage * pageSize);
 
       if (!paginated.length) {
-        tbody.innerHTML = `<tr><td colspan="7" class="text-center py-10" style="color:var(--text-3)">No products found</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="9" class="text-center py-10" style="color:var(--text-3)">No products found</td></tr>`;
         document.getElementById('dataPagination').innerHTML = '';
         return;
       }
@@ -940,10 +942,13 @@
             <div class="flex items-center gap-3">
               <div class="w-9 h-9 rounded flex-shrink-0 relative flex items-center justify-center" style="background:rgba(255,255,255,0.05)">
               <div class="w-1.5 h-1.5 rounded-full" style="background:${r.brandColor}"></div>
-              <img src="${r.imageUrl || `https://images-na.ssl-images-amazon.com/images/P/${r.asin}.01._SX100_.jpg`}" loading="lazy" onerror="this.style.display='none'" class="w-9 h-9 object-contain rounded absolute inset-0" />
+              ${r.imageUrl ? `<img src="${r.imageUrl}" loading="lazy" onerror="this.style.display='none'" class="w-9 h-9 object-contain rounded absolute inset-0" />` : ''}
             </div>
               <div class="min-w-0">
-                <a href="${r.marketplace === 'US' ? 'https://www.amazon.com' : 'https://www.amazon.ca'}/dp/${r.asin}" target="_blank" rel="noopener" class="font-mono text-xs hover:underline" style="color:var(--text-3)">${r.asin}</a>
+                <div class="flex items-center gap-1.5">
+                  <a href="${r.marketplace === 'US' ? 'https://www.amazon.com' : 'https://www.amazon.ca'}/dp/${r.asin}" target="_blank" rel="noopener" class="font-mono text-xs hover:underline" style="color:var(--text-3)">${r.asin}</a>
+                  <span style="${r.marketplace === 'US' ? 'background:#1a3a1a;color:#4ade80' : 'background:#1e3a5f;color:#60a5fa'};font-size:9px;font-weight:700;padding:1px 4px;border-radius:3px;flex-shrink:0">${r.marketplace === 'US' ? 'US' : 'CA'}</span>
+                </div>
                 <div class="text-xs mt-0.5 max-w-xs truncate" style="color:var(--text-2)" title="${titleEsc}">${r.title}</div>
                 ${r.sellerSku ? `<a href="${r.marketplace === 'US' ? 'https://sellercentral.amazon.com' : 'https://sellercentral.amazon.ca'}/skucentral?mSku=${encodeURIComponent(r.sellerSku)}" target="_blank" rel="noopener" class="font-mono text-xs hover:underline truncate max-w-xs block mt-0.5" style="color:var(--text-3);opacity:0.6" title="${(r.sellerSku).replace(/"/g,'&quot;')}">${r.sellerSku}</a>` : ''}
               </div>
@@ -995,6 +1000,15 @@
               </div>
             </div>
           </td>
+          <td class="px-4 py-2.5 text-right">
+            <div class="flex flex-col items-end gap-0.5">
+              <input type="number" min="0" step="0.01" value="${r.buyCost ?? ''}" placeholder="—"
+                class="rmc-input w-24 text-right" style="font-size:11px;padding:3px 6px"
+                onchange="saveBuyCost('${r.brandId}','${r.asin}',this.value)" />
+              ${r.cfgType === 'multipack' ? `<span style="font-size:9px;color:var(--text-3)">base ASIN price</span>` : ''}
+              ${r.cfgType === 'bundle' ? `<span style="font-size:9px;color:var(--text-3)">or leave blank (auto-sum)</span>` : ''}
+            </div>
+          </td>
         </tr>`;
       }).join('');
 
@@ -1011,6 +1025,17 @@
       }
       const sizeBtns = [10,20,50,100].map(n => `<button onclick="pageSize=${n};localStorage.setItem('pageSize',${n});dataPage=1;renderDataTable()" class="text-xs px-2 py-1 rounded" style="${n===pageSize?'background:var(--brand-tint);color:var(--brand);font-weight:600':'color:var(--text-3)'}">${n}</button>`).join('');
       paginationEl.innerHTML = `<div class="flex items-center justify-between px-5 py-3" style="border-top:1px solid var(--border)"><div class="flex items-center gap-1">${pageBtns}</div><div class="flex items-center gap-1"><span class="text-xs mr-1" style="color:var(--text-3)">Rows:</span>${sizeBtns}</div></div>`;
+    }
+
+    async function saveBuyCost(brandId, asin, value) {
+      const cost = value === '' ? null : Number(value);
+      if (cost !== null && (isNaN(cost) || cost < 0)) return;
+      await fetch(`/api/brands/${brandId}/asins/${asin}/buy-cost`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cost: cost ?? 0 })
+      });
+      const brand = brandsData.find(b => b.id === brandId);
+      if (brand) { brand.buyCost = brand.buyCost || {}; brand.buyCost[asin] = cost; }
     }
 
     async function saveStockNumber(brandId, asin, value) {

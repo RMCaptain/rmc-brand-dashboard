@@ -13,7 +13,7 @@
 
   <!-- Nav -->
   <nav class="rmc-nav">
-    <div class="max-w-screen-xl mx-auto px-8 py-5 flex items-center justify-between">
+    <div class="max-w-screen-2xl mx-auto px-8 py-5 flex items-center justify-between">
       <div class="flex items-center gap-6">
         <a href="/" class="nav-logo">
           <img src="/rmc-logo.png" alt="RMC" />
@@ -38,7 +38,7 @@
     </div>
   </nav>
 
-  <div class="max-w-screen-xl mx-auto px-6 py-6">
+  <div class="max-w-screen-2xl mx-auto px-6 py-6">
 
     <!-- Sync status bar -->
     <div id="syncBar" class="hidden mb-4 sync-bar">
@@ -587,7 +587,7 @@
             <div class="flex items-center gap-3">
               <div class="w-9 h-9 rounded bg-slate-700 flex-shrink-0 relative flex items-center justify-center">
                 <div class="w-1.5 h-1.5 rounded-full" style="background:${s.brandColor}"></div>
-                <img src="${s.imageUrl || `https://images-na.ssl-images-amazon.com/images/P/${s.asin}.01._SX100_.jpg`}" loading="lazy" onerror="this.style.display='none'" class="w-9 h-9 object-contain rounded absolute inset-0" />
+                ${s.imageUrl ? `<img src="${s.imageUrl}" loading="lazy" onerror="this.style.display='none'" class="w-9 h-9 object-contain rounded absolute inset-0" />` : ''}
               </div>
               <div class="min-w-0">
                 <div class="flex items-center gap-2">

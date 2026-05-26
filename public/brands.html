@@ -34,6 +34,13 @@
     </div>
   </nav>
 
+  <!-- Brand pill nav — performance view only -->
+  <div id="pillNav" class="hidden sticky top-0 z-30" style="background:var(--nav-bg,#0d1117);border-bottom:1px solid rgba(255,255,255,0.06)">
+    <div class="max-w-screen-xl mx-auto px-6">
+      <div id="pillBar" class="flex gap-1.5 py-2 overflow-x-auto" style="scrollbar-width:none;-ms-overflow-style:none"></div>
+    </div>
+  </div>
+
   <div class="max-w-screen-xl mx-auto px-6 py-6">
 
     <!-- Page header -->
@@ -86,8 +93,8 @@
     <div id="healthView" class="hidden">
       <div id="healthSummaryBar" class="flex items-center gap-4 mb-5 p-4 bg-slate-800/60 border border-slate-700 rounded-xl">
         <div class="flex items-center gap-3 flex-1">
-          <span id="healthCritCount" class="text-sm font-semibold text-red-400"></span>
-          <span id="healthWarnCount" class="text-sm font-semibold text-amber-400"></span>
+          <button id="healthCritCount" onclick="scrollToSeverity('critical')" class="text-sm font-semibold text-red-400 hover:underline underline-offset-2 transition-opacity hover:opacity-80"></button>
+          <button id="healthWarnCount" onclick="scrollToSeverity('warning')" class="text-sm font-semibold text-amber-400 hover:underline underline-offset-2 transition-opacity hover:opacity-80"></button>
           <span id="healthBrandsAffected" class="text-sm text-slate-500"></span>
         </div>
         <span id="healthGeneratedAt" class="text-xs text-slate-600"></span>
@@ -229,6 +236,7 @@
       document.getElementById('view-performance').classList.toggle('active', view === 'performance');
       document.getElementById('view-mapping').classList.toggle('active', view === 'mapping');
       document.getElementById('view-health').classList.toggle('active', view === 'health');
+      document.getElementById('pillNav').classList.toggle('hidden', view !== 'health');
       if (view === 'mapping') renderMapping();
       if (view === 'health') loadHealth();
     }
@@ -296,6 +304,58 @@
             </div>
           </div>`;
       }).join('');
+    }
+
+    // ── Health brand pill nav ─────────────────────────────────────────────────
+    let pillObserver = null;
+
+    function buildHealthPillNav(brandGroups) {
+      const bar = document.getElementById('pillBar');
+      bar.innerHTML = brandGroups.map(bg => {
+        const hasCrit = bg.alerts.some(a => a.severity === 'critical');
+        const dotColor = hasCrit ? '#f87171' : bg.color;
+        return `
+          <button id="pill-${bg.id}" onclick="scrollToHealthBrand('${bg.id}')"
+            class="flex-shrink-0 flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-all duration-150"
+            style="background:${bg.color}18;border:1px solid ${bg.color}33;color:${bg.color}cc">
+            <span style="width:6px;height:6px;border-radius:50%;background:${dotColor};flex-shrink:0;display:inline-block"></span>
+            ${bg.name}
+          </button>`;
+      }).join('');
+
+      // IntersectionObserver — highlight pill as brand section enters view
+      if (pillObserver) pillObserver.disconnect();
+      const navH = (document.getElementById('pillNav').offsetHeight || 36) + 64;
+      pillObserver = new IntersectionObserver(entries => {
+        for (const e of entries) {
+          if (!e.isIntersecting) continue;
+          const id = e.target.id.replace('health-brand-', '');
+          setActivePill(id);
+        }
+      }, { rootMargin: `-${navH}px 0px -55% 0px`, threshold: 0 });
+
+      for (const bg of brandGroups) {
+        const el = document.getElementById(`health-brand-${bg.id}`);
+        if (el) pillObserver.observe(el);
+      }
+    }
+
+    function setActivePill(brandId) {
+      document.querySelectorAll('#pillBar button').forEach(p => p.style.removeProperty('box-shadow'));
+      const active = document.getElementById(`pill-${brandId}`);
+      if (active) {
+        active.style.boxShadow = '0 0 0 2px currentColor';
+        active.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+      }
+    }
+
+    function scrollToHealthBrand(brandId) {
+      const el = document.getElementById(`health-brand-${brandId}`);
+      if (!el) return;
+      const offset = (document.getElementById('pillNav').offsetHeight || 36) + 64 + 8;
+      const top = el.getBoundingClientRect().top + window.scrollY - offset;
+      window.scrollTo({ top, behavior: 'smooth' });
+      setActivePill(brandId);
     }
 
     // ── Mapping view ──────────────────────────────────────────────────────────
@@ -781,10 +841,18 @@
         return;
       }
 
+      // Convert Slack mrkdwn links <url|text> to HTML anchors for display in the UI
+      function fmtAlertMsg(msg) {
+        return (msg || '')
+          .replace(/<(https?:[^|>]+)\|([^>]+)>/g, '<a href="$1" target="_blank" class="underline underline-offset-2 hover:opacity-80">$2</a>')
+          .replace(/<(https?:[^>]+)>/g, '<a href="$1" target="_blank" class="underline underline-offset-2 hover:opacity-80">$1</a>');
+      }
+
       const typeIcons = {
         suppressed:       { icon: '⛔', label: 'Suppressed' },
         buybox_lost:      { icon: '🔴', label: 'Buy Box Lost' },
-        unfulfillable:    { icon: '⚠', label: 'Stranded' },
+        stranded:         { icon: '⚠', label: 'Stranded Inventory' },
+        unfulfillable:    { icon: '⚠', label: 'Unfulfillable' },
         out_of_stock:     { icon: '📦', label: 'Out of Stock' },
         low_stock:        { icon: '⏳', label: 'Low Stock' },
         content_changed:  { icon: '✎',  label: 'Content Changed' },
@@ -792,47 +860,69 @@
         general_inactive: { icon: '🔒', label: 'Listing Inactive' },
       };
 
-      const grouped = {};
+      // Group by brand, criticals-first then alpha
+      const byBrand = {};
       for (const a of alerts) {
-        if (!grouped[a.severity]) grouped[a.severity] = [];
-        grouped[a.severity].push(a);
+        const key = a.brandId;
+        if (!byBrand[key]) byBrand[key] = { id: a.brandId, name: a.brandName, color: a.brandColor, alerts: [] };
+        byBrand[key].alerts.push(a);
       }
+      const brandGroups = Object.values(byBrand).sort((a, b) => {
+        const ac = a.alerts.some(x => x.severity === 'critical');
+        const bc = b.alerts.some(x => x.severity === 'critical');
+        if (ac !== bc) return ac ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
 
-      const sections = [];
-      for (const sev of ['critical', 'warning', 'info']) {
-        if (!grouped[sev]?.length) continue;
-        const sevLabel = sev === 'critical' ? 'Critical' : sev === 'warning' ? 'Warning' : 'Info';
-        const sevColor = sev === 'critical' ? 'text-red-400' : sev === 'warning' ? 'text-amber-400' : 'text-sky-400';
-        const borderColor = sev === 'critical' ? 'border-red-800/50' : sev === 'warning' ? 'border-amber-800/50' : 'border-sky-800/50';
-        const bgColor = sev === 'critical' ? 'bg-red-950/30' : sev === 'warning' ? 'bg-amber-950/20' : 'bg-sky-950/20';
+      const sections = brandGroups.map(bg => {
+        const crits = bg.alerts.filter(a => a.severity === 'critical').length;
+        const warns = bg.alerts.filter(a => a.severity === 'warning').length;
+        const countStr = [crits > 0 ? `<span class="text-red-400">${crits} critical</span>` : '', warns > 0 ? `<span class="text-amber-400">${warns} warning</span>` : ''].filter(Boolean).join('<span class="text-slate-600 mx-1">·</span>');
 
-        const cards = grouped[sev].map(a => {
+        const sorted = [...bg.alerts].sort((a, b) => {
+          const so = { critical: 0, warning: 1, info: 2 };
+          return (so[a.severity] ?? 9) - (so[b.severity] ?? 9);
+        });
+
+        const cards = sorted.map(a => {
           const ti = typeIcons[a.type] || { icon: '•', label: a.type };
-          const shortTitle = a.title.length > 70 ? a.title.slice(0, 70) + '…' : a.title;
+          const sevColor = a.severity === 'critical' ? 'text-red-400' : a.severity === 'warning' ? 'text-amber-400' : 'text-sky-400';
+          const borderColor = a.severity === 'critical' ? 'border-red-800/50' : a.severity === 'warning' ? 'border-amber-800/50' : 'border-sky-800/50';
+          const bgColor = a.severity === 'critical' ? 'bg-red-950/30' : a.severity === 'warning' ? 'bg-amber-950/20' : 'bg-sky-950/20';
+          const shortTitle = (a.title || '').length > 70 ? a.title.slice(0, 70) + '…' : (a.title || '');
           return `
             <div class="${bgColor} border ${borderColor} rounded-lg px-4 py-3 flex items-start gap-3">
               <span class="text-base flex-shrink-0 mt-0.5">${ti.icon}</span>
               <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-2 flex-wrap mb-0.5">
                   <span class="font-mono text-xs text-slate-400 flex-shrink-0">${a.asin}</span>
-                  <span class="text-xs font-medium px-1.5 py-0.5 rounded" style="background:${a.brandColor}22;color:${a.brandColor}">${a.brandName}</span>
                   <span class="text-xs text-slate-500">${ti.label}</span>
                 </div>
                 <p class="text-xs text-slate-300 truncate">${shortTitle}</p>
-                <p class="text-xs mt-0.5 ${sevColor}">${a.message}</p>
+                <p class="text-xs mt-0.5 ${sevColor}">${fmtAlertMsg(a.message)}</p>
               </div>
               <a href="/brand.html?id=${a.brandId}" class="text-xs text-indigo-400 hover:text-indigo-300 flex-shrink-0 mt-0.5">View →</a>
             </div>`;
         }).join('');
 
-        sections.push(`
-          <div class="mb-4">
-            <p class="text-xs font-semibold uppercase tracking-wide ${sevColor} mb-2">${sevLabel} · ${grouped[sev].length}</p>
+        return `
+          <div class="mb-6" id="health-brand-${bg.id}">
+            <div class="flex items-center gap-2 mb-2">
+              <span class="w-2.5 h-2.5 rounded-full flex-shrink-0" style="background:${bg.color}"></span>
+              <span class="text-sm font-semibold text-white">${bg.name}</span>
+              <span class="text-xs">${countStr}</span>
+            </div>
             <div class="space-y-2">${cards}</div>
-          </div>`);
-      }
+          </div>`;
+      });
 
       container.innerHTML = sections.join('');
+      buildHealthPillNav(brandGroups);
+    }
+
+    function scrollToSeverity(sev) {
+      const el = document.getElementById('health-section-' + sev);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
     // ── Load ──────────────────────────────────────────────────────────────────

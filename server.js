@@ -389,6 +389,19 @@ app.put('/api/brands/:id/asins/:asin/cogs', async (req, res) => {
   res.json({ success: true });
 });
 
+// PUT set buy cost (supplier invoice price) for an ASIN
+app.put('/api/brands/:id/asins/:asin/buy-cost', async (req, res) => {
+  const { cost } = req.body;
+  if (cost == null || isNaN(cost) || cost < 0) return res.status(400).json({ error: 'Invalid cost value' });
+  const data = await loadBrands();
+  const brand = data.brands.find(b => b.id === req.params.id);
+  if (!brand) return res.status(404).json({ error: 'Brand not found' });
+  brand.buyCost = brand.buyCost || {};
+  brand.buyCost[req.params.asin.toUpperCase()] = Number(cost);
+  await saveBrands(data);
+  res.json({ success: true });
+});
+
 // PUT set lead time for an ASIN
 app.put('/api/brands/:id/asins/:asin/leadtime', async (req, res) => {
   const { days } = req.body;
@@ -726,7 +739,7 @@ app.delete('/api/pos/:id', async (req, res) => {
 // POST generate PO PDF
 // Consolidates PO lines for supplier download:
 // - Strips bundle-header rows (display only)
-// - Merges lines by Stock # → UPC → description
+// - Merges lines by Stock # → ASIN → description (UPC dropped — too unreliable when stored as scientific notation)
 function consolidatePOLines(lines) {
   const supplierLines = (lines || []).filter(l => l._type !== 'bundle-header');
   const groups = new Map();
@@ -1386,6 +1399,34 @@ app.get('/api/sync/status', (req, res) => {
   res.json(syncState);
 });
 
+// One-time patch: re-derive preset-level adSpend from brand adSummary already in Supabase
+app.post('/api/patch-ad-spend', async (req, res) => {
+  try {
+    const pm = await loadPresetMetrics();
+    let patched = 0;
+    for (const [presetKey, preset] of Object.entries(pm.presets || {})) {
+      let totalCad = 0, totalUsd = 0;
+      for (const bm of Object.values(preset.brands || {})) {
+        totalCad += bm.adSummary?.spendCad || 0;
+        totalUsd += bm.adSummary?.spendUsd || 0;
+      }
+      if (totalCad > 0 || totalUsd > 0) {
+        preset.financials = preset.financials || {};
+        preset.financials.CAD = preset.financials.CAD || {};
+        preset.financials.USD = preset.financials.USD || {};
+        preset.financials.CAD.adSpend = Math.round(totalCad * 100) / 100;
+        preset.financials.USD.adSpend = Math.round(totalUsd * 100) / 100;
+        patched++;
+        console.log(`[patch-ad-spend] ${presetKey}: CAD=${preset.financials.CAD.adSpend} USD=${preset.financials.USD.adSpend}`);
+      }
+    }
+    await savePresetMetrics(pm);
+    res.json({ success: true, patched, message: `Updated adSpend for ${patched} preset(s)` });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.get('/api/fx', async (req, res) => res.json(await fetchFxRate()));
 
 app.get('/api/download/settlement', (req, res) => {
@@ -1465,15 +1506,25 @@ async function computeHealthReport({ sinceIso = null } = {}) {
       //   warning:  incomplete, unknown, anything else non-active
       // "incomplete" often appears on new/setup ASINs that are still sellable on Amazon —
       // not a critical-grade alert.
-      const CRITICAL_STATUSES = new Set(['inactive', 'suppressed', 'restricted', 'blocked']);
-      if (statusNorm && statusNorm !== 'active') {
-        const isCritical = CRITICAL_STATUSES.has(statusNorm);
-        alerts.push({
-          brandId: brand.id, brandName: brand.name, brandColor: brand.color,
-          asin, title, severity: isCritical ? 'critical' : 'warning', type: 'suppressed',
-          message: `Listing status: ${sku.status}`,
-          detail: { status: sku.status }
-        });
+      // Only alert on statuses that actually hide or disable the listing.
+      // "incomplete" = missing optional attributes, listing is live — ignore.
+      // "unknown" = SP-API returned no status, not actionable — ignore.
+      const CRITICAL_STATUSES = new Set(['suppressed', 'restricted', 'blocked']);
+      const IGNORE_STATUSES = new Set(['incomplete', 'unknown', '']);
+      if (statusNorm && statusNorm !== 'active' && !IGNORE_STATUSES.has(statusNorm)) {
+        // "inactive" with no inventory = OOS, expected — skip (OOS alert covers it).
+        // "inactive" with inventory on hand = real problem, fire it.
+        if (statusNorm === 'inactive' && onHand === 0) {
+          // skip — not actionable
+        } else {
+          const isCritical = CRITICAL_STATUSES.has(statusNorm);
+          alerts.push({
+            brandId: brand.id, brandName: brand.name, brandColor: brand.color,
+            asin, title, severity: isCritical ? 'critical' : 'warning', type: 'suppressed',
+            message: `Listing status: ${sku.status}`,
+            detail: { status: sku.status }
+          });
+        }
       }
 
       // Buy Box lost — look at the captured winner history over the last 24h.
@@ -1514,7 +1565,7 @@ async function computeHealthReport({ sinceIso = null } = {}) {
       if ((inv.unfulfillable || 0) > 0) {
         alerts.push({
           brandId: brand.id, brandName: brand.name, brandColor: brand.color,
-          asin, title, severity: 'critical', type: 'unfulfillable',
+          asin, title, severity: 'warning', type: 'unfulfillable',
           message: `${inv.unfulfillable} unfulfillable units`,
           detail: { unfulfillable: inv.unfulfillable }
         });
@@ -1534,6 +1585,17 @@ async function computeHealthReport({ sinceIso = null } = {}) {
 
       // low_stock alert removed — handled by reorder/PO flow elsewhere
     }
+
+    // ── Stranded inventory alerts (from GET_STRANDED_INVENTORY_UI_DATA report) ──
+    for (const [asin, s] of Object.entries(brand.strandedInventory || {})) {
+      const title = brand.asinTitles?.[asin] || asin;
+      alerts.push({
+        brandId: brand.id, brandName: brand.name, brandColor: brand.color,
+        asin, title, severity: 'critical', type: 'stranded',
+        message: `${s.qty} stranded unit${s.qty !== 1 ? 's' : ''}${s.reason ? ` — ${s.reason}` : ''}`,
+        detail: { qty: s.qty, reason: s.reason, marketplace: s.marketplace }
+      });
+    }
   }
 
   alerts.sort((a, b) => {
@@ -1552,6 +1614,24 @@ async function computeHealthReport({ sinceIso = null } = {}) {
     summary: { critical, warning, total: alerts.length, brandsAffected }
   };
 }
+
+// Revenue diagnostic: breakdown per brand for a given preset
+app.get('/api/revenue-check', async (req, res) => {
+  const presetKey = req.query.preset || 'lastMonth';
+  const pm = await loadPresetMetrics();
+  const preset = pm.presets?.[presetKey];
+  if (!preset) return res.status(404).json({ error: `Preset '${presetKey}' not found` });
+  const rows = [];
+  let totalCad = 0, totalUsd = 0;
+  for (const [brandId, bm] of Object.entries(preset.brands || {})) {
+    const cad = bm.summary?.revenueCad || 0;
+    const usd = bm.summary?.revenueUsd || 0;
+    totalCad += cad; totalUsd += usd;
+    rows.push({ brand: bm.summary?.name || brandId, revenueCad: cad, revenueUsd: usd, skus: bm.skus?.length || 0 });
+  }
+  rows.sort((a, b) => (b.revenueCad + b.revenueUsd) - (a.revenueCad + a.revenueUsd));
+  res.json({ preset: presetKey, label: preset.label, totalCad, totalUsd, brands: rows });
+});
 
 app.get('/api/health', async (req, res) => {
   try {
@@ -1768,6 +1848,17 @@ async function backgroundUpdateFinancials(tag = 'Finances') {
     const pm = await loadPresetMetrics();
     for (const [presetKey, financials] of Object.entries(financialsMap)) {
       if (pm.presets?.[presetKey]) {
+        // Preserve adSpend set by Phase 3 ads sync — financial events adSpend is unreliable
+        // (often 0 for this account). Keep whichever source has the higher value.
+        const existing = pm.presets[presetKey].financials || {};
+        for (const cur of ['CAD', 'USD']) {
+          const existingSpend = existing[cur]?.adSpend || 0;
+          const incomingSpend = financials[cur]?.adSpend || 0;
+          if (existingSpend > incomingSpend) {
+            financials[cur] = financials[cur] || {};
+            financials[cur].adSpend = existingSpend;
+          }
+        }
         pm.presets[presetKey].financials = financials;
       }
     }

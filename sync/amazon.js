@@ -1461,6 +1461,15 @@ async function enrichListingHealth(brands) {
     Object.assign(catalog, cat);
   }
 
+  // Fetch stranded inventory once for all marketplaces
+  let strandedByAsin = {};
+  try {
+    strandedByAsin = await fetchStrandedInventory();
+    console.log(`[Health] Stranded inventory: ${Object.keys(strandedByAsin).length} ASINs across all marketplaces`);
+  } catch (err) {
+    console.warn('[Health] Stranded inventory fetch failed (non-fatal):', err.message);
+  }
+
   const now = new Date().toISOString();
 
   for (const brand of brands) {
@@ -1468,6 +1477,7 @@ async function enrichListingHealth(brands) {
     brand.buyBoxOwners     = brand.buyBoxOwners     || {};
     brand.listingSnapshots = brand.listingSnapshots || {};
     brand.recentAlerts     = brand.recentAlerts     || [];
+    brand.strandedInventory = brand.strandedInventory || {};
 
     brand.buyBoxOwnerHistory = brand.buyBoxOwnerHistory || {};
 
@@ -1549,6 +1559,13 @@ async function enrichListingHealth(brands) {
       brand.listingSnapshots[asin] = { ...cur, capturedAt: now };
     }
 
+    // ── Stranded inventory — store snapshot per ASIN for this brand ─────────
+    brand.strandedInventory = {};
+    for (const asin of brand.asins || []) {
+      const s = strandedByAsin[asin];
+      if (s) brand.strandedInventory[asin] = s;
+    }
+
     // Cap recentAlerts per brand at 500 (FIFO)
     if (brand.recentAlerts.length > 500) {
       brand.recentAlerts = brand.recentAlerts.slice(-500);
@@ -1558,4 +1575,51 @@ async function enrichListingHealth(brands) {
   return brands;
 }
 
-module.exports = { syncBrandMetrics, importBrandsFromAmazon, fetchUpcsForAsins, fetchFinancialEvents, enrichListingHealth, scrapeSellerNames };
+// Fetches Amazon's stranded inventory report for all active marketplaces.
+// Returns { [asin]: { qty, reason, marketplace } } — ASIN-keyed, CA wins over US on collision.
+async function fetchStrandedInventory() {
+  const token = await getAccessToken();
+  const mpIds = getMarketplaceIds();
+  const result = {};
+
+  for (const mpId of mpIds) {
+    try {
+      console.log(`[Stranded] Requesting stranded inventory report for ${mpId}…`);
+      const reportId = await createReport('GET_STRANDED_INVENTORY_UI_DATA', [mpId], null, null, token);
+      const docId = await waitForReport(reportId, token, 300000); // 5 min max
+      const raw = await downloadReport(docId, token);
+
+      // TSV: sku, fnsku, asin, product-name, condition, stranded-quantity, stranded-reason, ...
+      const lines = raw.split('\n');
+      if (lines.length < 2) continue;
+      const headers = lines[0].split('\t').map(h => h.trim().toLowerCase());
+      const col = h => headers.indexOf(h);
+
+      const asinCol    = col('asin');
+      const qtyCol     = col('stranded-quantity');
+      const reasonCol  = col('stranded-reason');
+      const mpCode     = mpId === 'ATVPDKIKX0DER' ? 'US' : 'CA';
+
+      for (let i = 1; i < lines.length; i++) {
+        const parts = lines[i].split('\t');
+        if (parts.length < 3) continue;
+        const asin = (parts[asinCol] || '').trim().toUpperCase();
+        const qty  = parseInt(parts[qtyCol] || '0', 10);
+        const reason = (parts[reasonCol] || '').trim();
+        if (!asin || qty <= 0) continue;
+        // CA wins on collision (primary marketplace)
+        if (!result[asin] || mpCode === 'CA') {
+          result[asin] = { qty, reason, marketplace: mpCode };
+        }
+      }
+      console.log(`[Stranded] ${mpCode}: ${Object.values(result).filter(v => v.marketplace === mpCode).length} stranded ASINs`);
+    } catch (err) {
+      console.warn(`[Stranded] Failed for ${mpId}:`, err.message);
+    }
+    await sleep(2000);
+  }
+
+  return result;
+}
+
+module.exports = { syncBrandMetrics, importBrandsFromAmazon, fetchUpcsForAsins, fetchFinancialEvents, enrichListingHealth, scrapeSellerNames, fetchStrandedInventory };

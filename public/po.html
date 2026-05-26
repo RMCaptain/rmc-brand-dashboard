@@ -13,7 +13,7 @@
 
   <!-- Nav -->
   <nav class="rmc-nav">
-    <div class="max-w-screen-xl mx-auto px-8 py-5 flex items-center justify-between">
+    <div class="max-w-screen-2xl mx-auto px-8 py-5 flex items-center justify-between">
       <div class="flex items-center gap-6">
         <a href="/" class="nav-logo">
           <img src="/rmc-logo.png" alt="RMC" />
@@ -28,7 +28,7 @@
     </div>
   </nav>
 
-  <div class="max-w-[1800px] mx-auto px-6 py-6">
+  <div class="max-w-screen-2xl mx-auto px-6 py-6">
 
     <div class="flex items-start justify-between mb-6 gap-4 flex-wrap">
       <div>
@@ -199,6 +199,10 @@
             </div>
             <div class="flex items-center gap-3 shrink-0">
               <span id="subtotalDisplay" class="text-sm font-semibold text-slate-100"></span>
+              <button onclick="openAsinPicker()"
+                class="text-xs px-3 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 transition-colors font-medium">
+                + Add ASIN
+              </button>
               <button onclick="addBlankLine()"
                 class="text-xs px-3 py-1.5 bg-slate-700 text-slate-200 rounded-lg hover:bg-slate-600 transition-colors">
                 + Add line
@@ -261,6 +265,26 @@
 
     </div>
 
+  </div>
+
+  <!-- ASIN Picker Modal -->
+  <div id="asinPickerModal" class="hidden fixed inset-0 bg-black bg-opacity-60 z-50 flex items-start justify-center" style="padding-top:10vh" onclick="if(event.target===this)closeAsinPicker()">
+    <div class="bg-slate-800 border border-slate-700 rounded-xl w-full max-w-lg mx-4 shadow-2xl">
+      <div class="px-4 py-3 border-b border-slate-700 flex items-center gap-3">
+        <input id="asinPickerInput" type="text" placeholder="Search by ASIN, product name, or brand…"
+          oninput="asinPickerSearch(this.value)"
+          class="flex-1 bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500 placeholder-slate-500"
+          autocomplete="off" />
+        <button onclick="closeAsinPicker()" class="text-slate-500 hover:text-white transition-colors shrink-0">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+      <div id="asinPickerResults" class="overflow-y-auto" style="max-height:400px">
+        <div class="px-4 py-6 text-center text-sm text-slate-500">Type to search…</div>
+      </div>
+    </div>
   </div>
 
   <!-- Saved POs Modal -->
@@ -428,7 +452,7 @@
               compAsin = comp.asin;
               compDesc = compCfg.supplierName || compBrand?.asinTitles?.[comp.asin] || comp.asin;
               compUpc = compBrand?.upcs?.[comp.asin] || '';
-              compPrice = compBrand?.cogs?.[comp.asin] || 0;
+              compPrice = compBrand?.buyCost?.[comp.asin] ?? compBrand?.cogs?.[comp.asin] ?? 0;
               compStockNumber = compCfg.stockNumber || '';
             } else {
               compAsin = asin;
@@ -463,13 +487,13 @@
             const baseCfg = baseBrand?.asinConfig?.[baseAsin] || {};
             baseDesc = baseCfg.supplierName || baseBrand?.asinTitles?.[baseAsin] || baseAsin;
             baseUpc = baseBrand?.upcs?.[baseAsin] || '';
-            basePrice = baseBrand?.cogs?.[baseAsin] || 0;
+            basePrice = baseBrand?.buyCost?.[baseAsin] ?? baseBrand?.cogs?.[baseAsin] ?? 0;
             baseStockNumber = baseCfg.stockNumber || '';
             hasNoBaseProduct = false;
           } else {
             baseDesc = title;
             baseUpc = brand.upcs?.[asin] || '';
-            basePrice = brand.cogs?.[asin] || 0;
+            basePrice = brand.buyCost?.[asin] ?? brand.cogs?.[asin] ?? 0;
             baseStockNumber = stockNumber;
             hasNoBaseProduct = true;
           }
@@ -502,7 +526,7 @@
             description: title,
             upc: brand.upcs?.[asin] || '',
             stockNumber,
-            price: brand.cogs?.[asin] || 0,
+            price: brand.buyCost?.[asin] ?? brand.cogs?.[asin] ?? 0,
             casePack,
             quantity: qty,
             cases
@@ -688,8 +712,16 @@
               oninput="setCasesQty(${i}, 'casePack', this.value)" />
           </td>` : ''}
           <td class="px-3 py-2" style="overflow:hidden">
-            <input class="line-input" style="width:100%" type="number" min="0" value="${line.quantity || ''}"
-              oninput="setCasesQty(${i}, 'quantity', this.value)" />
+            ${line._type === 'multipack' && (line._unitsPerPack || 1) > 1 ? `
+              <input class="line-input" style="width:100%" type="number" min="0"
+                value="${line._asinUnits != null ? line._asinUnits : ''}"
+                title="Enter number of packs"
+                oninput="setMultipackPacks(${i}, this.value)" />
+              <div class="text-xs text-right mt-0.5" style="color:#64748b" data-supplier-label>${Number(line.quantity) || 0} supplier units</div>
+            ` : `
+              <input class="line-input" style="width:100%" type="number" min="0" value="${line.quantity || ''}"
+                oninput="setCasesQty(${i}, 'quantity', this.value)" />
+            `}
           </td>
           <td class="px-3 py-2 text-right font-medium text-slate-200 whitespace-nowrap" style="overflow:hidden">${totalFmt}</td>
           <td class="px-3 py-2">
@@ -733,12 +765,38 @@
       markDirty();
     }
 
+    function setMultipackPacks(i, asinQtyVal) {
+      const asinQty = Number(asinQtyVal) || 0;
+      const upp = Number(lines[i]._unitsPerPack) || 1;
+      const cp = Number(lines[i].casePack) || 1;
+      lines[i]._asinUnits = asinQty;
+      lines[i].quantity = asinQty * upp;
+      lines[i].cases = cp > 0 ? Math.ceil(lines[i].quantity / cp) : 0;
+      // Refresh supplier-units label and total cell without full re-render
+      const row = document.getElementById('linesBody').children[i];
+      if (row) {
+        const supLabel = row.querySelector('[data-supplier-label]');
+        if (supLabel) supLabel.textContent = lines[i].quantity + ' supplier units';
+        const totalCell = row.querySelector('td:nth-last-child(2)');
+        const total = lines[i].quantity * (Number(lines[i].price) || 0);
+        if (totalCell) totalCell.textContent = total > 0
+          ? '$' + total.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+          : '—';
+      }
+      updateSubtotal();
+    }
+
     function setCasesQty(i, field, value) {
       const n = Number(value) || 0;
       const cp = Number(lines[i].casePack) || 1;
       lines[i][field] = n;
       if (field === 'cases') {
         lines[i].quantity = n * cp;
+        // For multipacks keep _asinUnits in sync
+        if (lines[i]._type === 'multipack') {
+          const upp = Number(lines[i]._unitsPerPack) || 1;
+          lines[i]._asinUnits = upp > 0 ? Math.round(lines[i].quantity / upp) : 0;
+        }
       } else if (field === 'quantity') {
         lines[i].cases = cp > 0 ? Math.ceil(n / cp) : 0;
       } else if (field === 'casePack') {
@@ -1238,6 +1296,150 @@
         alert('Delete failed: ' + err.message);
         btn.disabled = false;
       }
+    }
+
+    // ── ASIN Picker ─────────────────────────────────────────────────────────────
+
+    function openAsinPicker() {
+      document.getElementById('asinPickerModal').classList.remove('hidden');
+      const input = document.getElementById('asinPickerInput');
+      input.value = '';
+      asinPickerSearch('');
+      setTimeout(() => input.focus(), 50);
+    }
+
+    function closeAsinPicker() {
+      document.getElementById('asinPickerModal').classList.add('hidden');
+    }
+
+    function asinPickerSearch(query) {
+      const q = (query || '').toLowerCase().trim();
+      const results = document.getElementById('asinPickerResults');
+      const typeColors = { single: '#64748b', multipack: '#818cf8', bundle: '#34d399' };
+      const typeLabels = { single: 'Single', multipack: 'Multipack', bundle: 'Bundle' };
+
+      const all = brands
+        .filter(b => b.id !== 'unknown-brand')
+        .flatMap(b => (b.asins || []).map(asin => ({
+          brandId: b.id, brandName: b.name, asin,
+          title: b.asinTitles?.[asin] || '',
+          type: b.asinConfig?.[asin]?.type || 'single'
+        })));
+
+      const matches = q
+        ? all.filter(x =>
+            x.asin.toLowerCase().includes(q) ||
+            x.title.toLowerCase().includes(q) ||
+            x.brandName.toLowerCase().includes(q)
+          ).slice(0, 40)
+        : all.slice(0, 60);
+
+      if (!matches.length) {
+        results.innerHTML = '<div class="px-4 py-6 text-center text-sm text-slate-500">No ASINs found.</div>';
+        return;
+      }
+
+      results.innerHTML = matches.map(m => `
+        <div onclick="selectAsinForPO('${m.brandId}','${m.asin}')"
+          class="px-4 py-3 border-b border-slate-700/40 cursor-pointer hover:bg-slate-700/40 transition-colors">
+          <div class="flex items-center justify-between gap-3 mb-0.5">
+            <div class="flex items-center gap-2">
+              <span class="font-mono text-xs" style="color:#818cf8">${m.asin}</span>
+              <span class="text-xs px-1.5 py-0.5 rounded font-medium" style="background:rgba(100,116,139,0.2);color:${typeColors[m.type] || '#64748b'}">${typeLabels[m.type] || m.type}</span>
+            </div>
+            <span class="text-xs text-slate-500 shrink-0">${m.brandName}</span>
+          </div>
+          <div class="text-sm truncate" style="color:${m.title ? '#e2e8f0' : '#475569'}">${m.title || 'No title'}</div>
+        </div>`).join('');
+    }
+
+    function selectAsinForPO(brandId, asin) {
+      const brand = brands.find(b => b.id === brandId);
+      if (!brand) return;
+
+      const cfg = brand.asinConfig?.[asin] || { type: 'single' };
+      const title = cfg.supplierName || brand.asinTitles?.[asin] || asin;
+      const casePack = brand.casePacks?.[asin] || 1;
+      const leadTime = brand.leadTimes?.[asin] || 0;
+      const reorderBuffer = brand.reorderBuffer ?? 30;
+      const stockNumber = cfg.stockNumber || '';
+
+      const velocityPreset = presetMetrics.presets?.last30d || presetMetrics.presets?.lastMonth;
+      const brandPreset = velocityPreset?.brands?.[brandId];
+      let velocity = 0;
+      if (brandPreset?.skus) {
+        const days = velocityPreset.startDate && velocityPreset.endDate
+          ? Math.max(1, Math.round((new Date(velocityPreset.endDate) - new Date(velocityPreset.startDate)) / 86400000) + 1)
+          : 30;
+        const sku = brandPreset.skus.find(s => s.asin === asin);
+        if (sku) velocity = (sku.units || 0) / days;
+      }
+
+      const rawQty = velocity * (leadTime + reorderBuffer);
+      let qty = 0;
+      if (rawQty > 0 && casePack > 0) qty = Math.ceil(rawQty / casePack) * casePack;
+      const cases = casePack > 0 ? Math.ceil(qty / casePack) : 0;
+
+      const base = { stockNumber, wholesalePrice: '', discountPct: '',
+        _velocity: velocity, _leadTime: leadTime, _reorderBuffer: reorderBuffer };
+
+      if (cfg.type === 'bundle' && cfg.components?.length > 0) {
+        lines.push({ ...base, _type: 'bundle-header', asin, description: title,
+          upc: brand.upcs?.[asin] || '', price: 0, casePack, quantity: qty, cases,
+          _asinUnits: qty, _componentCount: cfg.components.length });
+        cfg.components.forEach(comp => {
+          let compAsin, compDesc, compUpc, compPrice, compStockNumber;
+          if (comp.type === 'asin' && comp.asin) {
+            const cb = brands.find(b => b.asins?.includes(comp.asin));
+            const cc = cb?.asinConfig?.[comp.asin] || {};
+            compAsin = comp.asin;
+            compDesc = cc.supplierName || cb?.asinTitles?.[comp.asin] || comp.asin;
+            compUpc = cb?.upcs?.[comp.asin] || '';
+            compPrice = cb?.buyCost?.[comp.asin] ?? cb?.cogs?.[comp.asin] ?? 0;
+            compStockNumber = cc.stockNumber || '';
+          } else {
+            compAsin = asin; compDesc = comp.description || `Component of ${title}`;
+            compUpc = comp.upc || ''; compPrice = Number(comp.price) || 0; compStockNumber = '';
+          }
+          lines.push({ ...base, _type: 'bundle-component', asin: compAsin, description: compDesc,
+            upc: compUpc, stockNumber: compStockNumber, price: compPrice,
+            casePack: comp.qtyPerBundle || 1, quantity: qty * (comp.qtyPerBundle || 1),
+            cases: 0, _bundleParent: title, _isBundleComponent: true });
+        });
+
+      } else if (cfg.type === 'multipack') {
+        const upp = cfg.unitsPerPack || 1;
+        const baseAsin = cfg.baseProductAsin;
+        let baseDesc, baseUpc, basePrice, baseStockNumber, hasNoBaseProduct;
+        if (baseAsin) {
+          const bb = brands.find(b => b.asins?.includes(baseAsin));
+          const bc = bb?.asinConfig?.[baseAsin] || {};
+          baseDesc = bc.supplierName || bb?.asinTitles?.[baseAsin] || baseAsin;
+          baseUpc = bb?.upcs?.[baseAsin] || ''; basePrice = bb?.buyCost?.[baseAsin] ?? bb?.cogs?.[baseAsin] ?? 0;
+          baseStockNumber = bc.stockNumber || ''; hasNoBaseProduct = false;
+        } else {
+          baseDesc = title; baseUpc = brand.upcs?.[asin] || '';
+          basePrice = brand.buyCost?.[asin] ?? brand.cogs?.[asin] ?? 0; baseStockNumber = stockNumber; hasNoBaseProduct = true;
+        }
+        const supplierQty = qty * upp;
+        const supplierCasePack = casePack * upp;
+        lines.push({ ...base, _type: 'multipack', asin, description: baseDesc, upc: baseUpc,
+          stockNumber: baseStockNumber, price: basePrice, casePack: supplierCasePack,
+          quantity: supplierQty, cases: supplierCasePack > 0 ? Math.ceil(supplierQty / supplierCasePack) : 0,
+          _asinUnits: qty, _asinTitle: title, _unitsPerPack: upp,
+          _baseProductAsin: baseAsin || null, _hasNoBaseProduct: hasNoBaseProduct });
+
+      } else {
+        lines.push({ ...base, _type: 'single', asin, description: title,
+          upc: brand.upcs?.[asin] || '', stockNumber, price: brand.buyCost?.[asin] ?? brand.cogs?.[asin] ?? 0,
+          casePack, quantity: qty, cases });
+      }
+
+      document.getElementById('noDataBanner').classList.add('hidden');
+      document.getElementById('emptyLinesMsg').classList.add('hidden');
+      document.getElementById('linesTableWrap').classList.remove('hidden');
+      renderLines();
+      closeAsinPicker();
     }
 
     init();
