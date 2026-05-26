@@ -1327,14 +1327,16 @@ async function getCatalogSnapshots(asins, marketplaceId, token) {
         const title = summary.itemName || attrs.item_name?.[0]?.value || null;
         const bullets = (attrs.bullet_point || []).map(b => b.value).filter(Boolean);
         const imgs = (item.images || []).find(g => g.marketplaceId === marketplaceId)?.images || item.images?.[0]?.images || [];
-        const main = imgs.find(i => i.variant === 'MAIN') || imgs[0];
-        const mainImage = main?.link || null;
-        // Extract stable image ID from Amazon CDN URL — strips size variants so
-        // ._SL1500_.jpg, ._SX300_.jpg, etc. of the same image all hash the same.
-        // Pattern: /images/I/{imageId}._{variant}_.{ext} → just keep imageId.
-        const mainImageId = mainImage
-          ? (mainImage.match(/\/images\/I\/([A-Za-z0-9+-]+)/)?.[1] || mainImage)
-          : null;
+        // Extract stable image ID from Amazon CDN URL (path /images/I/{id}.{ext}).
+        const idOf = link => link?.match(/\/images\/I\/([A-Za-z0-9+-]+)/)?.[1] || null;
+        // Amazon returns multiple MAIN entries at different resolutions, sometimes with
+        // different actual image IDs. Order shuffles between API responses. Collect all
+        // unique MAIN image IDs, sorted, so the set is stable across syncs.
+        const mainIds = [...new Set(imgs.filter(i => i.variant === 'MAIN').map(i => idOf(i.link)).filter(Boolean))].sort();
+        // Pick the largest MAIN for display (highest-resolution = original source).
+        const mainSorted = imgs.filter(i => i.variant === 'MAIN').sort((a, b) => (b.height || 0) - (a.height || 0));
+        const mainImage = mainSorted[0]?.link || imgs[0]?.link || null;
+        const mainImageId = mainIds.length ? mainIds.join(',') : idOf(mainImage);
         // Variations: children of this parent
         const rels = (item.relationships || []).find(r => r.marketplaceId === marketplaceId)?.relationships || item.relationships?.[0]?.relationships || [];
         const varChildren = rels
