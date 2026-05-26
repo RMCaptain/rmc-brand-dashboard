@@ -1475,6 +1475,7 @@ async function computeHealthReport({ sinceIso = null } = {}) {
         message: ev.message,
         detail: ev.detail,
         detectedAt: ev.detectedAt,
+        marketplace: brand.marketplace || 'CA',
       });
     }
 
@@ -1522,7 +1523,8 @@ async function computeHealthReport({ sinceIso = null } = {}) {
             brandId: brand.id, brandName: brand.name, brandColor: brand.color,
             asin, title, severity: isCritical ? 'critical' : 'warning', type: 'suppressed',
             message: `Listing status: ${sku.status}`,
-            detail: { status: sku.status }
+            detail: { status: sku.status },
+            marketplace: brand.marketplace || 'CA',
           });
         }
       }
@@ -1558,7 +1560,8 @@ async function computeHealthReport({ sinceIso = null } = {}) {
           brandId: brand.id, brandName: brand.name, brandColor: brand.color,
           asin, title, severity: 'warning', type: 'buybox_lost',
           message: `Won by ${winnerStr}`,
-          detail: { winners, snapshots: recent.length }
+          detail: { winners, snapshots: recent.length },
+          marketplace: brand.marketplace || 'CA',
         });
       }
 
@@ -1567,7 +1570,8 @@ async function computeHealthReport({ sinceIso = null } = {}) {
           brandId: brand.id, brandName: brand.name, brandColor: brand.color,
           asin, title, severity: 'warning', type: 'unfulfillable',
           message: `${inv.unfulfillable} unfulfillable units`,
-          detail: { unfulfillable: inv.unfulfillable }
+          detail: { unfulfillable: inv.unfulfillable },
+          marketplace: brand.marketplace || 'CA',
         });
       }
 
@@ -1579,7 +1583,8 @@ async function computeHealthReport({ sinceIso = null } = {}) {
           brandId: brand.id, brandName: brand.name, brandColor: brand.color,
           asin, title, severity: 'critical', type: 'out_of_stock',
           message: `Out of stock${inbound > 0 ? ` · ${inbound} inbound` : ' · NO inbound'}`,
-          detail: { onHand, inbound, units7d, dailyVelocity: units7d / 7 }
+          detail: { onHand, inbound, units7d, dailyVelocity: units7d / 7 },
+          marketplace: brand.marketplace || 'CA',
         });
       }
 
@@ -1593,7 +1598,8 @@ async function computeHealthReport({ sinceIso = null } = {}) {
         brandId: brand.id, brandName: brand.name, brandColor: brand.color,
         asin, title, severity: 'critical', type: 'stranded',
         message: `${s.qty} stranded unit${s.qty !== 1 ? 's' : ''}${s.reason ? ` — ${s.reason}` : ''}`,
-        detail: { qty: s.qty, reason: s.reason, marketplace: s.marketplace }
+        detail: { qty: s.qty, reason: s.reason, marketplace: s.marketplace },
+        marketplace: s.marketplace || brand.marketplace || 'CA',
       });
     }
   }

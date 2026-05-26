@@ -848,6 +848,27 @@
           .replace(/<(https?:[^>]+)>/g, '<a href="$1" target="_blank" class="underline underline-offset-2 hover:opacity-80">$1</a>');
       }
 
+      // Build the most useful destination URL for a health alert
+      function alertViewUrl(a) {
+        const mp  = (a.marketplace || 'CA').toUpperCase();
+        const tld = mp === 'US' ? 'com' : 'ca';
+        const sc  = `https://sellercentral.amazon.${tld}`;
+        switch (a.type) {
+          case 'buybox_lost':
+            return `https://www.amazon.${tld}/dp/${a.asin}`;
+          case 'unfulfillable':
+            return `${sc}/inventory?viewId=UNFULFILLABLE`;
+          case 'stranded':
+            return `${sc}/reportcentral/STRANDED_INVENTORY/0`;
+          case 'suppressed':
+            return `${sc}/inventory?viewId=SUPPRESSED`;
+          case 'out_of_stock':
+            return `${sc}/inventory?searchIsAsin=1&asin=${a.asin}`;
+          default:
+            return `/brand.html?id=${a.brandId}`;
+        }
+      }
+
       const typeIcons = {
         suppressed:       { icon: '⛔', label: 'Suppressed' },
         buybox_lost:      { icon: '🔴', label: 'Buy Box Lost' },
@@ -901,7 +922,7 @@
                 <p class="text-xs text-slate-300 truncate">${shortTitle}</p>
                 <p class="text-xs mt-0.5 ${sevColor}">${fmtAlertMsg(a.message)}</p>
               </div>
-              <a href="/brand.html?id=${a.brandId}" class="text-xs text-indigo-400 hover:text-indigo-300 flex-shrink-0 mt-0.5">View →</a>
+              <a href="${alertViewUrl(a)}" target="_blank" class="text-xs text-indigo-400 hover:text-indigo-300 flex-shrink-0 mt-0.5 whitespace-nowrap">View →</a>
             </div>`;
         }).join('');
 
