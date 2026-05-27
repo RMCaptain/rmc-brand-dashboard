@@ -1,5 +1,14 @@
 node_modules/
 .env
+.env.*
+*.env
+
+# Runtime artifacts
+server.log
+logs/
+pm_check.json
+
+# Data cache (generated, not source of truth)
 data/fx.json
 data/listings-cache.json
 data/image-cache.json
