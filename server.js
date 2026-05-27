@@ -1466,7 +1466,11 @@ async function computeHealthReport({ sinceIso = null } = {}) {
         eventByKey.set(key, ev);
       }
     }
+    const EXCLUDED_RECENT_TYPES = new Set(['content_changed', 'variation_broken', 'low_stock']);
+    const IGNORE_RECENT_STATUSES = new Set(['incomplete', 'unknown']);
     for (const ev of eventByKey.values()) {
+      if (EXCLUDED_RECENT_TYPES.has(ev.type)) continue;
+      if (ev.type === 'suppressed' && ev.detail?.status && IGNORE_RECENT_STATUSES.has((ev.detail.status || '').toLowerCase())) continue;
       const title = brand.asinTitles?.[ev.asin] || ev.asin;
       alerts.push({
         brandId: brand.id, brandName: brand.name, brandColor: brand.color,
