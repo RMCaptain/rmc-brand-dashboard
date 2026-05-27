@@ -1515,13 +1515,9 @@ async function computeHealthReport({ sinceIso = null } = {}) {
       // "incomplete" = missing optional attributes, listing is live — ignore.
       // "unknown" = SP-API returned no status, not actionable — ignore.
       const CRITICAL_STATUSES = new Set(['suppressed', 'restricted', 'blocked']);
-      const IGNORE_STATUSES = new Set(['incomplete', 'unknown', '']);
+      const IGNORE_STATUSES = new Set(['incomplete', 'unknown', 'inactive', '']);
       if (statusNorm && statusNorm !== 'active' && !IGNORE_STATUSES.has(statusNorm)) {
-        // "inactive" with no inventory = OOS, expected — skip (OOS alert covers it).
-        // "inactive" with inventory on hand = real problem, fire it.
-        if (statusNorm === 'inactive' && onHand === 0) {
-          // skip — not actionable
-        } else {
+        {
           const isCritical = CRITICAL_STATUSES.has(statusNorm);
           alerts.push({
             brandId: brand.id, brandName: brand.name, brandColor: brand.color,
