@@ -90,6 +90,7 @@
                 <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('adSpend')">Ad Spend <span class="sort-ind" data-col="adSpend"></span></th>
                 <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('acos')">ACOS <span class="sort-ind" data-col="acos"></span></th>
                 <th class="text-left" style="color:var(--text-2)">Promos</th>
+                <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('sns')">S&amp;S Subs <span class="sort-ind" data-col="sns"></span></th>
                 <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('inventory')">Inventory <span class="sort-ind" data-col="inventory"></span></th>
                 <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('velocity')">Velocity <span class="sort-ind" data-col="velocity"></span></th>
                 <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('daysLeft')">Days Left <span class="sort-ind" data-col="daysLeft"></span></th>
@@ -97,7 +98,7 @@
               </tr>
             </thead>
             <tbody id="productTableBody">
-              <tr><td colspan="13" class="text-center py-8" style="color:var(--text-3)">Loading...</td></tr>
+              <tr><td colspan="14" class="text-center py-8" style="color:var(--text-3)">Loading...</td></tr>
             </tbody>
           </table>
           <div id="productPagination"></div>
@@ -254,6 +255,7 @@
             buyCost: brand.buyCost?.[asin] ?? null,
             marketplaces: s?.marketplaces || [],
             promos: brand.asinPromos?.[asin] || [],
+            sns: brand.asinSns?.[asin] ?? null,
             upc: brand.upcs?.[asin] ?? '',
             casePack: brand.casePacks?.[asin] ?? null,
             stockNumber: cfg.stockNumber || '',
@@ -364,7 +366,7 @@
       const rows = buildProductList();
 
       if (!rows.length) {
-        tbody.innerHTML = `<tr><td colspan="13" class="text-center py-10" style="color:var(--text-3)">No products — run a sync first</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="14" class="text-center py-10" style="color:var(--text-3)">No products — run a sync first</td></tr>`;
         document.getElementById('productPagination').innerHTML = '';
         updateSortIndicators();
         return;
@@ -383,7 +385,7 @@
       });
 
       if (!filtered.length) {
-        tbody.innerHTML = `<tr><td colspan="13" class="text-center py-10" style="color:var(--text-3)">No products match your search</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="14" class="text-center py-10" style="color:var(--text-3)">No products match your search</td></tr>`;
         document.getElementById('productPagination').innerHTML = '';
         updateSortIndicators();
         return;
@@ -472,6 +474,7 @@
         <td class="px-4 py-3 text-right ${(r.spendCad > 0 || r.spendUsd > 0) ? 'text-red-400' : ''}" style="${(r.spendCad === 0 && r.spendUsd === 0) ? 'color:var(--text-3)' : ''}">${(r.spendCad > 0 || r.spendUsd > 0) ? fmt(r.spendCad, r.spendUsd) : '—'}</td>
         <td class="px-4 py-3 text-right font-medium ${r.acos != null ? (r.acos > 30 ? 'text-red-400' : r.acos > 20 ? 'text-amber-400' : 'text-emerald-400') : ''}" style="${r.acos == null ? 'color:var(--text-3)' : ''}">${r.acos != null ? r.acos.toFixed(1) + '%' : '—'}</td>
         <td class="px-4 py-3">${r.promos.length ? r.promos.map(p => `<span class="text-xs px-1.5 py-0.5 rounded font-medium ${p === 'PED' ? 'bg-purple-900/50 text-purple-300' : 'bg-blue-900/50 text-blue-300'}">${p}</span>`).join(' ') : '<span style="color:var(--text-3)">—</span>'}</td>
+        <td class="px-4 py-3 text-right font-medium ${r.sns > 0 ? '' : ''}" style="${r.sns > 0 ? 'color:var(--text)' : 'color:var(--text-3)'}">${r.sns > 0 ? r.sns.toLocaleString() : '—'}</td>
         <td class="px-4 py-3 text-right cursor-pointer underline decoration-dotted decoration-slate-600" style="color:var(--text-2)"
             onmouseenter="showInventoryPopup(event,${JSON.stringify(r.invRaw).replace(/"/g,'&quot;')})"
             onmouseleave="hideInventoryPopup()">${r.inventory.toLocaleString()}</td>

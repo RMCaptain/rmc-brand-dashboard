@@ -119,6 +119,7 @@ async function saveSyncResults(syncBrands) {
       if (asin in (sb.upcs || {}) && !(asin in fb.upcs)) fb.upcs[asin] = sb.upcs[asin];
     }
     if (sb.asinPromos) fb.asinPromos = sb.asinPromos;
+    if (sb.asinSns)   fb.asinSns   = sb.asinSns;
   }
 
   // Merge unknown-brand: only add ASINs not already tracked anywhere in fresh data

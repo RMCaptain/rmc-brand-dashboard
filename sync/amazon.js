@@ -1181,6 +1181,18 @@ async function syncBrandMetrics(brands) {
     }
   }
 
+  // ── Subscribe & Save subscriber counts ──────────────────────────────────────
+  const asinSns = await fetchSnsSubscriptions(marketplaceIds, token).catch(e => {
+    console.log('[Sync] S&S fetch skipped:', e.message);
+    return {};
+  });
+  for (const brand of brands) {
+    brand.asinSns = {};
+    for (const asin of brand.asins) {
+      if (asinSns[asin] > 0) brand.asinSns[asin] = asinSns[asin];
+    }
+  }
+
   console.log('[Sync] Complete.');
   return { presets: result, updatedBrands: brands };
 }
@@ -1632,6 +1644,46 @@ async function fetchStrandedInventory() {
   }
 
   return result;
+}
+
+async function fetchSnsSubscriptions(marketplaceIds, token) {
+  const asinSubs = {};
+  for (const mpId of marketplaceIds) {
+    try {
+      console.log(`[S&S] Requesting subscriber report for ${mpId}...`);
+      const reportId = await createReport('GET_FBA_FULFILLMENT_SNSGMC_DATA', [mpId], null, null, token);
+      const docId    = await waitForReport(reportId, token, 300000);
+      const raw      = await downloadReport(docId, token);
+
+      const lines   = raw.split('\n');
+      if (lines.length < 2) continue;
+      const headers = lines[0].split('\t').map(h => h.trim().toLowerCase());
+
+      const asinCol = headers.indexOf('asin');
+      const subsCol = ['subscriber-download-count', 'subscribers', 'current-subscribers',
+                       'subscriptions', 'active-subscribers', 'subscriber-count']
+        .map(n => headers.indexOf(n)).find(i => i >= 0) ?? -1;
+
+      if (asinCol < 0 || subsCol < 0) {
+        console.warn(`[S&S] Unrecognised columns (asin:${asinCol}, subs:${subsCol}). Available: ${headers.join(', ')}`);
+        continue;
+      }
+
+      for (let i = 1; i < lines.length; i++) {
+        const parts = lines[i].split('\t');
+        if (parts.length < 3) continue;
+        const asin  = (parts[asinCol] || '').trim().toUpperCase();
+        const count = parseInt(parts[subsCol] || '0', 10);
+        if (!asin || isNaN(count) || count <= 0) continue;
+        asinSubs[asin] = (asinSubs[asin] || 0) + count;
+      }
+      console.log(`[S&S] ${mpId}: ${Object.keys(asinSubs).length} ASINs with active subscribers`);
+    } catch (e) {
+      console.log(`[S&S] Report unavailable for ${mpId}: ${e.message}`);
+    }
+    await sleep(2000);
+  }
+  return asinSubs;
 }
 
 async function fetchActivePromotions(marketplaceIds, token) {

@@ -71,7 +71,7 @@
     </div>
 
     <!-- Summary tiles -->
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8" id="summaryTiles">
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8" id="summaryTiles">
       <!-- Rendered by JS -->
     </div>
 
@@ -98,6 +98,7 @@
               <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('adSpend')">Ad Spend <span class="sort-asin-ind" data-col="adSpend"></span></th>
               <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('acos')">ACOS <span class="sort-asin-ind" data-col="acos"></span></th>
               <th class="text-left" style="color:var(--text-2)">Promos</th>
+              <th class="text-right" style="color:var(--text-2)">S&amp;S Subs</th>
               <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('inventory')">Inventory <span class="sort-asin-ind" data-col="inventory"></span></th>
               <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('velocity')">Velocity <span class="sort-asin-ind" data-col="velocity"></span></th>
               <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('daysLeft')">Days Left <span class="sort-asin-ind" data-col="daysLeft"></span></th>
@@ -387,11 +388,13 @@
           ${sub ? `<p class="text-xs mt-0.5" style="color:var(--text-3)">${sub}</p>` : ''}
         </div>`;
 
+      const totalSns = Object.values(brand.asinSns || {}).reduce((a, b) => a + b, 0);
       document.getElementById('summaryTiles').innerHTML = [
         tile('Revenue',  m ? fmt(m.revenueCad, m.revenueUsd) : '—', m ? (m.units || 0).toLocaleString() + ' units' : null),
         tile('Sessions', m ? (m.sessions || 0).toLocaleString() : '—', m?.avgCvr != null ? 'CVR ' + m.avgCvr.toFixed(2) + '%' : null),
         tile('Ad Spend', adSpendDisp, ad?.clicks ? ad.clicks.toLocaleString() + ' clicks' : null, ad && (ad.spendCad > 0 || ad.spendUsd > 0) ? '#f87171' : undefined),
         tile('ACOS',     acosDisp,    ad?.roas != null ? 'ROAS ' + roasDisp : null, acosColor),
+        tile('S&S Subs', totalSns > 0 ? totalSns.toLocaleString() : '—', totalSns > 0 ? 'active subscribers' : null),
       ].join('');
 
       // Ad metrics card (show only when ad data exists, hide otherwise)
@@ -466,7 +469,7 @@
             <td class="px-5 py-3">
               <a href="${mp === 'US' ? 'https://www.amazon.com' : 'https://www.amazon.ca'}/dp/${asin}" target="_blank" rel="noopener" class="font-mono text-xs text-slate-400 hover:underline">${asin}</a>
             </td>
-            <td class="px-4 py-3 text-slate-500 text-xs" colspan="18">No data yet</td>
+            <td class="px-4 py-3 text-slate-500 text-xs" colspan="19">No data yet</td>
           </tr>`;
         }).join('');
         return;
@@ -481,7 +484,7 @@
     function buildSkuRow(brand, s, asin) {
       if (!s) return '<tr class="border-b border-slate-700/40 last:border-0">' +
         '<td class="px-5 py-3 font-mono text-xs text-slate-400">' + asin + '</td>' +
-        '<td class="px-4 py-3 text-slate-500 text-xs" colspan="18">No data yet</td></tr>';
+        '<td class="px-4 py-3 text-slate-500 text-xs" colspan="19">No data yet</td></tr>';
 
       const statusColor = s.status === 'active' ? 'bg-emerald-900/40 text-emerald-400'
         : s.status === 'suppressed' ? 'bg-red-900/40 text-red-400' : 'bg-slate-700 text-slate-400';
@@ -554,6 +557,10 @@
             return '<span class="text-xs px-1.5 py-0.5 rounded font-medium ' + cls + '">' + p + '</span>';
           }).join(' ');
           return '<td class="px-4 py-3"><div class="flex gap-1 flex-wrap">' + chips + '</div></td>';
+        })() +
+        (function() {
+          const subs = brand.asinSns?.[s.asin];
+          return '<td class="px-4 py-3 text-right text-sm font-medium ' + (subs > 0 ? 'text-slate-200' : 'text-slate-600') + '">' + (subs > 0 ? subs.toLocaleString() : '—') + '</td>';
         })() +
         '<td class="px-5 py-3 text-right text-slate-300 font-medium cursor-pointer underline decoration-dotted decoration-slate-600" onmouseenter="showInventoryPopup(event, \'' + s.asin + '\', ' + invJson + ')" onmouseleave="hideInventoryPopup()">' + invTotal + '</td>' +
         '<td class="px-4 py-3 text-right text-slate-500 text-xs">' + velDisplay + ' u/d</td>' +
