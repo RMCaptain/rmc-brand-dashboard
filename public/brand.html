@@ -97,6 +97,7 @@
               <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('cvr')">CVR <span class="sort-asin-ind" data-col="cvr"></span></th>
               <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('adSpend')">Ad Spend <span class="sort-asin-ind" data-col="adSpend"></span></th>
               <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('acos')">ACOS <span class="sort-asin-ind" data-col="acos"></span></th>
+              <th class="text-left" style="color:var(--text-2)">Promos</th>
               <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('inventory')">Inventory <span class="sort-asin-ind" data-col="inventory"></span></th>
               <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('velocity')">Velocity <span class="sort-asin-ind" data-col="velocity"></span></th>
               <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('daysLeft')">Days Left <span class="sort-asin-ind" data-col="daysLeft"></span></th>
@@ -465,7 +466,7 @@
             <td class="px-5 py-3">
               <a href="${mp === 'US' ? 'https://www.amazon.com' : 'https://www.amazon.ca'}/dp/${asin}" target="_blank" rel="noopener" class="font-mono text-xs text-slate-400 hover:underline">${asin}</a>
             </td>
-            <td class="px-4 py-3 text-slate-500 text-xs" colspan="17">No data yet</td>
+            <td class="px-4 py-3 text-slate-500 text-xs" colspan="18">No data yet</td>
           </tr>`;
         }).join('');
         return;
@@ -480,7 +481,7 @@
     function buildSkuRow(brand, s, asin) {
       if (!s) return '<tr class="border-b border-slate-700/40 last:border-0">' +
         '<td class="px-5 py-3 font-mono text-xs text-slate-400">' + asin + '</td>' +
-        '<td class="px-4 py-3 text-slate-500 text-xs" colspan="17">No data yet</td></tr>';
+        '<td class="px-4 py-3 text-slate-500 text-xs" colspan="18">No data yet</td></tr>';
 
       const statusColor = s.status === 'active' ? 'bg-emerald-900/40 text-emerald-400'
         : s.status === 'suppressed' ? 'bg-red-900/40 text-red-400' : 'bg-slate-700 text-slate-400';
@@ -544,6 +545,15 @@
           const acosColor = s.acos != null ? (s.acos > 30 ? 'text-red-400' : s.acos > 20 ? 'text-amber-400' : 'text-emerald-400') : 'text-slate-500';
           return '<td class="px-4 py-3 text-right ' + (hasSpend ? 'text-red-400' : 'text-slate-500') + '">' + spendDisp + '</td>' +
                  '<td class="px-4 py-3 text-right font-medium ' + acosColor + '">' + (s.acos != null ? s.acos.toFixed(1) + '%' : '—') + '</td>';
+        })() +
+        (function() {
+          const promos = brand.asinPromos?.[s.asin] || [];
+          if (!promos.length) return '<td class="px-4 py-3 text-slate-600 text-xs">—</td>';
+          const chips = promos.map(p => {
+            const cls = p === 'PED' ? 'bg-purple-900/50 text-purple-300' : 'bg-blue-900/50 text-blue-300';
+            return '<span class="text-xs px-1.5 py-0.5 rounded font-medium ' + cls + '">' + p + '</span>';
+          }).join(' ');
+          return '<td class="px-4 py-3"><div class="flex gap-1 flex-wrap">' + chips + '</div></td>';
         })() +
         '<td class="px-5 py-3 text-right text-slate-300 font-medium cursor-pointer underline decoration-dotted decoration-slate-600" onmouseenter="showInventoryPopup(event, \'' + s.asin + '\', ' + invJson + ')" onmouseleave="hideInventoryPopup()">' + invTotal + '</td>' +
         '<td class="px-4 py-3 text-right text-slate-500 text-xs">' + velDisplay + ' u/d</td>' +

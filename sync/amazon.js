@@ -1169,6 +1169,18 @@ async function syncBrandMetrics(brands) {
     };
   }
 
+  // ── Active Promotions (COUPON + PED) ────────────────────────────────────────
+  const asinPromos = await fetchActivePromotions(marketplaceIds, token).catch(e => {
+    console.log('[Sync] Promotions fetch skipped:', e.message);
+    return {};
+  });
+  for (const brand of brands) {
+    brand.asinPromos = {};
+    for (const asin of brand.asins) {
+      if (asinPromos[asin]?.length) brand.asinPromos[asin] = asinPromos[asin];
+    }
+  }
+
   console.log('[Sync] Complete.');
   return { presets: result, updatedBrands: brands };
 }
@@ -1620,6 +1632,38 @@ async function fetchStrandedInventory() {
   }
 
   return result;
+}
+
+async function fetchActivePromotions(marketplaceIds, token) {
+  const asinPromos = {};
+  const now = Date.now();
+  const TYPES = [['COUPON', 'COUPON'], ['PRIME_EXCLUSIVE_DISCOUNT', 'PED']];
+
+  for (const mpId of marketplaceIds) {
+    for (const [apiType, badge] of TYPES) {
+      try {
+        const data = await spRequest('GET', `/promotions/v2021-06-01/promotions?marketplaceId=${mpId}&promotionType=${apiType}`, token);
+        const active = (data.promotions || []).filter(p => !p.endDate || new Date(p.endDate) > now);
+        console.log(`[Promos] ${badge} ${mpId}: ${active.length} active`);
+        for (const promo of active) {
+          try {
+            const detail = await spRequest('GET', `/promotions/v2021-06-01/promotions/${promo.promotionId}`, token);
+            for (const cond of detail.promotion?.promotionApplicabilityModel?.promotionConditions || []) {
+              for (const asin of cond.applicableProductCondition?.includedEntitlements?.asinList || []) {
+                if (!asinPromos[asin]) asinPromos[asin] = new Set();
+                asinPromos[asin].add(badge);
+              }
+            }
+            await sleep(300);
+          } catch {}
+        }
+      } catch (e) {
+        console.log(`[Promos] ${apiType} unavailable for ${mpId}: ${e.message}`);
+      }
+    }
+  }
+
+  return Object.fromEntries(Object.entries(asinPromos).map(([k, v]) => [k, [...v]]));
 }
 
 module.exports = { syncBrandMetrics, importBrandsFromAmazon, fetchUpcsForAsins, fetchFinancialEvents, enrichListingHealth, scrapeSellerNames, fetchStrandedInventory };
