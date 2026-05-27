@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const cron = require('node-cron');
 const { createClient } = require('@supabase/supabase-js');
+const ordersPoller = require('./sync/orders');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -156,6 +157,36 @@ function loadFx() {
 
 function saveFx(data) {
   try { fs.writeFileSync(path.join(DATA_DIR, 'fx.json'), JSON.stringify(data, null, 2)); } catch {}
+}
+
+// Write per-ASIN rows for a single completed day to daily_metrics.
+// Called after each sync for "yesterday" to build up the rolling history.
+async function writeDailyMetrics(yesterdayBrands, date) {
+  if (!yesterdayBrands || !date) return;
+  const rows = [];
+  for (const [brandId, brandData] of Object.entries(yesterdayBrands)) {
+    for (const sku of (brandData.skus || [])) {
+      rows.push({
+        asin:             sku.asin,
+        date,
+        brand_id:         brandId,
+        units:            sku.units            || 0,
+        units_ca:         sku.unitsCad         || 0,
+        units_us:         sku.unitsUsd         || 0,
+        revenue_cad:      sku.revenueCad       || 0,
+        revenue_usd:      sku.revenueUsd       || 0,
+        sessions:         sku.sessions         || null,
+        page_views:       sku.pageViews        || null,
+        buy_box_pct:      sku.buyBox           ?? null,
+        inventory_on_hand: sku.inventory?.onHand  ?? null,
+        inventory_inbound: sku.inventory?.inbound ?? null,
+      });
+    }
+  }
+  if (rows.length === 0) return;
+  const { error } = await supabase.from('daily_metrics').upsert(rows, { onConflict: 'asin,date' });
+  if (error) console.warn('[DailyMetrics] Write error:', error.message);
+  else console.log(`[DailyMetrics] Wrote ${rows.length} rows for ${date}`);
 }
 
 async function fetchFxRate() {
@@ -1443,6 +1474,73 @@ app.get('/api/preset-metrics', async (req, res) => {
   res.json(await loadPresetMetrics());
 });
 
+// Live "Today" data from Orders API poller (~15 min lag, units + revenue only)
+app.get('/api/metrics/today', async (req, res) => {
+  const todayState = ordersPoller.getState();
+  const { brands } = await loadBrands();
+
+  const byBrand = {};
+  for (const brand of brands) {
+    let units = 0, unitsCa = 0, unitsUs = 0, revCad = 0, revUsd = 0;
+    const skus = [];
+    for (const asin of (brand.asins || [])) {
+      const d = todayState.byAsin[asin];
+      const u = d?.units || 0, ca = d?.unitsCa || 0, us = d?.unitsUs || 0;
+      const rc = d?.revenueCad || 0, ru = d?.revenueUsd || 0;
+      units += u; unitsCa += ca; unitsUs += us; revCad += rc; revUsd += ru;
+      skus.push({
+        asin,
+        units: u, unitsCa: ca, unitsUs: us,
+        revenueCad: Math.round(rc * 100) / 100,
+        revenueUsd: Math.round(ru * 100) / 100,
+        // Fields not available intraday — frontend shows —
+        sessions: null, pageViews: null, buyBox: null, cvr: null,
+        spendCad: null, spendUsd: null, attributedSalesCad: null, attributedSalesUsd: null, acos: null,
+        title: brand.asinTitles?.[asin] || '',
+        imageUrl: null,
+        marketplaces: [...(ca > 0 ? ['CA'] : []), ...(us > 0 ? ['US'] : [])],
+        inventory: null,
+      });
+    }
+    byBrand[brand.id] = {
+      summary: {
+        units, unitsCa, unitsUs,
+        revenueCad: Math.round(revCad * 100) / 100,
+        revenueUsd: Math.round(revUsd * 100) / 100,
+        sessions: null, buyBox: null, avgCvr: null,
+        adSummary: null, alerts: {},
+      },
+      skus,
+    };
+  }
+
+  res.json({
+    date:      todayState.date     || new Date().toISOString().split('T')[0],
+    updatedAt: todayState.updatedAt,
+    label:     'Today',
+    startDate: todayState.date     || new Date().toISOString().split('T')[0],
+    endDate:   todayState.date     || new Date().toISOString().split('T')[0],
+    brands:    byBrand,
+  });
+});
+
+// Trigger historical daily_metrics backfill (fills up to 15 missing days per call)
+app.post('/api/backfill', async (req, res) => {
+  if (process.env.SYNC_ENABLED !== 'true') {
+    return res.status(403).json({ error: 'SYNC_ENABLED is false — backfill disabled locally' });
+  }
+  try {
+    const { backfillDays } = require('./sync/backfill');
+    const { brands } = await loadBrands();
+    const limit = Math.min(parseInt(req.query.limit || '15', 10), 30);
+    const result = await backfillDays(supabase, brands, limit);
+    res.json(result);
+  } catch (err) {
+    console.error('[Backfill] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 async function computeHealthReport({ sinceIso = null } = {}) {
   const [{ brands }, pm, sellerNames] = await Promise.all([loadBrands(), loadPresetMetrics(), loadSellerNames()]);
   const preset = pm.presets?.last30d || pm.presets?.[Object.keys(pm.presets || {})[0]];
@@ -1904,10 +2002,15 @@ async function runFullSync(tag = 'Sync') {
       const fmt = d => d.toISOString().split('T')[0];
       const today = new Date(); today.setHours(0,0,0,0);
       const yest  = new Date(today); yest.setDate(yest.getDate() - 1);
+      const l7s   = new Date(yest); l7s.setDate(yest.getDate() - 6);
+      const l14s  = new Date(yest); l14s.setDate(yest.getDate() - 13);
       const l30s  = new Date(today); l30s.setDate(l30s.getDate() - 30);
       const lms   = new Date(today.getFullYear(), today.getMonth() - 1, 1);
       const lme   = new Date(today.getFullYear(), today.getMonth(), 0);
       const ranges = {
+        yesterday: { startDate: fmt(yest), endDate: fmt(yest) },
+        last7d:    { startDate: fmt(l7s),  endDate: fmt(yest) },
+        last14d:   { startDate: fmt(l14s), endDate: fmt(yest) },
         last30d:   { startDate: fmt(l30s), endDate: fmt(yest) },
         lastMonth: { startDate: fmt(lms),  endDate: fmt(lme)  },
       };
@@ -2075,6 +2178,18 @@ async function runFullSync(tag = 'Sync') {
     syncState = { status: 'done', lastSync, error: null };
     console.log(`[${tag}] Done:`, lastSync);
 
+    // Write yesterday's per-ASIN data to daily_metrics for rolling history
+    try {
+      const yesterdayPreset = presets.yesterday;
+      if (yesterdayPreset?.brands) {
+        const d = new Date(); d.setDate(d.getDate() - 1);
+        const dateStr = d.toISOString().split('T')[0];
+        await writeDailyMetrics(yesterdayPreset.brands, dateStr);
+      }
+    } catch (dmErr) {
+      console.warn(`[${tag}] daily_metrics write failed (non-fatal):`, dmErr.message);
+    }
+
     // Financial events run in background — fees data can take 30-60 min (100+ API pages)
     // so we don't block the core S&T sync on them. They'll patch preset-metrics when done.
     setImmediate(() => backgroundUpdateFinancials(tag));
@@ -2184,7 +2299,12 @@ function scheduleDailySync() {
     }
   });
 
-  console.log('[AutoSync] Crons scheduled: sync 6am/9am/12pm UTC, Slack digest 7am UTC');
+  // Orders poller: every 15 min for intraday revenue/units (~15 min lag)
+  cron.schedule('*/15 * * * *', () => {
+    ordersPoller.poll().catch(err => console.warn('[Orders] Poll error:', err.message));
+  });
+
+  console.log('[AutoSync] Crons scheduled: sync 6am/9am/12pm UTC, Slack digest 7am UTC, Orders poll */15min');
 
   // On startup: catch-up if data is more than 23h old AND no attempt in last 4h
   (async () => {
@@ -2206,5 +2326,10 @@ function scheduleDailySync() {
     } catch (e) {
       console.warn('[AutoSync] Could not check last sync time:', e.message);
     }
+
+    // Rebuild intraday orders state on startup (non-blocking, runs after 10s to let server settle)
+    setTimeout(() => {
+      ordersPoller.rebuildToday().catch(err => console.warn('[Orders] Startup rebuild error:', err.message));
+    }, 10000);
   })();
 }

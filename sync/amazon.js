@@ -630,29 +630,35 @@ function getPresetRanges() {
   yesterday.setDate(today.getDate() - 1);
   const y = yesterday;
 
-  const d7 = new Date(y); d7.setDate(y.getDate() - 6);
-  const d14 = new Date(y); d14.setDate(y.getDate() - 13);
-  const d30 = new Date(y); d30.setDate(y.getDate() - 29);
+  function sub(base, days) { const d = new Date(base); d.setDate(base.getDate() - days); return d; }
 
-  const thisMonthStart = new Date(today.getFullYear(), today.getMonth(), 1);
-  if (thisMonthStart > y) thisMonthStart.setTime(y.getTime()); // guard: 1st of month
   const lastMonthStart = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-  const lastMonthEnd = new Date(today.getFullYear(), today.getMonth(), 0);
+  const lastMonthEnd   = new Date(today.getFullYear(), today.getMonth(), 0);
+  const thisMonthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  const yearStart      = new Date(today.getFullYear(), 0, 1);
 
   function r(start, end, label) {
+    // Clamp start to yesterday if it somehow overshoots (e.g., MTD on the 1st)
+    const s = start > y ? y : start;
     return {
-      start: fmtDate(start) + 'T00:00:00Z',
-      end:   fmtDate(end)   + 'T23:59:59Z',
-      startDate: fmtDate(start),
+      start: fmtDate(s) + 'T00:00:00Z',
+      end:   fmtDate(end) + 'T23:59:59Z',
+      startDate: fmtDate(s),
       endDate:   fmtDate(end),
       label
     };
   }
 
   return {
-    last7d:    r(d7,             y,            'Last 7 Days'),
-    last30d:   r(d30,            y,            'Last 30 Days'),
-    lastMonth: r(lastMonthStart, lastMonthEnd, 'Last Month')
+    yesterday:  r(y,                 y,             'Yesterday'),
+    last7d:     r(sub(y, 6),         y,             'Last 7 Days'),
+    last14d:    r(sub(y, 13),        y,             'Last 14 Days'),
+    last30d:    r(sub(y, 29),        y,             'Last 30 Days'),
+    last60d:    r(sub(y, 59),        y,             'Last 60 Days'),
+    last90d:    r(sub(y, 89),        y,             'Last 90 Days'),
+    mtd:        r(thisMonthStart,    y,             'Month to Date'),
+    lastMonth:  r(lastMonthStart,    lastMonthEnd,  'Last Month'),
+    ytd:        r(yearStart,         y,             'Year to Date'),
   };
 }
 
@@ -1718,4 +1724,4 @@ async function fetchActivePromotions(marketplaceIds, token) {
   return Object.fromEntries(Object.entries(asinPromos).map(([k, v]) => [k, [...v]]));
 }
 
-module.exports = { syncBrandMetrics, importBrandsFromAmazon, fetchUpcsForAsins, fetchFinancialEvents, enrichListingHealth, scrapeSellerNames, fetchStrandedInventory };
+module.exports = { syncBrandMetrics, importBrandsFromAmazon, fetchUpcsForAsins, fetchFinancialEvents, enrichListingHealth, scrapeSellerNames, fetchStrandedInventory, getAccessToken, spRequest, getMarketplaceIds, MARKETPLACE_CODE, sleep, createReport, waitForReport, downloadReport };

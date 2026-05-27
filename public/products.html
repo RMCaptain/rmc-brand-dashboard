@@ -42,9 +42,17 @@
         <h1 class="text-lg font-semibold" style="color:var(--text)">Products</h1>
         <p class="text-xs mt-0.5" style="color:var(--text-3)" id="pageSubtitle">All ASINs across all brands — performance metrics.</p>
       </div>
-      <div class="flex gap-1" id="presetButtons">
-        <button onclick="setPreset('last30d')"    id="preset-last30d"    class="preset-btn">Last 30 Days</button>
-        <button onclick="setPreset('lastMonth')"  id="preset-lastMonth"  class="preset-btn">Last Month</button>
+      <div class="flex gap-1 flex-wrap" id="presetButtons">
+        <button onclick="setPreset('today')"     id="preset-today"     class="preset-btn">Today</button>
+        <button onclick="setPreset('yesterday')" id="preset-yesterday" class="preset-btn">Yesterday</button>
+        <button onclick="setPreset('last7d')"    id="preset-last7d"    class="preset-btn">7D</button>
+        <button onclick="setPreset('last14d')"   id="preset-last14d"   class="preset-btn">14D</button>
+        <button onclick="setPreset('last30d')"   id="preset-last30d"   class="preset-btn">30D</button>
+        <button onclick="setPreset('last60d')"   id="preset-last60d"   class="preset-btn">60D</button>
+        <button onclick="setPreset('last90d')"   id="preset-last90d"   class="preset-btn">90D</button>
+        <button onclick="setPreset('mtd')"       id="preset-mtd"       class="preset-btn">MTD</button>
+        <button onclick="setPreset('lastMonth')" id="preset-lastMonth" class="preset-btn">Last Month</button>
+        <button onclick="setPreset('ytd')"       id="preset-ytd"       class="preset-btn">YTD</button>
       </div>
     </div>
 
@@ -145,9 +153,11 @@
   <script>
     let brandsData = [];
     let presetMetrics = {};
+    let todayData = null;
+    const VALID_PRESETS = new Set(['today','yesterday','last7d','last14d','last30d','last60d','last90d','mtd','lastMonth','ytd']);
     let currency = localStorage.getItem('currency') || 'CAD';
     let fxRate = { usdToCad: 1.38, cadToUsd: 0.724 };
-    let activePreset = localStorage.getItem('productsPreset') || 'last30d';
+    let activePreset = VALID_PRESETS.has(localStorage.getItem('brandPreset')) ? localStorage.getItem('brandPreset') : 'today';
     let activeTab = localStorage.getItem('productsTab') || 'performance';
     let sortCol = 'revenue';
     let sortDir = -1;
@@ -196,7 +206,7 @@
 
     // ── Velocity (same logic as brand.html) ─────────────────────────────────────
     function calcVelocity(asin, brandId) {
-      for (const { key, days } of [{ key: 'last30d', days: 30 }, { key: 'thisMonth', days: null }, { key: 'lastMonth', days: null }]) {
+      for (const { key, days } of [{ key: 'last30d', days: 30 }, { key: 'mtd', days: null }, { key: 'lastMonth', days: null }]) {
         const preset = presetMetrics.presets?.[key];
         if (!preset) continue;
         const sku = preset.brands?.[brandId]?.skus?.find(s => s.asin === asin);
@@ -209,10 +219,11 @@
 
     // ── Build flat product list ──────────────────────────────────────────────────
     function buildProductList() {
-      const preset = presetMetrics.presets?.[activePreset];
+      const isToday = activePreset === 'today';
+      const preset = isToday ? null : presetMetrics.presets?.[activePreset];
       const rows = [];
       for (const brand of brandsData) {
-        const bm = preset?.brands?.[brand.id];
+        const bm = isToday ? todayData?.brands?.[brand.id] : preset?.brands?.[brand.id];
         const skuMap = Object.fromEntries((bm?.skus || []).map(s => [s.asin, s]));
         for (const asin of brand.asins) {
           const s = skuMap[asin];
@@ -491,12 +502,16 @@
     // ── Preset ──────────────────────────────────────────────────────────────────
     function setPreset(key) {
       activePreset = key;
-      localStorage.setItem('productsPreset', key);
+      localStorage.setItem('brandPreset', key);
       document.querySelectorAll('.preset-btn').forEach(btn => {
         btn.classList.toggle('active', btn.id === `preset-${key}`);
       });
       currentPage = 1;
-      render();
+      if (key === 'today') {
+        fetch('/api/metrics/today').then(r => r.json()).then(d => { todayData = d; render(); });
+      } else {
+        render();
+      }
     }
 
     // ── Currency ─────────────────────────────────────────────────────────────────

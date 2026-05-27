@@ -48,9 +48,17 @@
       <div class="flex items-center gap-3 flex-wrap">
         <h1 class="text-base font-semibold text-white">Brands <span id="brandCount" class="text-slate-500 font-normal text-sm"></span></h1>
         <!-- Preset buttons — performance view only -->
-        <div id="presetBtns" class="flex gap-1">
-          <button onclick="setPreset('last30d')"   id="preset-last30d"   class="preset-btn">Last 30 Days</button>
+        <div id="presetBtns" class="flex gap-1 flex-wrap">
+          <button onclick="setPreset('today')"     id="preset-today"     class="preset-btn">Today</button>
+          <button onclick="setPreset('yesterday')" id="preset-yesterday" class="preset-btn">Yesterday</button>
+          <button onclick="setPreset('last7d')"    id="preset-last7d"    class="preset-btn">7D</button>
+          <button onclick="setPreset('last14d')"   id="preset-last14d"   class="preset-btn">14D</button>
+          <button onclick="setPreset('last30d')"   id="preset-last30d"   class="preset-btn">30D</button>
+          <button onclick="setPreset('last60d')"   id="preset-last60d"   class="preset-btn">60D</button>
+          <button onclick="setPreset('last90d')"   id="preset-last90d"   class="preset-btn">90D</button>
+          <button onclick="setPreset('mtd')"       id="preset-mtd"       class="preset-btn">MTD</button>
           <button onclick="setPreset('lastMonth')" id="preset-lastMonth" class="preset-btn">Last Month</button>
+          <button onclick="setPreset('ytd')"       id="preset-ytd"       class="preset-btn">YTD</button>
         </div>
       </div>
       <div class="flex items-center gap-2">
@@ -194,7 +202,9 @@
     // ── State ─────────────────────────────────────────────────────────────────
     let brandsData = [];
     let presetMetrics = {};
-    let activePreset = (['last30d','lastMonth'].includes(localStorage.getItem('brandPreset'))) ? localStorage.getItem('brandPreset') : 'last30d';
+    let todayData = null; // populated by /api/metrics/today when Today preset is active
+    const VALID_PRESETS = new Set(['today','yesterday','last7d','last14d','last30d','last60d','last90d','mtd','lastMonth','ytd']);
+    let activePreset = VALID_PRESETS.has(localStorage.getItem('brandPreset')) ? localStorage.getItem('brandPreset') : 'today';
     let currency = localStorage.getItem('currency') || 'CAD';
     let fxRate = { usdToCad: 1.38, cadToUsd: 0.724 };
     let activeView = localStorage.getItem('brandsView') || 'performance';
@@ -248,11 +258,18 @@
       document.querySelectorAll('.preset-btn').forEach(btn => {
         btn.classList.toggle('active', btn.id === `preset-${key}`);
       });
-      renderPerformance();
+      if (key === 'today') {
+        fetch('/api/metrics/today').then(r => r.json()).then(d => { todayData = d; renderPerformance(); });
+      } else {
+        renderPerformance();
+      }
     }
 
     function renderPerformance() {
-      const presetBrandData = presetMetrics.presets?.[activePreset]?.brands || {};
+      const isToday = activePreset === 'today';
+      const presetBrandData = isToday
+        ? (todayData?.brands || {})
+        : (presetMetrics.presets?.[activePreset]?.brands || {});
       document.getElementById('brandCount').textContent = `(${brandsData.length})`;
 
       if (!brandsData.length) {
@@ -286,7 +303,7 @@
               <div class="grid grid-cols-2 gap-3 mb-4">
                 <div><p class="text-xs mb-0.5" style="color:var(--text-3)">Revenue</p><p class="text-lg font-bold" style="color:var(--text)">${fmt(m.revenueCad, m.revenueUsd)}</p></div>
                 <div><p class="text-xs mb-0.5" style="color:var(--text-3)">Units Sold</p><p class="text-lg font-bold" style="color:var(--text)">${(m.units || 0).toLocaleString()}</p></div>
-                <div><p class="text-xs mb-0.5" style="color:var(--text-3)">Sessions</p><p class="text-lg font-bold" style="color:var(--text)">${(m.sessions || 0).toLocaleString()}</p></div>
+                <div><p class="text-xs mb-0.5" style="color:var(--text-3)">Sessions</p><p class="text-lg font-bold" style="color:var(--text)">${m.sessions != null ? (m.sessions).toLocaleString() : '—'}</p></div>
                 <div><p class="text-xs mb-0.5" style="color:var(--text-3)">Avg CVR</p><p class="text-lg font-bold" style="color:var(--text)">${m.avgCvr != null ? m.avgCvr.toFixed(2) + '%' : '—'}</p></div>
               </div>
               <div>
@@ -966,7 +983,7 @@
         document.getElementById('lastSyncText').textContent = 'Synced ' + new Date(brandsRes.lastSync).toLocaleString();
       }
       const available = Object.keys(presetMetrics.presets || {});
-      if (!available.includes(activePreset) && available.length > 0) activePreset = available[0];
+      if (activePreset !== 'today' && !available.includes(activePreset) && available.length > 0) activePreset = available[0];
       updateToggleUI();
       setPreset(activePreset);
       setView(activeView);

@@ -64,8 +64,16 @@
     <!-- Date Range Picker -->
     <div class="flex items-center justify-between mb-6">
       <div class="flex items-center gap-1 flex-wrap">
-        <button onclick="setPreset('last30d')" id="preset-last30d" class="preset-btn">Last 30 Days</button>
+        <button onclick="setPreset('today')"     id="preset-today"     class="preset-btn">Today</button>
+        <button onclick="setPreset('yesterday')" id="preset-yesterday" class="preset-btn">Yesterday</button>
+        <button onclick="setPreset('last7d')"    id="preset-last7d"    class="preset-btn">7D</button>
+        <button onclick="setPreset('last14d')"   id="preset-last14d"   class="preset-btn">14D</button>
+        <button onclick="setPreset('last30d')"   id="preset-last30d"   class="preset-btn">30D</button>
+        <button onclick="setPreset('last60d')"   id="preset-last60d"   class="preset-btn">60D</button>
+        <button onclick="setPreset('last90d')"   id="preset-last90d"   class="preset-btn">90D</button>
+        <button onclick="setPreset('mtd')"       id="preset-mtd"       class="preset-btn">MTD</button>
         <button onclick="setPreset('lastMonth')" id="preset-lastMonth" class="preset-btn">Last Month</button>
+        <button onclick="setPreset('ytd')"       id="preset-ytd"       class="preset-btn">YTD</button>
       </div>
       <p id="dateRangeLabel" class="text-sm text-slate-500 ml-4 whitespace-nowrap"></p>
     </div>
@@ -135,7 +143,9 @@
     let fxRate = { usdToCad: 1.38, cadToUsd: 0.724 };
     let brandCache = null;
     let presetMetrics = {};
-    let activePreset = 'last30d';
+    let todayData = null; // from /api/metrics/today
+    const VALID_PRESETS = new Set(['today','yesterday','last7d','last14d','last30d','last60d','last90d','mtd','lastMonth','ytd']);
+    let activePreset = VALID_PRESETS.has(localStorage.getItem('brandPreset')) ? localStorage.getItem('brandPreset') : 'today';
     let allBrandsData = [];
     let asinSortCol = null;
     let asinSortDir = -1;
@@ -153,7 +163,7 @@
     function calcVelocity(asin, brandId) {
       const candidates = [
         { key: 'last30d', days: 30 },
-        { key: 'thisMonth', days: null },
+        { key: 'mtd', days: null },
         { key: 'lastMonth', days: null }
       ];
       for (const { key, days } of candidates) {
@@ -294,11 +304,25 @@
 
     function setPreset(key) {
       activePreset = key;
-      localStorage.setItem('dashboardPreset', key);
+      localStorage.setItem('brandPreset', key);
 
       document.querySelectorAll('.preset-btn').forEach(btn => {
         btn.classList.toggle('active', btn.id === `preset-${key}`);
       });
+
+      if (key === 'today') {
+        const today = new Date().toISOString().split('T')[0];
+        const fmtLabel = d => new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        document.getElementById('dateRangeLabel').textContent = fmtLabel(today) + ' (live)';
+        fetch('/api/metrics/today').then(r => r.json()).then(d => {
+          todayData = d;
+          if (brandCache) {
+            const updatedBrand = { ...brandCache, metrics: todayData.brands?.[brandCache.id] || null };
+            renderBrand(updatedBrand);
+          }
+        });
+        return;
+      }
 
       const meta = presetMetrics.presets?.[key];
       if (meta) {
@@ -324,7 +348,7 @@
       const id = new URLSearchParams(location.search).get('id');
       if (!id) { document.getElementById('brandName').textContent = 'No brand selected'; return; }
 
-      activePreset = localStorage.getItem('dashboardPreset') || 'last30d';
+      activePreset = VALID_PRESETS.has(localStorage.getItem('brandPreset')) ? localStorage.getItem('brandPreset') : 'today';
 
       try {
         const [brandRes, pmRes, fxRes, allBrandsRes] = await Promise.all([
@@ -341,7 +365,7 @@
         allBrandsData = allBrandsRes?.brands || [];
 
         const availablePresets = Object.keys(presetMetrics.presets || {});
-        if (!availablePresets.includes(activePreset) && availablePresets.length > 0) {
+        if (activePreset !== 'today' && !availablePresets.includes(activePreset) && availablePresets.length > 0) {
           activePreset = availablePresets[0];
         }
 
@@ -618,10 +642,15 @@
     // ── Sales popup ────────────────────────────────────────────────────────────
 
     const PRESET_LABELS = {
-      yesterday: 'Yesterday',
-      last30d:   'Last 30 Days',
-      thisMonth: 'This Month',
-      lastMonth: 'Last Month'
+      yesterday:  'Yesterday',
+      last7d:     'Last 7 Days',
+      last14d:    'Last 14 Days',
+      last30d:    'Last 30 Days',
+      last60d:    'Last 60 Days',
+      last90d:    'Last 90 Days',
+      mtd:        'Month to Date',
+      lastMonth:  'Last Month',
+      ytd:        'Year to Date',
     };
 
     function getAsinPresetData(asin) {
