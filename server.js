@@ -1533,7 +1533,7 @@ app.post('/api/backfill', async (req, res) => {
   if (isBackfillRunning()) {
     return res.json({ status: 'already_running', message: 'A backfill job is already in progress — wait for it to complete' });
   }
-  const limit = Math.min(parseInt(req.query.limit || '15', 10), 30);
+  const limit = Math.min(parseInt(req.query.limit || '7', 10), 7);
   res.json({ status: 'started', limit, message: 'Backfill running in background — check server logs for progress' });
   setImmediate(async () => {
     try {
@@ -2430,10 +2430,10 @@ function scheduleDailySync() {
       ordersPoller.rebuildToday().catch(err => console.warn('[Orders] Startup rebuild error:', err.message));
     }, 10000);
 
-    // Startup backfill: fill up to 15 missing daily_metrics days after sync has time to settle
+    // Startup backfill: fill up to 7 missing days (14 report creates, safely under burst quota of 15)
     setTimeout(() => {
       const { backfillDays } = require('./sync/backfill');
-      loadBrands().then(({ brands }) => backfillDays(supabase, brands, 15))
+      loadBrands().then(({ brands }) => backfillDays(supabase, brands, 7))
         .catch(err => console.warn('[Backfill] startup error:', err.message));
     }, 30000);
   })();
