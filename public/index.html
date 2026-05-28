@@ -60,10 +60,27 @@
             <button onclick="setTableView('products')" id="view-products" class="view-tab">Products</button>
             <button onclick="setTableView('brands')"   id="view-brands"   class="view-tab">Brands</button>
           </div>
-          <!-- Preset selector -->
-          <div class="flex gap-1">
-            <button onclick="setBrandPreset('last30d')"   id="bp-last30d"   class="bp-btn">Last 30d</button>
-            <button onclick="setBrandPreset('lastMonth')" id="bp-lastMonth" class="bp-btn">Last Month</button>
+          <!-- Period selector -->
+          <div class="flex items-center gap-2">
+            <select id="presetSelect" onchange="onPresetChange(this.value)" class="rmc-select" style="width:auto;min-width:140px;color-scheme:dark">
+              <option value="today">Today</option>
+              <option value="yesterday">Yesterday</option>
+              <option value="last7d">Last 7 Days</option>
+              <option value="last14d">Last 14 Days</option>
+              <option value="last30d">Last 30 Days</option>
+              <option value="last60d">Last 60 Days</option>
+              <option value="last90d">Last 90 Days</option>
+              <option value="mtd">Month to Date</option>
+              <option value="lastMonth">Last Month</option>
+              <option value="ytd">Year to Date</option>
+              <option value="custom">Custom Range…</option>
+            </select>
+            <div id="customDateRow" class="hidden flex items-center gap-2">
+              <input type="date" id="customFrom" class="rmc-input" style="padding:4px 8px;font-size:11px;width:128px;color-scheme:dark" />
+              <span style="color:var(--text-3);font-size:11px;padding:0 2px">–</span>
+              <input type="date" id="customTo" class="rmc-input" style="padding:4px 8px;font-size:11px;width:128px;color-scheme:dark" />
+              <button onclick="applyCustomRange()" class="preset-btn active">Apply</button>
+            </div>
           </div>
         </div>
       </div>
@@ -121,11 +138,25 @@
     // ── State ─────────────────────────────────────────────────────────────────
     let brandsData = [];
     let presetMetrics = {};
+    let todayTableData = null;
+    let customTableData = null;
+    let customFrom = localStorage.getItem('customFrom') || '';
+    let customTo   = localStorage.getItem('customTo')   || '';
     let currency = localStorage.getItem('currency') || 'CAD';
     let fxRate = { usdToCad: 1.38, cadToUsd: 0.724 };
-    let activeBrandPreset = localStorage.getItem('brandPreset') || 'last30d';
+    let activeBrandPreset = (() => {
+      const s = localStorage.getItem('brandPreset');
+      if (!s || s === 'custom') return (localStorage.getItem('customFrom') && localStorage.getItem('customTo')) ? 'custom' : 'last30d';
+      return s;
+    })();
     let activeTileKey = null;
     let activeTableView = localStorage.getItem('tableView') || 'products';
+
+    function getActiveTableData() {
+      if (activeBrandPreset === 'today')  return todayTableData;
+      if (activeBrandPreset === 'custom') return customTableData;
+      return presetMetrics.presets?.[activeBrandPreset];
+    }
     let sortCol = 'revenue';
     let sortDir = -1; // -1 desc, 1 asc
     let brandSortCol = 'revenue';
@@ -160,10 +191,10 @@
 
 
     // ── COGS calculation ──────────────────────────────────────────────────────
-    function calcCogs(presetKey) {
+    function calcCogs(presetData) {
       let cad = 0, usd = 0;
       for (const brand of brandsData) {
-        const bm = presetMetrics.presets?.[presetKey]?.brands?.[brand.id];
+        const bm = presetData?.brands?.[brand.id];
         if (!bm?.skus) continue;
         for (const sku of bm.skus) {
           const cogsCA = brand.cogsPerMarketplace?.[sku.asin]?.CA ?? (brand.marketplace !== 'US' ? brand.cogs?.[sku.asin] : null) ?? 0;
@@ -195,7 +226,7 @@
       const fCad = fin.CAD || {};
       const fUsd = fin.USD || {};
 
-      const cogs = calcCogs(presetKey);
+      const cogs = calcCogs(preset);
 
       // All figures in selected display currency
       const sales       = getNum(revCad, revUsd);
@@ -417,8 +448,8 @@
       return `<span style="${s};font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;letter-spacing:0.05em;vertical-align:middle;display:inline-block">${mp}</span>`;
     }
 
-    function getAllSkus(presetKey) {
-      const preset = presetMetrics.presets?.[presetKey];
+    function getAllSkus(presetData) {
+      const preset = presetData;
       if (!preset) return [];
       const skus = [];
       for (const brand of brandsData) {
@@ -554,7 +585,7 @@
 
     function renderProductTable() {
       const tbody = document.getElementById('productTableBody');
-      const skus = getAllSkus(activeBrandPreset);
+      const skus = getAllSkus(getActiveTableData());
 
       if (!skus.length) {
         tbody.innerHTML = '<tr><td colspan="10" class="text-center text-slate-500 py-8">No data — run sync first</td></tr>';
@@ -619,21 +650,51 @@
       updateSortIndicators();
     }
 
-    // ── Brand table ───────────────────────────────────────────────────────────
+    // ── Table preset ──────────────────────────────────────────────────────────
+    function onPresetChange(key) {
+      document.getElementById('customDateRow').classList.toggle('hidden', key !== 'custom');
+      if (key !== 'custom') setBrandPreset(key);
+    }
+
+    function applyCustomRange() {
+      const from = document.getElementById('customFrom').value;
+      const to   = document.getElementById('customTo').value;
+      if (!from || !to || from > to) return;
+      customFrom = from; customTo = to;
+      localStorage.setItem('customFrom', from);
+      localStorage.setItem('customTo', to);
+      activeBrandPreset = 'custom';
+      localStorage.setItem('brandPreset', 'custom');
+      productPage = 1; brandPage = 1;
+      fetch(`/api/metrics?from=${from}&to=${to}`)
+        .then(r => r.json())
+        .then(d => { customTableData = d; renderBrandTable(); renderProductTable(); });
+    }
+
     function setBrandPreset(key) {
       activeBrandPreset = key;
       localStorage.setItem('brandPreset', key);
-      document.querySelectorAll('.bp-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.id === `bp-${key}`);
-      });
-      productPage = 1;
-      brandPage = 1;
-      renderBrandTable();
-      renderProductTable();
+      const sel = document.getElementById('presetSelect');
+      if (sel) sel.value = key;
+      const cdr = document.getElementById('customDateRow');
+      if (cdr) cdr.classList.toggle('hidden', key !== 'custom');
+      productPage = 1; brandPage = 1;
+      if (key === 'today') {
+        fetch('/api/metrics/today').then(r => r.json()).then(d => { todayTableData = d; renderBrandTable(); renderProductTable(); });
+      } else if (key === 'custom') {
+        if (customFrom && customTo) {
+          fetch(`/api/metrics?from=${customFrom}&to=${customTo}`)
+            .then(r => r.json())
+            .then(d => { customTableData = d; renderBrandTable(); renderProductTable(); });
+        }
+      } else {
+        renderBrandTable();
+        renderProductTable();
+      }
     }
 
     function renderBrandTable() {
-      const preset = presetMetrics.presets?.[activeBrandPreset];
+      const preset = getActiveTableData();
       const tbody = document.getElementById('brandTableBody');
 
       if (!brandsData.length) {
@@ -648,7 +709,7 @@
         const s = bm?.summary;
         let rev = 0, cogsNum = 0, grossProfit = 0, margin = null, units = 0, sessions = 0, buyBox = null, cogs = { cad: 0, usd: 0 };
         if (s) {
-          cogs = calcBrandCogs(brand, activeBrandPreset);
+          cogs = calcBrandCogs(brand, getActiveTableData());
           rev = getNum(s.revenueCad, s.revenueUsd);
           cogsNum = getNum(cogs.cad, cogs.usd);
           grossProfit = rev - cogsNum;
@@ -710,9 +771,9 @@
       updateBrandSortIndicators();
     }
 
-    function calcBrandCogs(brand, presetKey) {
+    function calcBrandCogs(brand, presetData) {
       let cad = 0, usd = 0;
-      const bm = presetMetrics.presets?.[presetKey]?.brands?.[brand.id];
+      const bm = presetData?.brands?.[brand.id];
       if (!bm?.skus) return { cad: 0, usd: 0 };
       for (const sku of bm.skus) {
         const cogsCA = brand.cogsPerMarketplace?.[sku.asin]?.CA ?? (brand.marketplace !== 'US' ? brand.cogs?.[sku.asin] : null) ?? 0;
@@ -825,11 +886,14 @@
             'Synced ' + new Date(brandsRes.lastSync).toLocaleString();
         }
 
-        // Validate active brand preset still exists
+        // Validate active preset
         const available = Object.keys(presetMetrics.presets || {});
-        if (!available.includes(activeBrandPreset) && available.length > 0) {
+        if (activeBrandPreset !== 'today' && activeBrandPreset !== 'custom' && !available.includes(activeBrandPreset) && available.length > 0) {
           activeBrandPreset = available[0];
         }
+
+        if (customFrom) document.getElementById('customFrom').value = customFrom;
+        if (customTo)   document.getElementById('customTo').value   = customTo;
 
         updateToggleUI();
         setTableView(activeTableView);
