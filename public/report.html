@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RMC Brand Report</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --green:     #537D30;
+      --green-lt:  #EBF1E4;
+      --navy:      #1A2332;
+      --text:      #1A2332;
+      --text-2:    #5A6A82;
+      --text-3:    #9AAABB;
+      --border:    #E2E8F0;
+      --bg:        #F8FAFC;
+      --pos:       #16A34A;
+      --neg:       #DC2626;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      font-size: 13px;
+      color: var(--text);
+      background: #fff;
+      line-height: 1.5;
+    }
+
+    /* ── Loading state ─────────────────────────────────────────────────────── */
+    #loading {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      gap: 16px;
+      color: var(--text-2);
+    }
+    .spinner {
+      width: 36px; height: 36px;
+      border: 3px solid var(--border);
+      border-top-color: var(--green);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Report wrapper ────────────────────────────────────────────────────── */
+    #report { display: none; max-width: 960px; margin: 0 auto; padding: 0 24px 48px; }
+
+    /* ── Header ────────────────────────────────────────────────────────────── */
+    .rpt-header {
+      background: var(--navy);
+      color: #fff;
+      padding: 28px 32px;
+      margin: 0 -24px 32px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 24px;
+    }
+    .rpt-header-left h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+    .rpt-header-left p  { font-size: 12px; color: rgba(255,255,255,0.55); }
+    .rpt-header-meta {
+      text-align: right;
+      font-size: 12px;
+      color: rgba(255,255,255,0.55);
+      line-height: 1.8;
+    }
+    .rpt-header-meta strong { color: rgba(255,255,255,0.85); font-weight: 500; }
+    .rmc-brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      color: var(--green);
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+    .rmc-brand span { color: rgba(255,255,255,0.7); font-weight: 400; letter-spacing: 0; text-transform: none; }
+
+    /* ── Section ────────────────────────────────────────────────────────────── */
+    .rpt-section { margin-bottom: 36px; }
+    .rpt-section-title {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--text-3);
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 8px;
+      margin-bottom: 16px;
+    }
+
+    /* ── Summary tiles ──────────────────────────────────────────────────────── */
+    .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .tile {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+    }
+    .tile-label { font-size: 11px; color: var(--text-2); margin-bottom: 6px; }
+    .tile-value { font-size: 22px; font-weight: 700; letter-spacing: -0.5px; }
+    .tile-change {
+      font-size: 11px;
+      font-weight: 500;
+      margin-top: 4px;
+      display: flex;
+      align-items: center;
+      gap: 3px;
+    }
+    .tile-change.pos { color: var(--pos); }
+    .tile-change.neg { color: var(--neg); }
+    .tile-change.neu { color: var(--text-3); }
+    .tile-prev { font-size: 11px; color: var(--text-3); margin-top: 2px; }
+
+    /* ── Chart ──────────────────────────────────────────────────────────────── */
+    .chart-wrap {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+      position: relative;
+      height: 220px;
+    }
+
+    /* ── Products table ─────────────────────────────────────────────────────── */
+    .rpt-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .rpt-table th {
+      text-align: left;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-3);
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    .rpt-table th.r, .rpt-table td.r { text-align: right; }
+    .rpt-table td {
+      padding: 9px 10px;
+      border-bottom: 1px solid #F1F5F9;
+      vertical-align: middle;
+    }
+    .rpt-table tbody tr:hover { background: var(--bg); }
+    .product-title {
+      font-weight: 500;
+      color: var(--text);
+      max-width: 320px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      display: block;
+    }
+    .product-asin { font-size: 10px; color: var(--text-3); margin-top: 1px; }
+    .delta {
+      font-size: 10px;
+      font-weight: 500;
+      padding: 2px 5px;
+      border-radius: 4px;
+      white-space: nowrap;
+    }
+    .delta.pos { color: var(--pos); background: #F0FDF4; }
+    .delta.neg { color: var(--neg); background: #FEF2F2; }
+    .delta.neu { color: var(--text-3); }
+    .bb-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .bb-track {
+      flex: 1;
+      height: 4px;
+      background: var(--border);
+      border-radius: 2px;
+      min-width: 40px;
+    }
+    .bb-fill { height: 100%; border-radius: 2px; background: var(--green); }
+    .inv-pill {
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: 10px;
+      font-size: 10px;
+      font-weight: 500;
+    }
+    .inv-ok   { background: #F0FDF4; color: var(--pos); }
+    .inv-low  { background: #FFFBEB; color: #B45309; }
+    .inv-zero { background: #FEF2F2; color: var(--neg); }
+
+    /* ── Ads summary ────────────────────────────────────────────────────────── */
+    .ads-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .ads-stat {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 16px;
+    }
+    .ads-stat-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-3); margin-bottom: 5px; }
+    .ads-stat-value { font-size: 18px; font-weight: 700; letter-spacing: -0.3px; }
+    .ads-stat-sub   { font-size: 11px; color: var(--text-2); margin-top: 3px; }
+
+    /* ── Footer ─────────────────────────────────────────────────────────────── */
+    .rpt-footer {
+      border-top: 1px solid var(--border);
+      padding-top: 16px;
+      margin-top: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      color: var(--text-3);
+    }
+    .rpt-footer strong { color: var(--green); }
+
+    /* ── Print ──────────────────────────────────────────────────────────────── */
+    .no-print { }
+    @media print {
+      body { background: #fff; }
+      .no-print { display: none !important; }
+      #report { padding: 0; }
+      .rpt-header { margin: 0 0 24px; }
+      .chart-wrap { break-inside: avoid; }
+      .rpt-section { break-inside: avoid; }
+      .rpt-table td, .rpt-table th { padding: 6px 8px; }
+    }
+  </style>
+</head>
+<body>
+
+<div id="loading">
+  <div class="spinner"></div>
+  <div>Generating report…</div>
+  <div style="font-size:11px;color:#9AAABB">Fetching sales data and advertising metrics</div>
+</div>
+
+<div id="report">
+
+  <div class="rpt-header">
+    <div class="rpt-header-left">
+      <div class="rmc-brand">RMC <span>/ Rocky Mountain Co.</span></div>
+      <h1 id="brandName">Brand Report</h1>
+      <p id="periodLabel"></p>
+    </div>
+    <div class="rpt-header-meta">
+      <div><strong>Period</strong> <span id="metaPeriod"></span></div>
+      <div><strong>Comparison</strong> <span id="metaComparison"></span></div>
+      <div><strong>Currency</strong> CAD + USD</div>
+      <div style="margin-top:8px"><span id="metaGenerated"></span></div>
+    </div>
+  </div>
+
+  <!-- Summary tiles -->
+  <div class="rpt-section">
+    <div class="rpt-section-title">Performance Summary</div>
+    <div class="tiles" id="tiles"></div>
+  </div>
+
+  <!-- Daily chart -->
+  <div class="rpt-section">
+    <div class="rpt-section-title">Daily Revenue Trend</div>
+    <div class="chart-wrap">
+      <canvas id="salesChart"></canvas>
+    </div>
+  </div>
+
+  <!-- Product table -->
+  <div class="rpt-section">
+    <div class="rpt-section-title">Product Performance</div>
+    <table class="rpt-table">
+      <thead>
+        <tr>
+          <th>Product</th>
+          <th class="r">Revenue (CA$)</th>
+          <th class="r">Revenue (US$)</th>
+          <th class="r">Units</th>
+          <th class="r">vs Prior</th>
+          <th class="r">Buy Box</th>
+          <th class="r">Inventory</th>
+          <th class="r" id="acosHeader" style="display:none">ACOS</th>
+        </tr>
+      </thead>
+      <tbody id="productRows"></tbody>
+    </table>
+  </div>
+
+  <!-- Ads section -->
+  <div class="rpt-section" id="adsSection" style="display:none">
+    <div class="rpt-section-title">Advertising Performance</div>
+    <div class="ads-grid" id="adsGrid"></div>
+  </div>
+
+  <div class="rpt-footer">
+    <div>Prepared by <strong>Rocky Mountain Co.</strong> — Confidential</div>
+    <div id="footerGenerated"></div>
+  </div>
+
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+function pct(curr, prev) {
+  if (!prev || prev === 0) return null;
+  return Math.round((curr - prev) / prev * 1000) / 10;
+}
+
+function fmtC(v, sym = 'CA$') {
+  if (v == null || isNaN(v)) return '—';
+  return sym + Math.round(v).toLocaleString('en-US');
+}
+
+function fmtN(v) {
+  if (v == null) return '—';
+  return v.toLocaleString('en-US');
+}
+
+function deltaHtml(curr, prev) {
+  const p = pct(curr, prev);
+  if (p === null) return '<span class="delta neu">—</span>';
+  const sign = p >= 0 ? '+' : '';
+  const cls  = p >= 0 ? 'pos' : 'neg';
+  return `<span class="delta ${cls}">${sign}${p}%</span>`;
+}
+
+function render(d) {
+  document.title = `${d.brand.name} — RMC Report`;
+  $('brandName').textContent   = d.brand.name;
+  $('periodLabel').textContent = `${d.period.label}`;
+  $('metaPeriod').textContent     = d.period.label;
+  $('metaComparison').textContent = d.comparison.label;
+  const gen = new Date(d.generatedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+  $('metaGenerated').textContent  = `Generated ${gen}`;
+  $('footerGenerated').textContent = `Generated ${gen}`;
+
+  const s = d.summary, sp = d.summaryPrev;
+
+  // Tiles
+  const totalRev  = s.revenueCad + s.revenueUsd;
+  const totalPrev = sp.revenueCad + sp.revenueUsd;
+  const revPct    = pct(totalRev, totalPrev);
+  const unitsPct  = pct(s.units, sp.units);
+
+  const tiles = [
+    { label: 'Total Revenue (CA$)', value: fmtC(s.revenueCad), change: pct(s.revenueCad, sp.revenueCad), prev: fmtC(sp.revenueCad) },
+    { label: 'Total Revenue (US$)', value: fmtC(s.revenueUsd, 'US$'), change: pct(s.revenueUsd, sp.revenueUsd), prev: fmtC(sp.revenueUsd, 'US$') },
+    { label: 'Total Units',         value: fmtN(s.units),       change: unitsPct,  prev: fmtN(sp.units) + ' prior' },
+    { label: 'Sessions',            value: fmtN(s.sessions),    change: null,      prev: null },
+  ];
+
+  $('tiles').innerHTML = tiles.map(t => {
+    const sign = t.change != null && t.change >= 0 ? '+' : '';
+    const cls  = t.change == null ? 'neu' : t.change >= 0 ? 'pos' : 'neg';
+    const chg  = t.change == null ? '' : `<div class="tile-change ${cls}">${sign}${t.change}% vs prior period</div>`;
+    const prev = t.prev ? `<div class="tile-prev">Prior: ${t.prev}</div>` : '';
+    return `<div class="tile">
+      <div class="tile-label">${t.label}</div>
+      <div class="tile-value">${t.value}</div>
+      ${chg}${prev}
+    </div>`;
+  }).join('');
+
+  // Chart
+  buildChart(d.dailySeries, d.dailySeriesPrev, d.period, d.comparison);
+
+  // Products table
+  const hasAcos = d.products.some(p => p.ads?.acos != null);
+  if (hasAcos) {
+    $('acosHeader').style.display = '';
+  }
+
+  $('productRows').innerHTML = d.products.map(p => {
+    const prevRev = p.prev.revenueCad + p.prev.revenueUsd;
+    const currRev = p.revenueCad + p.revenueUsd;
+    const invCls  = p.inventory == null ? 'neu' : p.inventory === 0 ? 'inv-zero' : p.inventory <= 5 ? 'inv-low' : 'inv-ok';
+    const invTxt  = p.inventory == null ? '—' : p.inventory === 0 ? 'OOS' : `${p.inventory}`;
+    const bbHtml  = p.buyBox != null
+      ? `<div class="bb-bar"><div class="bb-track"><div class="bb-fill" style="width:${Math.min(p.buyBox,100)}%"></div></div><span>${p.buyBox}%</span></div>`
+      : '—';
+    const acosCell = hasAcos ? `<td class="r">${p.ads?.acos != null ? p.ads.acos + '%' : '—'}</td>` : '';
+    return `<tr>
+      <td>
+        <span class="product-title" title="${p.title}">${p.title}</span>
+        <span class="product-asin">${p.asin}</span>
+      </td>
+      <td class="r">${fmtC(p.revenueCad)}</td>
+      <td class="r">${fmtC(p.revenueUsd, 'US$')}</td>
+      <td class="r">${fmtN(p.units)}</td>
+      <td class="r">${deltaHtml(currRev, prevRev)}</td>
+      <td class="r">${bbHtml}</td>
+      <td class="r"><span class="inv-pill ${invCls}">${invTxt}</span></td>
+      ${acosCell}
+    </tr>`;
+  }).join('');
+
+  // Ads
+  if (d.adSummary) {
+    $('adsSection').style.display = '';
+    const a = d.adSummary;
+    const totalSpend = a.spendCad + a.spendUsd;
+    const totalAdSales = a.salesCad + a.salesUsd;
+    const stats = [
+      { label: 'Total Ad Spend',    value: fmtC(a.spendCad) + ' / ' + fmtC(a.spendUsd, 'US$'), sub: '' },
+      { label: 'ACOS',              value: a.acos  != null ? a.acos + '%'  : '—', sub: 'Ad spend / attributed sales' },
+      { label: 'ROAS',              value: a.roas  != null ? a.roas + 'x'  : '—', sub: 'Revenue per dollar spent' },
+      { label: 'TACOS',             value: a.tacos != null ? a.tacos + '%' : '—', sub: 'Ad spend / total sales' },
+      { label: 'Attributed Sales',  value: fmtC(a.salesCad) + ' / ' + fmtC(a.salesUsd, 'US$'), sub: '14-day attribution' },
+      { label: 'Clicks',            value: fmtN(a.clicks),       sub: 'CPC: ' + (a.cpc != null ? '$' + a.cpc : '—') },
+      { label: 'Impressions',       value: fmtN(a.impressions),  sub: '' },
+      { label: 'Ad Orders',         value: fmtN(a.orders),       sub: '' },
+    ];
+    $('adsGrid').innerHTML = stats.map(s =>
+      `<div class="ads-stat">
+        <div class="ads-stat-label">${s.label}</div>
+        <div class="ads-stat-value">${s.value}</div>
+        ${s.sub ? `<div class="ads-stat-sub">${s.sub}</div>` : ''}
+      </div>`
+    ).join('');
+  }
+
+  $('loading').style.display  = 'none';
+  $('report').style.display   = 'block';
+}
+
+function buildChart(series, seriesPrev, period, comparison) {
+  if (!series.length && !seriesPrev.length) return;
+
+  // Align comparison series to same x-axis positions (offset by period length)
+  const periodDays = Math.round((new Date(period.to) - new Date(period.from)) / 86400000) + 1;
+
+  // Build labels from current period dates
+  const labels = series.map(d => {
+    const dt = new Date(d.date + 'T12:00:00Z');
+    return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  });
+
+  // Map comparison data by index offset
+  const prevMap = {};
+  for (const d of seriesPrev) prevMap[d.date] = d;
+
+  // Reindex prev series to align with current (prev[i] maps to current[i] via date offset)
+  const currDates = series.map(d => d.date);
+  const prevAligned = currDates.map(date => {
+    const dt = new Date(date + 'T12:00:00Z');
+    const offsetDate = new Date(dt - periodDays * 86400000);
+    const offsetStr  = offsetDate.toISOString().split('T')[0];
+    return prevMap[offsetStr] || null;
+  });
+
+  const currRevUsd = series.map(d => Math.round((d.revCad + d.revUsd) * 100) / 100);
+  const prevRevUsd = prevAligned.map(d => d ? Math.round((d.revCad + d.revUsd) * 100) / 100 : null);
+
+  new Chart($('salesChart'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: period.label,
+          data:  currRevUsd,
+          borderColor: '#537D30',
+          backgroundColor: 'rgba(83,125,48,0.08)',
+          borderWidth: 2,
+          pointRadius: 3,
+          pointBackgroundColor: '#537D30',
+          tension: 0.3,
+          fill: true,
+        },
+        {
+          label: comparison.label,
+          data:  prevRevUsd,
+          borderColor: '#94A3B8',
+          backgroundColor: 'transparent',
+          borderWidth: 1.5,
+          pointRadius: 2,
+          borderDash: [4, 3],
+          tension: 0.3,
+          fill: false,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          position: 'top',
+          labels: { font: { family: 'Inter', size: 11 }, boxWidth: 16, padding: 12 },
+        },
+        tooltip: {
+          callbacks: {
+            label: ctx => ` ${ctx.dataset.label}: $${ctx.raw?.toLocaleString('en-US') || '—'}`,
+          },
+        },
+      },
+      scales: {
+        x: {
+          grid:  { display: false },
+          ticks: { font: { family: 'Inter', size: 10 }, maxRotation: 0, maxTicksLimit: 10 },
+        },
+        y: {
+          grid:  { color: '#F1F5F9' },
+          ticks: {
+            font: { family: 'Inter', size: 10 },
+            callback: v => '$' + v.toLocaleString('en-US'),
+          },
+        },
+      },
+    },
+  });
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+(async function init() {
+  const params = new URLSearchParams(location.search);
+  const brand  = params.get('brand');
+  const from   = params.get('from');
+  const to     = params.get('to');
+
+  if (!brand) {
+    $('loading').innerHTML = '<div style="color:#DC2626;font-size:14px">Missing <code>?brand=</code> parameter</div>';
+    return;
+  }
+
+  let url = `/api/report-data/${encodeURIComponent(brand)}`;
+  if (from || to) url += `?${from ? 'from=' + from : ''}${from && to ? '&' : ''}${to ? 'to=' + to : ''}`;
+
+  try {
+    const res  = await fetch(url, { credentials: 'include' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    render(data);
+  } catch (e) {
+    $('loading').innerHTML = `<div style="color:#DC2626;font-size:14px">Failed to load report: ${e.message}</div>`;
+  }
+})();
+</script>
+</body>
+</html>

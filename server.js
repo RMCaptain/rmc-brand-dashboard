@@ -1632,6 +1632,201 @@ app.get('/api/metrics', async (req, res) => {
   }
 });
 
+// Brand report data — assembles current + comparison period, ads, inventory for a single brand
+app.get('/api/report-data/:brandId', async (req, res) => {
+  const { brandId } = req.params;
+
+  try {
+    const msDay = 86400000;
+    const fmtISO = d => d.toISOString().split('T')[0];
+    const fmtLabel = s => new Date(s + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+    const todayStr = fmtISO(new Date());
+    const toStr    = req.query.to   || todayStr;
+    const fromStr  = req.query.from || fmtISO(new Date(new Date(toStr) - 29 * msDay));
+
+    const periodDays = Math.round((new Date(toStr) - new Date(fromStr)) / msDay);
+    const compToDate   = new Date(new Date(fromStr) - msDay);
+    const compFromDate = new Date(compToDate - periodDays * msDay);
+    const compToStr   = fmtISO(compToDate);
+    const compFromStr = fmtISO(compFromDate);
+
+    // Load brand config
+    const { brands } = await loadBrands();
+    const brand = brands.find(b => b.id === brandId);
+    if (!brand) return res.status(404).json({ error: `Brand '${brandId}' not found` });
+
+    // Query daily_metrics for both periods in parallel
+    const [{ data: currRows }, { data: prevRows }, { data: invRows }] = await Promise.all([
+      supabase.from('daily_metrics')
+        .select('asin,date,units,units_ca,units_us,revenue_cad,revenue_usd,sessions,page_views,buy_box_pct')
+        .gte('date', fromStr).lte('date', toStr),
+      supabase.from('daily_metrics')
+        .select('asin,date,units,units_ca,units_us,revenue_cad,revenue_usd')
+        .gte('date', compFromStr).lte('date', compToStr),
+      supabase.from('daily_metrics')
+        .select('asin,inventory_on_hand')
+        .lte('date', toStr)
+        .not('inventory_on_hand', 'is', null)
+        .order('date', { ascending: false }),
+    ]);
+
+    // Latest inventory per ASIN (first row per ASIN since ordered desc)
+    const invByAsin = {};
+    for (const r of (invRows || [])) {
+      if (!(r.asin in invByAsin)) invByAsin[r.asin] = r.inventory_on_hand;
+    }
+
+    // Aggregate helpers
+    function aggregateRows(rows) {
+      const byAsin = {};
+      for (const r of (rows || [])) {
+        if (!byAsin[r.asin]) byAsin[r.asin] = { units: 0, unitsCa: 0, unitsUs: 0, revCad: 0, revUsd: 0, sessions: 0, pv: 0, bbSum: 0, bbCount: 0 };
+        const a = byAsin[r.asin];
+        a.units   += r.units        || 0;
+        a.unitsCa += r.units_ca     || 0;
+        a.unitsUs += r.units_us     || 0;
+        a.revCad  += r.revenue_cad  || 0;
+        a.revUsd  += r.revenue_usd  || 0;
+        if (r.sessions   != null) a.sessions += r.sessions;
+        if (r.page_views != null) a.pv       += r.page_views;
+        if (r.buy_box_pct != null) { a.bbSum += r.buy_box_pct; a.bbCount++; }
+      }
+      return byAsin;
+    }
+
+    const currByAsin = aggregateRows(currRows);
+    const prevByAsin = aggregateRows(prevRows);
+
+    // Daily series for chart — sum all brand ASINs per date
+    const brandAsinSet = new Set(brand.asins || []);
+    const dailyMap = {};
+    for (const r of (currRows || [])) {
+      if (!brandAsinSet.has(r.asin)) continue;
+      if (!dailyMap[r.date]) dailyMap[r.date] = { revCad: 0, revUsd: 0, units: 0 };
+      dailyMap[r.date].revCad += r.revenue_cad || 0;
+      dailyMap[r.date].revUsd += r.revenue_usd || 0;
+      dailyMap[r.date].units  += r.units        || 0;
+    }
+    const prevDailyMap = {};
+    for (const r of (prevRows || [])) {
+      if (!brandAsinSet.has(r.asin)) continue;
+      if (!prevDailyMap[r.date]) prevDailyMap[r.date] = { revCad: 0, revUsd: 0, units: 0 };
+      prevDailyMap[r.date].revCad += r.revenue_cad || 0;
+      prevDailyMap[r.date].revUsd += r.revenue_usd || 0;
+      prevDailyMap[r.date].units  += r.units        || 0;
+    }
+
+    // Assemble product rows
+    let sumCurr = { revCad: 0, revUsd: 0, units: 0, sessions: 0, pv: 0 };
+    let sumPrev = { revCad: 0, revUsd: 0, units: 0 };
+    const products = [];
+
+    for (const asin of (brand.asins || [])) {
+      const c = currByAsin[asin];
+      const p = prevByAsin[asin];
+      if (!c && !p) continue;
+      const buyBox = c?.bbCount > 0 ? Math.round(c.bbSum / c.bbCount * 10) / 10 : null;
+      products.push({
+        asin,
+        title:      brand.asinTitles?.[asin] || asin,
+        revenueCad: Math.round((c?.revCad || 0) * 100) / 100,
+        revenueUsd: Math.round((c?.revUsd || 0) * 100) / 100,
+        units:      c?.units  || 0,
+        sessions:   c?.sessions || null,
+        pageViews:  c?.pv     || null,
+        buyBox,
+        inventory:  invByAsin[asin] ?? null,
+        prev: {
+          revenueCad: Math.round((p?.revCad || 0) * 100) / 100,
+          revenueUsd: Math.round((p?.revUsd || 0) * 100) / 100,
+          units:      p?.units  || 0,
+        },
+      });
+      if (c) {
+        sumCurr.revCad   += c.revCad;
+        sumCurr.revUsd   += c.revUsd;
+        sumCurr.units    += c.units;
+        sumCurr.sessions += c.sessions;
+        sumCurr.pv       += c.pv;
+      }
+      if (p) { sumPrev.revCad += p.revCad; sumPrev.revUsd += p.revUsd; sumPrev.units += p.units; }
+    }
+
+    // Sort by combined revenue desc
+    products.sort((a, b) => (b.revenueCad + b.revenueUsd) - (a.revenueCad + a.revenueUsd));
+
+    // Fetch ads for current period (graceful failure)
+    let adSummary = null;
+    let adByAsin  = {};
+    try {
+      const { syncAdMetrics } = require('./sync/ads');
+      adByAsin = await syncAdMetrics(fromStr, toStr);
+      let spendCad = 0, spendUsd = 0, salesCad = 0, salesUsd = 0, clicks = 0, impressions = 0, orders = 0;
+      for (const asin of (brand.asins || [])) {
+        const d = adByAsin[asin];
+        if (!d) continue;
+        spendCad    += d.spendCad           || 0;
+        spendUsd    += d.spendUsd           || 0;
+        salesCad    += d.attributedSalesCad || 0;
+        salesUsd    += d.attributedSalesUsd || 0;
+        clicks      += d.clicks             || 0;
+        impressions += d.impressions        || 0;
+        orders      += d.orders             || 0;
+      }
+      const totalSpend = spendCad + spendUsd;
+      const totalSales = salesCad + salesUsd;
+      const totalRev   = sumCurr.revCad + sumCurr.revUsd;
+      adSummary = {
+        spendCad: Math.round(spendCad * 100) / 100,
+        spendUsd: Math.round(spendUsd * 100) / 100,
+        salesCad: Math.round(salesCad * 100) / 100,
+        salesUsd: Math.round(salesUsd * 100) / 100,
+        clicks,
+        impressions,
+        orders,
+        acos:  totalSales > 0 ? Math.round(totalSpend / totalSales * 10000) / 100 : null,
+        roas:  totalSpend > 0 ? Math.round(totalSales / totalSpend * 100) / 100    : null,
+        tacos: totalRev   > 0 ? Math.round(totalSpend / totalRev   * 10000) / 100 : null,
+        cpc:   clicks > 0     ? Math.round(totalSpend / clicks * 10000) / 10000   : null,
+      };
+      // Attach per-ASIN ads to products
+      for (const p of products) {
+        const d = adByAsin[p.asin];
+        if (d) p.ads = { spendCad: d.spendCad, spendUsd: d.spendUsd, acos: d.acos, roas: d.roas };
+      }
+    } catch (e) {
+      console.warn('[Report] Ads fetch failed (non-fatal):', e.message);
+    }
+
+    res.json({
+      brand:   { id: brand.id, name: brand.name },
+      period:  { from: fromStr,    to: toStr,    label: `${fmtLabel(fromStr)} – ${fmtLabel(toStr)}` },
+      comparison: { from: compFromStr, to: compToStr, label: `${fmtLabel(compFromStr)} – ${fmtLabel(compToStr)}` },
+      summary: {
+        revenueCad: Math.round(sumCurr.revCad * 100) / 100,
+        revenueUsd: Math.round(sumCurr.revUsd * 100) / 100,
+        units:      sumCurr.units,
+        sessions:   sumCurr.sessions || null,
+        pageViews:  sumCurr.pv       || null,
+      },
+      summaryPrev: {
+        revenueCad: Math.round(sumPrev.revCad * 100) / 100,
+        revenueUsd: Math.round(sumPrev.revUsd * 100) / 100,
+        units:      sumPrev.units,
+      },
+      dailySeries:     Object.entries(dailyMap).sort().map(([d, v]) => ({ date: d, ...v })),
+      dailySeriesPrev: Object.entries(prevDailyMap).sort().map(([d, v]) => ({ date: d, ...v })),
+      adSummary,
+      products,
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('[Report] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 async function computeHealthReport({ sinceIso = null } = {}) {
   const [{ brands }, pm, sellerNames] = await Promise.all([loadBrands(), loadPresetMetrics(), loadSellerNames()]);
   const preset = pm.presets?.last30d || pm.presets?.[Object.keys(pm.presets || {})[0]];
