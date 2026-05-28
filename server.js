@@ -1524,21 +1524,23 @@ app.get('/api/metrics/today', async (req, res) => {
   });
 });
 
-// Trigger historical daily_metrics backfill (fills up to 15 missing days per call)
+// Trigger historical daily_metrics backfill — responds immediately, runs in background
 app.post('/api/backfill', async (req, res) => {
   if (process.env.SYNC_ENABLED !== 'true') {
     return res.status(403).json({ error: 'SYNC_ENABLED is false — backfill disabled locally' });
   }
-  try {
-    const { backfillDays } = require('./sync/backfill');
-    const { brands } = await loadBrands();
-    const limit = Math.min(parseInt(req.query.limit || '15', 10), 30);
-    const result = await backfillDays(supabase, brands, limit);
-    res.json(result);
-  } catch (err) {
-    console.error('[Backfill] Error:', err.message);
-    res.status(500).json({ error: err.message });
-  }
+  const limit = Math.min(parseInt(req.query.limit || '15', 10), 30);
+  res.json({ status: 'started', limit, message: 'Backfill running in background — check server logs for progress' });
+  setImmediate(async () => {
+    try {
+      const { backfillDays } = require('./sync/backfill');
+      const { brands } = await loadBrands();
+      const result = await backfillDays(supabase, brands, limit);
+      console.log('[Backfill] Complete:', JSON.stringify(result));
+    } catch (err) {
+      console.error('[Backfill] Error:', err.message);
+    }
+  });
 });
 
 // Custom date range — aggregates daily_metrics for any arbitrary date span
