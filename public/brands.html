@@ -59,6 +59,11 @@
           <button onclick="setPreset('mtd')"       id="preset-mtd"       class="preset-btn">MTD</button>
           <button onclick="setPreset('lastMonth')" id="preset-lastMonth" class="preset-btn">Last Month</button>
           <button onclick="setPreset('ytd')"       id="preset-ytd"       class="preset-btn">YTD</button>
+          <span style="color:var(--border);font-size:10px;padding:0 4px;align-self:center">|</span>
+          <input type="date" id="customFrom" class="rmc-input" style="padding:4px 8px;font-size:11px;width:128px;color-scheme:dark" />
+          <span style="color:var(--text-3);font-size:11px;padding:0 2px">–</span>
+          <input type="date" id="customTo" class="rmc-input" style="padding:4px 8px;font-size:11px;width:128px;color-scheme:dark" />
+          <button id="preset-custom" onclick="applyCustomRange()" class="preset-btn">Apply</button>
         </div>
       </div>
       <div class="flex items-center gap-2">
@@ -202,9 +207,16 @@
     // ── State ─────────────────────────────────────────────────────────────────
     let brandsData = [];
     let presetMetrics = {};
-    let todayData = null; // populated by /api/metrics/today when Today preset is active
-    const VALID_PRESETS = new Set(['today','yesterday','last7d','last14d','last30d','last60d','last90d','mtd','lastMonth','ytd']);
-    let activePreset = VALID_PRESETS.has(localStorage.getItem('brandPreset')) ? localStorage.getItem('brandPreset') : 'today';
+    let todayData = null;
+    let customData = null;
+    let customFrom = localStorage.getItem('customFrom') || '';
+    let customTo   = localStorage.getItem('customTo')   || '';
+    const VALID_PRESETS = new Set(['today','yesterday','last7d','last14d','last30d','last60d','last90d','mtd','lastMonth','ytd','custom']);
+    let activePreset = (() => {
+      const s = localStorage.getItem('brandPreset');
+      if (s === 'custom') return (localStorage.getItem('customFrom') && localStorage.getItem('customTo')) ? 'custom' : 'today';
+      return VALID_PRESETS.has(s) ? s : 'today';
+    })();
     let currency = localStorage.getItem('currency') || 'CAD';
     let fxRate = { usdToCad: 1.38, cadToUsd: 0.724 };
     let activeView = localStorage.getItem('brandsView') || 'performance';
@@ -252,6 +264,21 @@
     }
 
     // ── Performance view ──────────────────────────────────────────────────────
+    function applyCustomRange() {
+      const from = document.getElementById('customFrom').value;
+      const to   = document.getElementById('customTo').value;
+      if (!from || !to || from > to) return;
+      customFrom = from; customTo = to;
+      localStorage.setItem('customFrom', from);
+      localStorage.setItem('customTo', to);
+      activePreset = 'custom';
+      localStorage.setItem('brandPreset', 'custom');
+      document.querySelectorAll('.preset-btn').forEach(btn => btn.classList.toggle('active', btn.id === 'preset-custom'));
+      fetch(`/api/metrics?from=${from}&to=${to}`)
+        .then(r => r.json())
+        .then(d => { customData = d; renderPerformance(); });
+    }
+
     function setPreset(key) {
       activePreset = key;
       localStorage.setItem('brandPreset', key);
@@ -260,15 +287,22 @@
       });
       if (key === 'today') {
         fetch('/api/metrics/today').then(r => r.json()).then(d => { todayData = d; renderPerformance(); });
+      } else if (key === 'custom') {
+        if (customFrom && customTo) {
+          fetch(`/api/metrics?from=${customFrom}&to=${customTo}`)
+            .then(r => r.json())
+            .then(d => { customData = d; renderPerformance(); });
+        }
       } else {
         renderPerformance();
       }
     }
 
     function renderPerformance() {
-      const isToday = activePreset === 'today';
-      const presetBrandData = isToday
-        ? (todayData?.brands || {})
+      const isToday  = activePreset === 'today';
+      const isCustom = activePreset === 'custom';
+      const presetBrandData = isToday  ? (todayData?.brands || {})
+        : isCustom ? (customData?.brands || {})
         : (presetMetrics.presets?.[activePreset]?.brands || {});
       document.getElementById('brandCount').textContent = `(${brandsData.length})`;
 
@@ -983,7 +1017,9 @@
         document.getElementById('lastSyncText').textContent = 'Synced ' + new Date(brandsRes.lastSync).toLocaleString();
       }
       const available = Object.keys(presetMetrics.presets || {});
-      if (activePreset !== 'today' && !available.includes(activePreset) && available.length > 0) activePreset = available[0];
+      if (activePreset !== 'today' && activePreset !== 'custom' && !available.includes(activePreset) && available.length > 0) activePreset = available[0];
+      if (customFrom) document.getElementById('customFrom').value = customFrom;
+      if (customTo)   document.getElementById('customTo').value   = customTo;
       updateToggleUI();
       setPreset(activePreset);
       setView(activeView);

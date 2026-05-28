@@ -1541,6 +1541,92 @@ app.post('/api/backfill', async (req, res) => {
   }
 });
 
+// Custom date range — aggregates daily_metrics for any arbitrary date span
+app.get('/api/metrics', async (req, res) => {
+  const { from, to } = req.query;
+  if (!from || !to || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+    return res.status(400).json({ error: 'from and to params required (YYYY-MM-DD)' });
+  }
+  if (from > to) return res.status(400).json({ error: 'from must be ≤ to' });
+
+  try {
+    const { brands } = await loadBrands();
+
+    const { data: rows, error } = await supabase
+      .from('daily_metrics')
+      .select('asin,brand_id,units,units_ca,units_us,revenue_cad,revenue_usd,sessions,page_views,buy_box_pct')
+      .gte('date', from)
+      .lte('date', to);
+
+    if (error) throw new Error(error.message);
+
+    // Sum all fields per ASIN across days
+    const byAsin = {};
+    for (const row of (rows || [])) {
+      if (!byAsin[row.asin]) {
+        byAsin[row.asin] = { brand_id: row.brand_id, units: 0, units_ca: 0, units_us: 0, revenue_cad: 0, revenue_usd: 0, sessions: 0, page_views: 0, bb_sum: 0, bb_count: 0 };
+      }
+      const a = byAsin[row.asin];
+      a.units       += row.units       || 0;
+      a.units_ca    += row.units_ca    || 0;
+      a.units_us    += row.units_us    || 0;
+      a.revenue_cad += row.revenue_cad || 0;
+      a.revenue_usd += row.revenue_usd || 0;
+      if (row.sessions    != null) a.sessions    += row.sessions;
+      if (row.page_views  != null) a.page_views  += row.page_views;
+      if (row.buy_box_pct != null) { a.bb_sum += row.buy_box_pct; a.bb_count++; }
+    }
+
+    // Build brand-keyed result — same shape as preset_metrics brands
+    const resultBrands = {};
+    for (const brand of brands) {
+      let bUnits = 0, bUnitsCa = 0, bUnitsUs = 0, bRevCad = 0, bRevUsd = 0, bSessions = 0, bPageViews = 0;
+      const skus = [];
+
+      for (const asin of (brand.asins || [])) {
+        const a = byAsin[asin];
+        if (!a) continue;
+        const buyBox = a.bb_count > 0 ? Math.round(a.bb_sum / a.bb_count * 100) / 100 : null;
+        skus.push({
+          asin,
+          title:      brand.asinTitles?.[asin] || null,
+          units:      a.units,
+          unitsCad:   a.units_ca,
+          unitsUsd:   a.units_us,
+          revenueCad: Math.round(a.revenue_cad * 100) / 100,
+          revenueUsd: Math.round(a.revenue_usd * 100) / 100,
+          sessions:   a.sessions   || null,
+          pageViews:  a.page_views || null,
+          buyBox,
+        });
+        bUnits    += a.units;      bUnitsCa  += a.units_ca;    bUnitsUs  += a.units_us;
+        bRevCad   += a.revenue_cad; bRevUsd   += a.revenue_usd;
+        bSessions += a.sessions;   bPageViews += a.page_views;
+      }
+
+      if (!skus.length) continue;
+      resultBrands[brand.id] = {
+        summary: {
+          units:      bUnits,
+          unitsCad:   bUnitsCa,
+          unitsUsd:   bUnitsUs,
+          revenueCad: Math.round(bRevCad * 100) / 100,
+          revenueUsd: Math.round(bRevUsd * 100) / 100,
+          sessions:   bSessions   || null,
+          pageViews:  bPageViews  || null,
+        },
+        skus,
+      };
+    }
+
+    const fmtD = d => new Date(d + 'T12:00:00Z').toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' });
+    res.json({ from, to, label: `${fmtD(from)} – ${fmtD(to)}`, startDate: from, endDate: to, brands: resultBrands });
+  } catch (err) {
+    console.error('[Metrics] Custom range error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 async function computeHealthReport({ sinceIso = null } = {}) {
   const [{ brands }, pm, sellerNames] = await Promise.all([loadBrands(), loadPresetMetrics(), loadSellerNames()]);
   const preset = pm.presets?.last30d || pm.presets?.[Object.keys(pm.presets || {})[0]];
@@ -2304,7 +2390,14 @@ function scheduleDailySync() {
     ordersPoller.poll().catch(err => console.warn('[Orders] Poll error:', err.message));
   });
 
-  console.log('[AutoSync] Crons scheduled: sync 6am/9am/12pm UTC, Slack digest 7am UTC, Orders poll */15min');
+  // Backfill: 8am UTC daily — fills any missing daily_metrics gaps (runs 2h after main sync)
+  cron.schedule('0 8 * * *', () => {
+    const { backfillDays } = require('./sync/backfill');
+    loadBrands().then(({ brands }) => backfillDays(supabase, brands, 7))
+      .catch(err => console.warn('[Backfill] cron error:', err.message));
+  });
+
+  console.log('[AutoSync] Crons scheduled: sync 6am/9am/12pm UTC, Slack digest 7am UTC, Orders poll */15min, Backfill 8am UTC');
 
   // On startup: catch-up if data is more than 23h old AND no attempt in last 4h
   (async () => {
@@ -2331,5 +2424,12 @@ function scheduleDailySync() {
     setTimeout(() => {
       ordersPoller.rebuildToday().catch(err => console.warn('[Orders] Startup rebuild error:', err.message));
     }, 10000);
+
+    // Startup backfill: fill up to 15 missing daily_metrics days after sync has time to settle
+    setTimeout(() => {
+      const { backfillDays } = require('./sync/backfill');
+      loadBrands().then(({ brands }) => backfillDays(supabase, brands, 15))
+        .catch(err => console.warn('[Backfill] startup error:', err.message));
+    }, 30000);
   })();
 }

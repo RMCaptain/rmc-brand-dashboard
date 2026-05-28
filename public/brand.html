@@ -74,6 +74,11 @@
         <button onclick="setPreset('mtd')"       id="preset-mtd"       class="preset-btn">MTD</button>
         <button onclick="setPreset('lastMonth')" id="preset-lastMonth" class="preset-btn">Last Month</button>
         <button onclick="setPreset('ytd')"       id="preset-ytd"       class="preset-btn">YTD</button>
+        <span style="color:var(--border);font-size:10px;padding:0 4px;align-self:center">|</span>
+        <input type="date" id="customFrom" class="rmc-input" style="padding:4px 8px;font-size:11px;width:128px;color-scheme:dark" />
+        <span style="color:var(--text-3);font-size:11px;padding:0 2px">–</span>
+        <input type="date" id="customTo" class="rmc-input" style="padding:4px 8px;font-size:11px;width:128px;color-scheme:dark" />
+        <button id="preset-custom" onclick="applyCustomRange()" class="preset-btn">Apply</button>
       </div>
       <p id="dateRangeLabel" class="text-sm text-slate-500 ml-4 whitespace-nowrap"></p>
     </div>
@@ -143,9 +148,22 @@
     let fxRate = { usdToCad: 1.38, cadToUsd: 0.724 };
     let brandCache = null;
     let presetMetrics = {};
-    let todayData = null; // from /api/metrics/today
-    const VALID_PRESETS = new Set(['today','yesterday','last7d','last14d','last30d','last60d','last90d','mtd','lastMonth','ytd']);
-    let activePreset = VALID_PRESETS.has(localStorage.getItem('brandPreset')) ? localStorage.getItem('brandPreset') : 'today';
+    let todayData = null;
+    let customData = null;
+    let customFrom = localStorage.getItem('customFrom') || '';
+    let customTo   = localStorage.getItem('customTo')   || '';
+    const VALID_PRESETS = new Set(['today','yesterday','last7d','last14d','last30d','last60d','last90d','mtd','lastMonth','ytd','custom']);
+    let activePreset = (() => {
+      const s = localStorage.getItem('brandPreset');
+      if (s === 'custom') return (localStorage.getItem('customFrom') && localStorage.getItem('customTo')) ? 'custom' : 'today';
+      return VALID_PRESETS.has(s) ? s : 'today';
+    })();
+
+    function getCurrentBrandMetrics(brandId) {
+      if (activePreset === 'today')  return todayData?.brands?.[brandId]  || null;
+      if (activePreset === 'custom') return customData?.brands?.[brandId] || null;
+      return presetMetrics.presets?.[activePreset]?.brands?.[brandId] || null;
+    }
     let allBrandsData = [];
     let asinSortCol = null;
     let asinSortDir = -1;
@@ -180,7 +198,7 @@
     function sortAsinBy(col) {
       if (asinSortCol === col) asinSortDir *= -1;
       else { asinSortCol = col; asinSortDir = -1; }
-      if (brandCache) renderBrand({ ...brandCache, metrics: presetMetrics.presets?.[activePreset]?.brands?.[brandCache.id] || null });
+      if (brandCache) renderBrand({ ...brandCache, metrics: getCurrentBrandMetrics(brandCache.id) });
     }
 
     function updateAsinSortIndicators() {
@@ -302,6 +320,23 @@
       if (brandCache) renderBrand(brandCache);
     }
 
+    function applyCustomRange() {
+      const from = document.getElementById('customFrom').value;
+      const to   = document.getElementById('customTo').value;
+      if (!from || !to || from > to) return;
+      customFrom = from; customTo = to;
+      localStorage.setItem('customFrom', from);
+      localStorage.setItem('customTo', to);
+      activePreset = 'custom';
+      localStorage.setItem('brandPreset', 'custom');
+      const fmtLabel = d => new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      document.getElementById('dateRangeLabel').textContent = from === to ? fmtLabel(from) : `${fmtLabel(from)} – ${fmtLabel(to)}`;
+      document.querySelectorAll('.preset-btn').forEach(btn => btn.classList.toggle('active', btn.id === 'preset-custom'));
+      fetch(`/api/metrics?from=${from}&to=${to}`)
+        .then(r => r.json())
+        .then(d => { customData = d; if (brandCache) renderBrand({ ...brandCache, metrics: customData.brands?.[brandCache.id] || null }); });
+    }
+
     function setPreset(key) {
       activePreset = key;
       localStorage.setItem('brandPreset', key);
@@ -316,11 +351,19 @@
         document.getElementById('dateRangeLabel').textContent = fmtLabel(today) + ' (live)';
         fetch('/api/metrics/today').then(r => r.json()).then(d => {
           todayData = d;
-          if (brandCache) {
-            const updatedBrand = { ...brandCache, metrics: todayData.brands?.[brandCache.id] || null };
-            renderBrand(updatedBrand);
-          }
+          if (brandCache) renderBrand({ ...brandCache, metrics: todayData.brands?.[brandCache.id] || null });
         });
+        return;
+      }
+
+      if (key === 'custom') {
+        if (customFrom && customTo) {
+          const fmtLabel = d => new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+          document.getElementById('dateRangeLabel').textContent = customFrom === customTo ? fmtLabel(customFrom) : `${fmtLabel(customFrom)} – ${fmtLabel(customTo)}`;
+          fetch(`/api/metrics?from=${customFrom}&to=${customTo}`)
+            .then(r => r.json())
+            .then(d => { customData = d; if (brandCache) renderBrand({ ...brandCache, metrics: customData.brands?.[brandCache.id] || null }); });
+        }
         return;
       }
 
@@ -333,8 +376,7 @@
       }
 
       if (brandCache) {
-        const presetBrandData = presetMetrics.presets?.[key]?.brands || {};
-        const updatedBrand = { ...brandCache, metrics: presetBrandData[brandCache.id] || null };
+        const updatedBrand = { ...brandCache, metrics: presetMetrics.presets?.[key]?.brands?.[brandCache.id] || null };
         renderBrand(updatedBrand);
       }
     }
@@ -348,7 +390,11 @@
       const id = new URLSearchParams(location.search).get('id');
       if (!id) { document.getElementById('brandName').textContent = 'No brand selected'; return; }
 
-      activePreset = VALID_PRESETS.has(localStorage.getItem('brandPreset')) ? localStorage.getItem('brandPreset') : 'today';
+      activePreset = (() => {
+        const s = localStorage.getItem('brandPreset');
+        if (s === 'custom') return (customFrom && customTo) ? 'custom' : 'today';
+        return VALID_PRESETS.has(s) ? s : 'today';
+      })();
 
       try {
         const [brandRes, pmRes, fxRes, allBrandsRes] = await Promise.all([
@@ -365,9 +411,12 @@
         allBrandsData = allBrandsRes?.brands || [];
 
         const availablePresets = Object.keys(presetMetrics.presets || {});
-        if (activePreset !== 'today' && !availablePresets.includes(activePreset) && availablePresets.length > 0) {
+        if (activePreset !== 'today' && activePreset !== 'custom' && !availablePresets.includes(activePreset) && availablePresets.length > 0) {
           activePreset = availablePresets[0];
         }
+
+        if (customFrom) document.getElementById('customFrom').value = customFrom;
+        if (customTo)   document.getElementById('customTo').value   = customTo;
 
         setPreset(activePreset);
       } catch(e) {
@@ -729,7 +778,7 @@
           // Reload brand data to reflect new UPCs
           const freshBrand = await fetch(`/api/brands/${brandId}`).then(r => r.json());
           brandCache = { ...brandCache, upcs: freshBrand.upcs };
-          renderBrand({ ...brandCache, metrics: presetMetrics.presets?.[activePreset]?.brands?.[brandId] || null });
+          renderBrand({ ...brandCache, metrics: getCurrentBrandMetrics(brandId) });
         }
       } catch(e) {
         btn.textContent = 'Error';
@@ -747,7 +796,7 @@
       // Update local brand cache and re-render
       if (brandCache) {
         brandCache.asins = data.asins || brandCache.asins.filter(a => a !== asin);
-        renderBrand({ ...brandCache, metrics: presetMetrics.presets?.[activePreset]?.brands?.[brandId] || null });
+        renderBrand({ ...brandCache, metrics: getCurrentBrandMetrics(brandId) });
       }
     }
 
