@@ -10,6 +10,9 @@ const { getAccessToken, spRequest, getMarketplaceIds, MARKETPLACE_CODE, sleep, c
 
 const MARKETPLACE_CURRENCY = { 'A2EUQ1WTGCTBG2': 'CAD', 'ATVPDKIKX0DER': 'USD' };
 
+let running = false;
+function isBackfillRunning() { return running; }
+
 function fmtDate(d) { return d.toISOString().split('T')[0]; }
 
 function parseSalesTrafficDay(jsonStr) {
@@ -57,6 +60,9 @@ async function findMissingDates(supabase, lookbackDays = 365) {
 
 // Backfill up to `limit` missing days. Returns { filled, remaining, dates }.
 async function backfillDays(supabase, brands, limit = 15, lookbackDays = 365) {
+  if (running) { console.log('[Backfill] Already running — skipping'); return { filled: 0, remaining: -1, dates: [] }; }
+  running = true;
+  try {
   const missing = await findMissingDates(supabase, lookbackDays);
   if (missing.length === 0) return { filled: 0, remaining: 0, dates: [] };
 
@@ -149,6 +155,9 @@ async function backfillDays(supabase, brands, limit = 15, lookbackDays = 365) {
 
   console.log(`[Backfill] Done: ${filledDates.length} dates, ${totalRows} rows written`);
   return { filled: filledDates.length, remaining: missing.length - toFill.length, dates: filledDates };
+  } finally {
+    running = false;
+  }
 }
 
-module.exports = { backfillDays, findMissingDates };
+module.exports = { backfillDays, findMissingDates, isBackfillRunning };

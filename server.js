@@ -1525,27 +1525,23 @@ app.get('/api/metrics/today', async (req, res) => {
 });
 
 // Trigger historical daily_metrics backfill — responds immediately, runs in background
-let backfillRunning = false;
 app.post('/api/backfill', async (req, res) => {
   if (process.env.SYNC_ENABLED !== 'true') {
     return res.status(403).json({ error: 'SYNC_ENABLED is false — backfill disabled locally' });
   }
-  if (backfillRunning) {
+  const { backfillDays, isBackfillRunning } = require('./sync/backfill');
+  if (isBackfillRunning()) {
     return res.json({ status: 'already_running', message: 'A backfill job is already in progress — wait for it to complete' });
   }
   const limit = Math.min(parseInt(req.query.limit || '15', 10), 30);
   res.json({ status: 'started', limit, message: 'Backfill running in background — check server logs for progress' });
-  backfillRunning = true;
   setImmediate(async () => {
     try {
-      const { backfillDays } = require('./sync/backfill');
       const { brands } = await loadBrands();
       const result = await backfillDays(supabase, brands, limit);
       console.log('[Backfill] Complete:', JSON.stringify(result));
     } catch (err) {
       console.error('[Backfill] Error:', err.message);
-    } finally {
-      backfillRunning = false;
     }
   });
 });
