@@ -165,10 +165,12 @@
     let brandPage = 1;
     let pageSize = parseInt(localStorage.getItem('pageSize') || '20');
 
-    const TILE_CONFIG = [
-      { key: 'last30d',   label: 'Last 30 Days', color: 'from-violet-700 to-violet-800', accent: '#7c3aed' },
-      { key: 'lastMonth', label: 'Last Month',   color: 'from-emerald-700 to-emerald-800', accent: '#059669' }
-    ];
+    const PRESET_LABEL_MAP = {
+      today: 'Today', yesterday: 'Yesterday', last7d: 'Last 7 Days',
+      last14d: 'Last 14 Days', last30d: 'Last 30 Days', last60d: 'Last 60 Days',
+      last90d: 'Last 90 Days', mtd: 'Month to Date', lastMonth: 'Last Month',
+      ytd: 'Year to Date', custom: 'Custom Range'
+    };
 
     // ── Formatting ────────────────────────────────────────────────────────────
     function fmtMoney(cad, usd = 0) {
@@ -209,8 +211,8 @@
     }
 
     // ── Tile metrics ──────────────────────────────────────────────────────────
-    function getTileMetrics(presetKey) {
-      const preset = presetMetrics.presets?.[presetKey];
+    function getTileMetrics(presetData) {
+      const preset = presetData;
       if (!preset) return null;
 
       // Aggregate across all brands
@@ -263,16 +265,17 @@
     // ── Tile rendering ────────────────────────────────────────────────────────
     function renderTiles() {
       const container = document.getElementById('tilesRow');
-      container.innerHTML = TILE_CONFIG.map(tc => buildTile(tc)).join('');
+      const data = getActiveTableData();
+      const label = PRESET_LABEL_MAP[activeBrandPreset] || activeBrandPreset;
+      container.innerHTML = buildTile({ key: 'main', label, accent: '#537D30', data });
     }
 
-    function buildTile({ key, label, accent }) {
-      const m = getTileMetrics(key);
-      const preset = presetMetrics.presets?.[key];
+    function buildTile({ key, label, accent, data }) {
+      const m = getTileMetrics(data);
 
       const fmtD = d => d ? new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
-      const dateStr = preset
-        ? (preset.startDate === preset.endDate ? fmtD(preset.startDate) : `${fmtD(preset.startDate)} – ${fmtD(preset.endDate)}`)
+      const dateStr = data?.startDate
+        ? (data.startDate === data.endDate ? fmtD(data.startDate) : `${fmtD(data.startDate)} – ${fmtD(data.endDate)}`)
         : '—';
 
       if (!m) {
@@ -297,7 +300,7 @@
           <span class="text-xs font-medium ${valClass}" ${!valClass ? 'style="color:var(--text)"' : ''}>${val}</span>
         </div>`;
 
-      const feeRows = buildFeeBreakdownRows(key, fmtC);
+      const feeRows = buildFeeBreakdownRows(data, fmtC);
 
       const detailOverlay = `
         <div id="tile-detail-${key}" class="hidden absolute inset-0 z-10 flex flex-col overflow-hidden" style="background:var(--bg-surface);border-radius:var(--r);border-top:3px solid ${accent};border:1px solid var(--border-hi);border-top:3px solid ${accent}">
@@ -410,8 +413,8 @@
       chevron?.classList.toggle('rotate-90', !bd.classList.contains('hidden'));
     }
 
-    function buildFeeBreakdownRows(presetKey, fmtC) {
-      const fin = presetMetrics.presets?.[presetKey]?.financials;
+    function buildFeeBreakdownRows(presetData, fmtC) {
+      const fin = presetData?.financials;
       if (!fin) return '<div class="py-1.5 pl-5 text-xs text-slate-600">No data</div>';
       const cadBD = fin.CAD?.breakdown || {};
       const usdBD = fin.USD?.breakdown || {};
@@ -668,7 +671,7 @@
       productPage = 1; brandPage = 1;
       fetch(`/api/metrics?from=${from}&to=${to}`)
         .then(r => r.json())
-        .then(d => { customTableData = d; renderBrandTable(); renderProductTable(); });
+        .then(d => { customTableData = d; renderTiles(); renderBrandTable(); renderProductTable(); });
     }
 
     function setBrandPreset(key) {
@@ -680,14 +683,15 @@
       if (cdr) cdr.classList.toggle('hidden', key !== 'custom');
       productPage = 1; brandPage = 1;
       if (key === 'today') {
-        fetch('/api/metrics/today').then(r => r.json()).then(d => { todayTableData = d; renderBrandTable(); renderProductTable(); });
+        fetch('/api/metrics/today').then(r => r.json()).then(d => { todayTableData = d; renderTiles(); renderBrandTable(); renderProductTable(); });
       } else if (key === 'custom') {
         if (customFrom && customTo) {
           fetch(`/api/metrics?from=${customFrom}&to=${customTo}`)
             .then(r => r.json())
-            .then(d => { customTableData = d; renderBrandTable(); renderProductTable(); });
+            .then(d => { customTableData = d; renderTiles(); renderBrandTable(); renderProductTable(); });
         }
       } else {
+        renderTiles();
         renderBrandTable();
         renderProductTable();
       }
