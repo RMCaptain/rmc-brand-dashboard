@@ -286,6 +286,7 @@
           <th class="r">Buy Box</th>
           <th class="r">Inventory</th>
           <th class="r" id="acosHeader" style="display:none">ACOS</th>
+          <!-- spacer to keep columns aligned while ads load -->
         </tr>
       </thead>
       <tbody id="productRows"></tbody>
@@ -293,8 +294,12 @@
   </div>
 
   <!-- Ads section -->
-  <div class="rpt-section" id="adsSection" style="display:none">
+  <div class="rpt-section" id="adsSection">
     <div class="rpt-section-title">Advertising Performance</div>
+    <div id="adsLoading" style="padding:20px 0;color:#9AAABB;font-size:12px;display:flex;align-items:center;gap:10px">
+      <div class="spinner" style="width:18px;height:18px;border-width:2px"></div>
+      Fetching advertising data — this takes 1–3 minutes…
+    </div>
     <div class="ads-grid" id="adsGrid"></div>
   </div>
 
@@ -372,11 +377,6 @@ function render(d) {
   buildChart(d.dailySeries, d.dailySeriesPrev, d.period, d.comparison);
 
   // Products table
-  const hasAcos = d.products.some(p => p.ads?.acos != null);
-  if (hasAcos) {
-    $('acosHeader').style.display = '';
-  }
-
   $('productRows').innerHTML = d.products.map(p => {
     const prevRev = p.prev.revenueCad + p.prev.revenueUsd;
     const currRev = p.revenueCad + p.revenueUsd;
@@ -385,7 +385,6 @@ function render(d) {
     const bbHtml  = p.buyBox != null
       ? `<div class="bb-bar"><div class="bb-track"><div class="bb-fill" style="width:${Math.min(p.buyBox,100)}%"></div></div><span>${p.buyBox}%</span></div>`
       : '—';
-    const acosCell = hasAcos ? `<td class="r">${p.ads?.acos != null ? p.ads.acos + '%' : '—'}</td>` : '';
     return `<tr>
       <td>
         <span class="product-title" title="${p.title}">${p.title}</span>
@@ -397,37 +396,49 @@ function render(d) {
       <td class="r">${deltaHtml(currRev, prevRev)}</td>
       <td class="r">${bbHtml}</td>
       <td class="r"><span class="inv-pill ${invCls}">${invTxt}</span></td>
-      ${acosCell}
+      <td class="r acos-cell" style="display:none">—</td>
     </tr>`;
   }).join('');
 
-  // Ads
-  if (d.adSummary) {
-    $('adsSection').style.display = '';
-    const a = d.adSummary;
-    const totalSpend = a.spendCad + a.spendUsd;
-    const totalAdSales = a.salesCad + a.salesUsd;
-    const stats = [
-      { label: 'Total Ad Spend',    value: fmtC(a.spendCad) + ' / ' + fmtC(a.spendUsd, 'US$'), sub: '' },
-      { label: 'ACOS',              value: a.acos  != null ? a.acos + '%'  : '—', sub: 'Ad spend / attributed sales' },
-      { label: 'ROAS',              value: a.roas  != null ? a.roas + 'x'  : '—', sub: 'Revenue per dollar spent' },
-      { label: 'TACOS',             value: a.tacos != null ? a.tacos + '%' : '—', sub: 'Ad spend / total sales' },
-      { label: 'Attributed Sales',  value: fmtC(a.salesCad) + ' / ' + fmtC(a.salesUsd, 'US$'), sub: '14-day attribution' },
-      { label: 'Clicks',            value: fmtN(a.clicks),       sub: 'CPC: ' + (a.cpc != null ? '$' + a.cpc : '—') },
-      { label: 'Impressions',       value: fmtN(a.impressions),  sub: '' },
-      { label: 'Ad Orders',         value: fmtN(a.orders),       sub: '' },
-    ];
-    $('adsGrid').innerHTML = stats.map(s =>
-      `<div class="ads-stat">
-        <div class="ads-stat-label">${s.label}</div>
-        <div class="ads-stat-value">${s.value}</div>
-        ${s.sub ? `<div class="ads-stat-sub">${s.sub}</div>` : ''}
-      </div>`
-    ).join('');
-  }
-
   $('loading').style.display  = 'none';
   $('report').style.display   = 'block';
+}
+
+function renderAds(a, totalRevCad, totalRevUsd) {
+  $('adsSection').style.display = '';
+  $('adsLoading').style.display = 'none';
+  const totalSpend = a.spendCad + a.spendUsd;
+  const totalRev   = totalRevCad + totalRevUsd;
+  const tacos = totalRev > 0 ? Math.round(totalSpend / totalRev * 10000) / 100 : null;
+  const stats = [
+    { label: 'Total Ad Spend',   value: fmtC(a.spendCad) + ' / ' + fmtC(a.spendUsd, 'US$'), sub: '' },
+    { label: 'ACOS',             value: a.acos  != null ? a.acos + '%'  : '—', sub: 'Ad spend / attributed sales' },
+    { label: 'ROAS',             value: a.roas  != null ? a.roas + 'x'  : '—', sub: 'Revenue per dollar spent' },
+    { label: 'TACOS',            value: tacos   != null ? tacos  + '%'  : '—', sub: 'Ad spend / total sales' },
+    { label: 'Attributed Sales', value: fmtC(a.salesCad) + ' / ' + fmtC(a.salesUsd, 'US$'), sub: '14-day attribution' },
+    { label: 'Clicks',           value: fmtN(a.clicks),      sub: 'CPC: ' + (a.cpc != null ? '$' + a.cpc : '—') },
+    { label: 'Impressions',      value: fmtN(a.impressions), sub: '' },
+    { label: 'Ad Orders',        value: fmtN(a.orders),      sub: '' },
+  ];
+  $('adsGrid').innerHTML = stats.map(s =>
+    `<div class="ads-stat">
+      <div class="ads-stat-label">${s.label}</div>
+      <div class="ads-stat-value">${s.value}</div>
+      ${s.sub ? `<div class="ads-stat-sub">${s.sub}</div>` : ''}
+    </div>`
+  ).join('');
+
+  // Inject ACOS column into product table
+  $('acosHeader').style.display = '';
+  document.querySelectorAll('#productRows tr').forEach(row => {
+    const asin = row.querySelector('.product-asin')?.textContent;
+    const cell = row.querySelector('.acos-cell');
+    if (cell) {
+      cell.style.display = '';
+      const d = asin && a.byAsin?.[asin];
+      cell.textContent = d?.acos != null ? d.acos + '%' : '—';
+    }
+  });
 }
 
 function buildChart(series, seriesPrev, period, comparison) {
@@ -532,16 +543,31 @@ function buildChart(series, seriesPrev, period, comparison) {
     return;
   }
 
-  let url = `/api/report-data/${encodeURIComponent(brand)}`;
-  if (from || to) url += `?${from ? 'from=' + from : ''}${from && to ? '&' : ''}${to ? 'to=' + to : ''}`;
+  const qs = [from && `from=${from}`, to && `to=${to}`].filter(Boolean).join('&');
+  const base = `/api/report-data/${encodeURIComponent(brand)}${qs ? '?' + qs : ''}`;
+  const adsUrl = `/api/report-ads/${encodeURIComponent(brand)}${qs ? '?' + qs : ''}`;
 
+  // Load main report data (fast — DB only)
+  let reportData;
   try {
-    const res  = await fetch(url, { credentials: 'include' });
+    const res  = await fetch(base, { credentials: 'include' });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || res.statusText);
+    reportData = data;
     render(data);
   } catch (e) {
     $('loading').innerHTML = `<div style="color:#DC2626;font-size:14px">Failed to load report: ${e.message}</div>`;
+    return;
+  }
+
+  // Load ads data separately (slow — Amazon API must bake report)
+  try {
+    const res  = await fetch(adsUrl, { credentials: 'include' });
+    const data = await res.json();
+    if (res.ok) renderAds(data.summary, reportData.summary.revenueCad, reportData.summary.revenueUsd);
+    else $('adsLoading').textContent = 'Advertising data unavailable.';
+  } catch (e) {
+    $('adsLoading').textContent = 'Advertising data unavailable.';
   }
 })();
 </script>

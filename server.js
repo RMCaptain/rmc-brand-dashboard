@@ -1756,49 +1756,6 @@ app.get('/api/report-data/:brandId', async (req, res) => {
     // Sort by combined revenue desc
     products.sort((a, b) => (b.revenueCad + b.revenueUsd) - (a.revenueCad + a.revenueUsd));
 
-    // Fetch ads for current period (graceful failure)
-    let adSummary = null;
-    let adByAsin  = {};
-    try {
-      const { syncAdMetrics } = require('./sync/ads');
-      adByAsin = await syncAdMetrics(fromStr, toStr);
-      let spendCad = 0, spendUsd = 0, salesCad = 0, salesUsd = 0, clicks = 0, impressions = 0, orders = 0;
-      for (const asin of (brand.asins || [])) {
-        const d = adByAsin[asin];
-        if (!d) continue;
-        spendCad    += d.spendCad           || 0;
-        spendUsd    += d.spendUsd           || 0;
-        salesCad    += d.attributedSalesCad || 0;
-        salesUsd    += d.attributedSalesUsd || 0;
-        clicks      += d.clicks             || 0;
-        impressions += d.impressions        || 0;
-        orders      += d.orders             || 0;
-      }
-      const totalSpend = spendCad + spendUsd;
-      const totalSales = salesCad + salesUsd;
-      const totalRev   = sumCurr.revCad + sumCurr.revUsd;
-      adSummary = {
-        spendCad: Math.round(spendCad * 100) / 100,
-        spendUsd: Math.round(spendUsd * 100) / 100,
-        salesCad: Math.round(salesCad * 100) / 100,
-        salesUsd: Math.round(salesUsd * 100) / 100,
-        clicks,
-        impressions,
-        orders,
-        acos:  totalSales > 0 ? Math.round(totalSpend / totalSales * 10000) / 100 : null,
-        roas:  totalSpend > 0 ? Math.round(totalSales / totalSpend * 100) / 100    : null,
-        tacos: totalRev   > 0 ? Math.round(totalSpend / totalRev   * 10000) / 100 : null,
-        cpc:   clicks > 0     ? Math.round(totalSpend / clicks * 10000) / 10000   : null,
-      };
-      // Attach per-ASIN ads to products
-      for (const p of products) {
-        const d = adByAsin[p.asin];
-        if (d) p.ads = { spendCad: d.spendCad, spendUsd: d.spendUsd, acos: d.acos, roas: d.roas };
-      }
-    } catch (e) {
-      console.warn('[Report] Ads fetch failed (non-fatal):', e.message);
-    }
-
     res.json({
       brand:   { id: brand.id, name: brand.name },
       period:  { from: fromStr,    to: toStr,    label: `${fmtLabel(fromStr)} – ${fmtLabel(toStr)}` },
@@ -1817,12 +1774,64 @@ app.get('/api/report-data/:brandId', async (req, res) => {
       },
       dailySeries:     Object.entries(dailyMap).sort().map(([d, v]) => ({ date: d, ...v })),
       dailySeriesPrev: Object.entries(prevDailyMap).sort().map(([d, v]) => ({ date: d, ...v })),
-      adSummary,
       products,
       generatedAt: new Date().toISOString(),
     });
   } catch (err) {
     console.error('[Report] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Ads data for report — separate endpoint because it takes 1-5 min (ads report must bake)
+app.get('/api/report-ads/:brandId', async (req, res) => {
+  const { brandId } = req.params;
+  const msDay = 86400000;
+  const fmtISO = d => d.toISOString().split('T')[0];
+  const todayStr = fmtISO(new Date());
+  const toStr   = req.query.to   || todayStr;
+  const fromStr = req.query.from || fmtISO(new Date(new Date(toStr) - 29 * msDay));
+
+  try {
+    const { brands } = await loadBrands();
+    const brand = brands.find(b => b.id === brandId);
+    if (!brand) return res.status(404).json({ error: `Brand '${brandId}' not found` });
+
+    const { syncAdMetrics } = require('./sync/ads');
+    const adByAsin = await syncAdMetrics(fromStr, toStr);
+
+    let spendCad = 0, spendUsd = 0, salesCad = 0, salesUsd = 0, clicks = 0, impressions = 0, orders = 0;
+    const byAsin = {};
+    for (const asin of (brand.asins || [])) {
+      const d = adByAsin[asin];
+      if (!d) continue;
+      spendCad    += d.spendCad           || 0;
+      spendUsd    += d.spendUsd           || 0;
+      salesCad    += d.attributedSalesCad || 0;
+      salesUsd    += d.attributedSalesUsd || 0;
+      clicks      += d.clicks             || 0;
+      impressions += d.impressions        || 0;
+      orders      += d.orders             || 0;
+      byAsin[asin] = { spendCad: d.spendCad, spendUsd: d.spendUsd, acos: d.acos, roas: d.roas };
+    }
+    const totalSpend = spendCad + spendUsd;
+    const totalSales = salesCad + salesUsd;
+
+    res.json({
+      summary: {
+        spendCad: Math.round(spendCad * 100) / 100,
+        spendUsd: Math.round(spendUsd * 100) / 100,
+        salesCad: Math.round(salesCad * 100) / 100,
+        salesUsd: Math.round(salesUsd * 100) / 100,
+        clicks, impressions, orders,
+        acos:  totalSales > 0 ? Math.round(totalSpend / totalSales * 10000) / 100 : null,
+        roas:  totalSpend > 0 ? Math.round(totalSales / totalSpend * 100) / 100    : null,
+        cpc:   clicks > 0     ? Math.round(totalSpend / clicks * 10000) / 10000   : null,
+      },
+      byAsin,
+    });
+  } catch (err) {
+    console.error('[Report] Ads error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
