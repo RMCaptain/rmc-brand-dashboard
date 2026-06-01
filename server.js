@@ -12,6 +12,7 @@ const ordersPoller = require('./sync/orders');
 const app = express();
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = path.join(__dirname, 'data');
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 // Supabase client (service role — server-side only)
 const supabase = createClient(

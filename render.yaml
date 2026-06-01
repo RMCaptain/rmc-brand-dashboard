@@ -1,0 +1,49 @@
+services:
+  - type: web
+    name: rmc-brand-dashboard
+    env: node
+    plan: standard
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SYNC_ENABLED
+        value: "true"
+      - key: SLACK_DIGEST_ENABLED
+        value: "false"
+      - key: PORT
+        generateValue: false
+      # Set these in the Render dashboard — do not commit values
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: SP_API_CLIENT_ID
+        sync: false
+      - key: SP_API_CLIENT_SECRET
+        sync: false
+      - key: SP_API_REFRESH_TOKEN
+        sync: false
+      - key: SP_API_SELLER_ID
+        sync: false
+      - key: SP_API_MARKETPLACE_IDS
+        sync: false
+      - key: ADS_CLIENT_ID
+        sync: false
+      - key: ADS_CLIENT_SECRET
+        sync: false
+      - key: ADS_REFRESH_TOKEN
+        sync: false
+      - key: ADS_PROFILE_CA
+        sync: false
+      - key: ADS_PROFILE_US
+        sync: false
+      - key: AUTH_USERNAME
+        sync: false
+      - key: AUTH_PASSWORD
+        sync: false
+      - key: SLACK_WEBHOOK_URL
+        sync: false
+      - key: DASHBOARD_URL
+        sync: false
