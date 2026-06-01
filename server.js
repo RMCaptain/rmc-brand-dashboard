@@ -1929,8 +1929,8 @@ async function computeHealthReport({ sinceIso = null } = {}) {
       // The S&T buyBox % is a 30-day average and not actionable on its own.
       const ourSellerId = process.env.SP_API_SELLER_ID;
       const hist = brand.buyBoxOwnerHistory?.[asin] || [];
-      const cutoff24h = Date.now() - 24 * 60 * 60 * 1000;
-      const recent = hist.filter(h => new Date(h.capturedAt).getTime() > cutoff24h && h.sellerId && h.sellerId !== ourSellerId);
+      const cutoff48h = Date.now() - 48 * 60 * 60 * 1000;
+      const recent = hist.filter(h => new Date(h.capturedAt).getTime() > cutoff48h && h.sellerId && h.sellerId !== ourSellerId);
       if (recent.length > 0) {
         // Dedupe by sellerId, keep most recent occurrence's name
         const seen = new Map();
