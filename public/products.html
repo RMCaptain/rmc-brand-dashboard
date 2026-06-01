@@ -111,7 +111,6 @@
                 <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('inventory')">Inventory <span class="sort-ind" data-col="inventory"></span></th>
                 <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('velocity')">Velocity <span class="sort-ind" data-col="velocity"></span></th>
                 <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('daysLeft')">Days Left <span class="sort-ind" data-col="daysLeft"></span></th>
-                <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('leadTime')" style="min-width:90px">Lead Time <span class="sort-ind" data-col="leadTime"></span></th>
               </tr>
             </thead>
             <tbody id="productTableBody">
@@ -146,6 +145,7 @@
                 <th class="text-center" style="min-width:90px">Type</th>
                 <th class="text-right" style="min-width:100px">COGS</th>
                 <th class="text-right" style="min-width:110px">Buy Cost</th>
+                <th class="text-right" style="min-width:100px">Lead Time</th>
               </tr>
             </thead>
             <tbody id="dataTableBody">
@@ -510,11 +510,6 @@
             onmouseleave="hideInventoryPopup()">${r.inventory.toLocaleString()}</td>
         <td class="px-4 py-3 text-right text-xs" style="color:var(--text-3)">${r.velocity != null ? r.velocity.toFixed(1) + ' u/d' : '—'}</td>
         <td class="px-4 py-3 text-right ${daysColor}" style="${daysStyle}">${r.daysLeft != null ? r.daysLeft + 'd' : '—'}</td>
-        <td class="px-4 py-3 text-right">
-          <input type="number" min="0" value="${r.leadTime ?? ''}" placeholder="—"
-            class="rmc-input w-14 text-right" style="font-size:11px;padding:3px 6px"
-            onchange="saveLeadTime('${r.brandId}','${r.asin}',this.value)" />
-        </td>
       </tr>`;
     }
 
@@ -987,7 +982,7 @@
       const paginated = rows.slice((dataPage - 1) * pageSize, dataPage * pageSize);
 
       if (!paginated.length) {
-        tbody.innerHTML = `<tr><td colspan="9" class="text-center py-10" style="color:var(--text-3)">No products found</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="10" class="text-center py-10" style="color:var(--text-3)">No products found</td></tr>`;
         document.getElementById('dataPagination').innerHTML = '';
         return;
       }
@@ -1075,6 +1070,11 @@
               ${r.cfgType === 'multipack' ? `<span style="font-size:9px;color:var(--text-3)">base ASIN price</span>` : ''}
               ${r.cfgType === 'bundle' ? `<span style="font-size:9px;color:var(--text-3)">or leave blank (auto-sum)</span>` : ''}
             </div>
+          </td>
+          <td class="px-4 py-2.5 text-right">
+            <input type="number" min="0" value="${r.leadTime ?? ''}" placeholder="—"
+              class="rmc-input w-16 text-right" style="font-size:11px;padding:3px 6px"
+              onchange="saveLeadTime('${r.brandId}','${r.asin}',this.value)" />
           </td>
         </tr>`;
       }).join('');
