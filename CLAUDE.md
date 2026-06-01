@@ -78,15 +78,14 @@ git pull                                                # start on new machine
 ```
 Repo: https://github.com/RMCaptain/rmc-brand-dashboard
 
-## VPS Deploy
-VPS: `144.172.97.243` — runs as Windows service via NSSM (not PM2).
-App dir: `C:\brand-dashboard` — pulled from GitHub main branch.
+## Deploy
+Hosted on **Render** — https://rmc-brand-dashboard-1.onrender.com
+Plan: Starter ($7/month). Auto-deploys on push to `main`.
 
 ```bash
-# Deploy after pushing to GitHub:
-ssh Administrator@144.172.97.243
-cd C:\brand-dashboard && git pull
-Restart-Service rmc-dashboard
+# Deploy = just push to GitHub:
+git push origin main
+# Render picks it up automatically — live in ~60 seconds.
 ```
 
-PM2 does NOT survive SSH disconnects on this VPS. Use `Get-Service rmc-dashboard` to check status, `Restart-Service rmc-dashboard` to redeploy.
+VPS (legacy, 144.172.97.243) — no longer primary. Keep for reference only.
