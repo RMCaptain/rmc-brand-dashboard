@@ -269,6 +269,7 @@ nav, main, div, section, form { position: relative; z-index: 1; }
   background-repeat: no-repeat;
   background-position: right 8px center;
   width: 100%;
+  color-scheme: dark;
 }
 .rmc-select:focus { border-color: var(--brand); }
 
