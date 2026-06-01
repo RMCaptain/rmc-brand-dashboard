@@ -89,7 +89,7 @@ async function createAdReport(profileId, token, startDate, endDate) {
   throw new Error(`Ads report create failed (${res.status}): ${JSON.stringify(res.body)}`);
 }
 
-async function waitForAdReport(reportId, profileId, token, maxWaitMs = 45 * 60 * 1000) {
+async function waitForAdReport(reportId, profileId, token, maxWaitMs = 20 * 60 * 1000) {
   const deadline = Date.now() + maxWaitMs;
   let attempt = 0;
   while (Date.now() < deadline) {
