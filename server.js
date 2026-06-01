@@ -2109,8 +2109,11 @@ app.post('/api/health/scrape-seller-names', async (req, res) => {
   }
 });
 
-// Trigger the Slack digest manually (for testing or on-demand). Cron also fires this daily.
+// Trigger the Slack digest manually. Requires SLACK_DIGEST_ENABLED=true in .env.
 app.post('/api/health/digest', async (req, res) => {
+  if (process.env.SLACK_DIGEST_ENABLED !== 'true') {
+    return res.status(403).json({ error: 'Slack digest is disabled. Set SLACK_DIGEST_ENABLED=true to enable.' });
+  }
   try {
     const settings = await loadPoSettings();
     const sinceIso = settings.lastDigestAt || new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
@@ -2573,26 +2576,8 @@ function scheduleDailySync() {
     runFullSync('AutoSync-12pm');
   });
 
-  // Slack digest at 7am UTC — fires after 6am sync completes (~10 min duration).
-  // Runs independently of sync so a sync failure doesn't suppress the digest.
-  cron.schedule('0 7 * * *', async () => {
-    console.log('[SlackDigest] 7am UTC cron fired');
-    try {
-      const settings = await loadPoSettings();
-      const sinceIso = settings.lastDigestAt || new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
-      const report = await computeHealthReport({ sinceIso });
-      const { postSlackDigest } = require('./slack/digest');
-      const result = await postSlackDigest({
-        ...report,
-        dashboardUrl: process.env.DASHBOARD_URL || 'http://localhost:3000/brands.html'
-      });
-      if (result.posted) {
-        await savePoSettings({ ...settings, lastDigestAt: new Date().toISOString() });
-      }
-    } catch (err) {
-      console.error('[SlackDigest] cron error:', err.message);
-    }
-  });
+  // Slack digest — disabled until SLACK_DIGEST_ENABLED=true is set in .env
+  // cron.schedule('0 7 * * *', ...);
 
   // Orders poller: every 15 min for intraday revenue/units (~15 min lag)
   cron.schedule('*/15 * * * *', () => {
