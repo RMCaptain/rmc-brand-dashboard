@@ -649,16 +649,15 @@ function getPresetRanges() {
     };
   }
 
+  // Keep to 5 core presets × 2 markets = 10 S&T reports per sync.
+  // Wider ranges (last60d, last90d, ytd) burn API quota fast and rarely add
+  // actionable insight over last30d. Add them back if quota allows.
   return {
     yesterday:  r(y,                 y,             'Yesterday'),
     last7d:     r(sub(y, 6),         y,             'Last 7 Days'),
-    last14d:    r(sub(y, 13),        y,             'Last 14 Days'),
     last30d:    r(sub(y, 29),        y,             'Last 30 Days'),
-    last60d:    r(sub(y, 59),        y,             'Last 60 Days'),
-    last90d:    r(sub(y, 89),        y,             'Last 90 Days'),
     mtd:        r(thisMonthStart,    y,             'Month to Date'),
     lastMonth:  r(lastMonthStart,    lastMonthEnd,  'Last Month'),
-    ytd:        r(yearStart,         y,             'Year to Date'),
   };
 }
 
