@@ -1476,88 +1476,166 @@ app.get('/api/preset-metrics', async (req, res) => {
   res.json(await loadPresetMetrics());
 });
 
-// Live "Yesterday" data — Orders API for units/revenue, S&T preset for sessions/buybox/ads
+// Yesterday data — sourced from daily_metrics (Supabase). Persistent across restarts.
+// Sync writes daily_metrics 3x/day (6/9/12 UTC crons). For listing-health alerts and
+// title/image fallbacks, we still consult the S&T preset cache.
 app.get('/api/metrics/yesterday', async (req, res) => {
-  const ystState = ordersPoller.getYesterdayState();
+  const yest = pstSubtractDays(pstDateStr(), 1);
   const { brands } = await loadBrands();
   const pm = await loadPresetMetrics();
+  const fx = await fetchFxRate();
   const stPreset = pm.presets?.yesterday || {};
 
-  const yestDate = ystState.date || pstSubtractDays(pstDateStr(), 1);
+  const { data: rows, error } = await supabase
+    .from('daily_metrics')
+    .select('*')
+    .eq('date', yest);
+
+  if (error) {
+    console.error('[YesterdayAPI] daily_metrics query failed:', error.message);
+    return res.status(500).json({ error: 'Failed to load yesterday data' });
+  }
+
+  // Index by ASIN for O(1) lookup
+  const dmByAsin = {};
+  for (const r of (rows || [])) dmByAsin[r.asin] = r;
+
+  // Find any preset that has imageUrl/title for an ASIN (last30d is most populated)
+  function lookupSkuMeta(brandId, asin) {
+    for (const key of ['last30d', 'last7d', 'lastMonth', 'mtd']) {
+      const sku = (pm.presets?.[key]?.brands?.[brandId]?.skus || []).find(s => s.asin === asin);
+      if (sku && (sku.title || sku.imageUrl)) return sku;
+    }
+    return {};
+  }
 
   const byBrand = {};
   for (const brand of brands) {
     const stBrand   = stPreset.brands?.[brand.id] || {};
     const stSummary = stBrand.summary || {};
-    let units = 0, unitsCa = 0, unitsUs = 0, revCad = 0, revUsd = 0;
+    let units = 0, unitsCa = 0, unitsUs = 0, revCad = 0, revUsd = 0, sessions = 0;
+    let spendCad = 0, spendUsd = 0, attrSalesCad = 0, attrSalesUsd = 0;
+    const buyBoxSamples = [];
     const skus = [];
 
     for (const asin of (brand.asins || [])) {
-      const od    = ystState.byAsin[asin];
-      const stSku = (stBrand.skus || []).find(s => s.asin === asin) || {};
+      const dm   = dmByAsin[asin];
+      const meta = lookupSkuMeta(brand.id, asin);
 
-      // Orders API for units/revenue (near real-time); S&T for sessions, buybox, ads
-      const u  = od?.units      ?? stSku.units      ?? 0;
-      const ca = od?.unitsCa    ?? stSku.unitsCa    ?? 0;
-      const us = od?.unitsUs    ?? stSku.unitsUs    ?? 0;
-      const rc = od?.revenueCad ?? stSku.revenueCad ?? 0;
-      const ru = od?.revenueUsd ?? stSku.revenueUsd ?? 0;
+      const u    = dm?.units        || 0;
+      const ca   = dm?.units_ca     || 0;
+      const us   = dm?.units_us     || 0;
+      const rc   = dm?.revenue_cad  || 0;
+      const ru   = dm?.revenue_usd  || 0;
+      const sess = dm?.sessions     || 0;
+      const sCad = dm?.spend_cad    || 0;
+      const sUsd = dm?.spend_usd    || 0;
+      const aCad = dm?.attributed_sales_cad || 0;
+      const aUsd = dm?.attributed_sales_usd || 0;
+      const bb   = dm?.buy_box_pct;
 
       units += u; unitsCa += ca; unitsUs += us; revCad += rc; revUsd += ru;
+      sessions += sess; spendCad += sCad; spendUsd += sUsd;
+      attrSalesCad += aCad; attrSalesUsd += aUsd;
+      if (bb != null && bb > 0) buyBoxSamples.push(bb);
+
+      const spendTotal = sCad + sUsd * fx.usdToCad;
+      const attrTotal  = aCad + aUsd * fx.usdToCad;
+
       skus.push({
         asin,
         units: u, unitsCa: ca, unitsUs: us,
-        revenueCad:          Math.round(rc * 100) / 100,
-        revenueUsd:          Math.round(ru * 100) / 100,
-        sessions:            stSku.sessions            ?? null,
-        pageViews:           stSku.pageViews           ?? null,
-        buyBox:              stSku.buyBox              ?? null,
-        cvr:                 stSku.cvr                 ?? null,
-        spendCad:            stSku.spendCad            ?? null,
-        spendUsd:            stSku.spendUsd            ?? null,
-        attributedSalesCad:  stSku.attributedSalesCad  ?? null,
-        attributedSalesUsd:  stSku.attributedSalesUsd  ?? null,
-        acos:                stSku.acos                ?? null,
-        title:               stSku.title   || brand.asinTitles?.[asin] || '',
-        imageUrl:            stSku.imageUrl            ?? null,
-        inventory:           stSku.inventory           ?? null,
-        marketplaces:        stSku.marketplaces        || [...(ca > 0 ? ['CA'] : []), ...(us > 0 ? ['US'] : [])],
+        revenueCad:         Math.round(rc * 100) / 100,
+        revenueUsd:         Math.round(ru * 100) / 100,
+        sessions:           sess || null,
+        pageViews:          dm?.page_views || null,
+        buyBox:             bb,
+        cvr:                (u && sess) ? Math.round(u / sess * 10000) / 100 : null,
+        spendCad:           sCad,
+        spendUsd:           sUsd,
+        attributedSalesCad: aCad,
+        attributedSalesUsd: aUsd,
+        acos:               (spendTotal > 0 && attrTotal > 0)
+                              ? Math.round(spendTotal / attrTotal * 10000) / 100
+                              : null,
+        title:              meta.title    || brand.asinTitles?.[asin] || '',
+        imageUrl:           meta.imageUrl || null,
+        inventory:          dm?.inventory_on_hand != null
+                              ? { onHand: dm.inventory_on_hand, inbound: dm.inventory_inbound || 0 }
+                              : (meta.inventory ?? null),
+        marketplaces:       [...(ca > 0 ? ['CA'] : []), ...(us > 0 ? ['US'] : [])],
       });
     }
+
+    const avgBuyBox = buyBoxSamples.length
+      ? Math.round(buyBoxSamples.reduce((a, b) => a + b, 0) / buyBoxSamples.length * 10) / 10
+      : null;
 
     byBrand[brand.id] = {
       summary: {
         units, unitsCa, unitsUs,
         revenueCad: Math.round(revCad * 100) / 100,
         revenueUsd: Math.round(revUsd * 100) / 100,
-        sessions:   stSummary.sessions  ?? null,
-        buyBox:     stSummary.buyBox    ?? null,
-        avgCvr:     stSummary.avgCvr    ?? null,
-        adSummary:  stSummary.adSummary ?? null,
-        alerts:     stSummary.alerts    ?? {},
+        sessions:   sessions || null,
+        buyBox:     avgBuyBox,
+        avgCvr:     (units && sessions) ? Math.round(units / sessions * 10000) / 100 : null,
+        adSummary:  (spendCad + spendUsd) > 0 ? {
+          spendCad:           Math.round(spendCad * 100) / 100,
+          spendUsd:           Math.round(spendUsd * 100) / 100,
+          attributedSalesCad: Math.round(attrSalesCad * 100) / 100,
+          attributedSalesUsd: Math.round(attrSalesUsd * 100) / 100,
+        } : null,
+        alerts:     stSummary.alerts ?? {},
       },
       skus,
     };
   }
 
   res.json({
-    date: yestDate, updatedAt: ystState.date ? new Date().toISOString() : null,
-    label: 'Yesterday', startDate: yestDate, endDate: yestDate,
-    brands: byBrand,
+    date:      yest,
+    updatedAt: new Date().toISOString(),
+    label:     'Yesterday',
+    startDate: yest,
+    endDate:   yest,
+    brands:    byBrand,
   });
 });
 
-// Live "Today" data from Orders API poller (~15 min lag, units + revenue only)
+// Today data — prefers in-memory orders poller state (most current), falls back to
+// daily_metrics (persisted across restarts) when the in-memory state hasn't rebuilt yet.
+// Persistence is written after every poll/rebuild via persistOrdersTodayState().
 app.get('/api/metrics/today', async (req, res) => {
+  const today      = pstDateStr();
   const todayState = ordersPoller.getState();
   const { brands } = await loadBrands();
+
+  // Build ASIN lookup — prefer in-memory if populated, else load from daily_metrics
+  let byAsin = {};
+  const hasInMemory = todayState.date === today && Object.keys(todayState.byAsin).length > 0;
+  if (hasInMemory) {
+    byAsin = todayState.byAsin;
+  } else {
+    const { data: rows } = await supabase
+      .from('daily_metrics')
+      .select('asin,units,units_ca,units_us,revenue_cad,revenue_usd')
+      .eq('date', today);
+    for (const r of (rows || [])) {
+      byAsin[r.asin] = {
+        units:      r.units,
+        unitsCa:    r.units_ca,
+        unitsUs:    r.units_us,
+        revenueCad: r.revenue_cad,
+        revenueUsd: r.revenue_usd,
+      };
+    }
+  }
 
   const byBrand = {};
   for (const brand of brands) {
     let units = 0, unitsCa = 0, unitsUs = 0, revCad = 0, revUsd = 0;
     const skus = [];
     for (const asin of (brand.asins || [])) {
-      const d = todayState.byAsin[asin];
+      const d = byAsin[asin];
       const u = d?.units || 0, ca = d?.unitsCa || 0, us = d?.unitsUs || 0;
       const rc = d?.revenueCad || 0, ru = d?.revenueUsd || 0;
       units += u; unitsCa += ca; unitsUs += us; revCad += rc; revUsd += ru;
@@ -1588,14 +1666,47 @@ app.get('/api/metrics/today', async (req, res) => {
   }
 
   res.json({
-    date:      todayState.date     || pstDateStr(),
+    date:      today,
     updatedAt: todayState.updatedAt,
     label:     'Today',
-    startDate: todayState.date     || pstDateStr(),
-    endDate:   todayState.date     || pstDateStr(),
+    startDate: today,
+    endDate:   today,
     brands:    byBrand,
   });
 });
+
+// Write the orders poller's current today state into daily_metrics. Lets the today
+// endpoint serve persisted data immediately on restart, no waiting for rebuild.
+async function persistOrdersTodayState() {
+  try {
+    const st = ordersPoller.getState();
+    if (!st.date || Object.keys(st.byAsin).length === 0) return;
+
+    const { brands } = await loadBrands();
+    const asinBrand = {};
+    for (const b of brands) for (const a of (b.asins || [])) asinBrand[a] = b.id;
+
+    const rows = Object.entries(st.byAsin).map(([asin, d]) => ({
+      asin,
+      date:        st.date,
+      brand_id:    asinBrand[asin] || 'unknown-brand',
+      units:       d.units      || 0,
+      units_ca:    d.unitsCa    || 0,
+      units_us:    d.unitsUs    || 0,
+      revenue_cad: Math.round((d.revenueCad || 0) * 100) / 100,
+      revenue_usd: Math.round((d.revenueUsd || 0) * 100) / 100,
+    }));
+    if (rows.length === 0) return;
+
+    const { error } = await supabase
+      .from('daily_metrics')
+      .upsert(rows, { onConflict: 'asin,date' });
+    if (error) console.warn('[Orders] persist error:', error.message);
+    else console.log(`[Orders] Persisted ${rows.length} today rows for ${st.date}`);
+  } catch (e) {
+    console.warn('[Orders] persist exception:', e.message);
+  }
+}
 
 // Trigger historical daily_metrics backfill — responds immediately, runs in background
 app.post('/api/backfill', async (req, res) => {
@@ -2550,8 +2661,7 @@ async function runFullSync(tag = 'Sync') {
     try {
       const yesterdayPreset = presets.yesterday;
       if (yesterdayPreset?.brands) {
-        const d = new Date(); d.setDate(d.getDate() - 1);
-        const dateStr = d.toISOString().split('T')[0];
+        const dateStr = pstSubtractDays(pstDateStr(), 1);
         await writeDailyMetrics(yesterdayPreset.brands, dateStr);
       }
     } catch (dmErr) {
@@ -2671,7 +2781,9 @@ function scheduleDailySync() {
 
   // Orders poller: every 15 min for intraday revenue/units (~15 min lag)
   cron.schedule('*/15 * * * *', () => {
-    ordersPoller.poll().catch(err => console.warn('[Orders] Poll error:', err.message));
+    ordersPoller.poll()
+      .then(() => persistOrdersTodayState())
+      .catch(err => console.warn('[Orders] Poll error:', err.message));
   });
 
   // Backfill: 8am UTC daily — fills any missing daily_metrics gaps (runs 2h after main sync)
@@ -2704,13 +2816,12 @@ function scheduleDailySync() {
       console.warn('[AutoSync] Could not check last sync time:', e.message);
     }
 
-    // Rebuild intraday orders state on startup — sequential to avoid competing for the same
-    // order-items rate limit (burst 30, restore 2/sec). Today first, yesterday after.
+    // Rebuild today's intraday state on startup, then persist to daily_metrics.
+    // Yesterday is served directly from daily_metrics — no in-memory rebuild needed.
     setTimeout(() => {
       ordersPoller.rebuildToday()
-        .catch(err => console.warn('[Orders] Startup rebuild error:', err.message))
-        .finally(() => ordersPoller.rebuildYesterday()
-          .catch(err => console.warn('[Orders] Yesterday rebuild error:', err.message)));
+        .then(() => persistOrdersTodayState())
+        .catch(err => console.warn('[Orders] Startup rebuild error:', err.message));
     }, 10000);
 
     // Startup backfill: fill up to 7 missing days (14 report creates, safely under burst quota of 15)
