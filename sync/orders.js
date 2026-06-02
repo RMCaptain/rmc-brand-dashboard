@@ -39,8 +39,16 @@ function resetIfNewDay() {
   }
 }
 
-async function fetchOrderItems(token, orderId) {
+async function fetchOrderItems(token, orderId, attempt = 0) {
   const res = await spRequest('GET', `/orders/v0/orders/${orderId}/orderItems`, token);
+  if (res.status === 429) {
+    if (attempt < 4) {
+      await sleep(2000 * (attempt + 1));
+      return fetchOrderItems(token, orderId, attempt + 1);
+    }
+    console.warn(`[Orders] fetchOrderItems rate-limited on ${orderId} after retries`);
+    return [];
+  }
   if (res.status !== 200) return [];
   return res.body?.payload?.OrderItems || [];
 }

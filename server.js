@@ -2704,10 +2704,13 @@ function scheduleDailySync() {
       console.warn('[AutoSync] Could not check last sync time:', e.message);
     }
 
-    // Rebuild intraday orders state on startup (non-blocking, runs after 10s to let server settle)
+    // Rebuild intraday orders state on startup — sequential to avoid competing for the same
+    // order-items rate limit (burst 30, restore 2/sec). Today first, yesterday after.
     setTimeout(() => {
-      ordersPoller.rebuildToday().catch(err => console.warn('[Orders] Startup rebuild error:', err.message));
-      ordersPoller.rebuildYesterday().catch(err => console.warn('[Orders] Yesterday rebuild error:', err.message));
+      ordersPoller.rebuildToday()
+        .catch(err => console.warn('[Orders] Startup rebuild error:', err.message))
+        .finally(() => ordersPoller.rebuildYesterday()
+          .catch(err => console.warn('[Orders] Yesterday rebuild error:', err.message)));
     }, 10000);
 
     // Startup backfill: fill up to 7 missing days (14 report creates, safely under burst quota of 15)
