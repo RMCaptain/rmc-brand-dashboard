@@ -1592,12 +1592,15 @@ app.get('/api/metrics/yesterday', async (req, res) => {
   }
 
   res.json({
-    date:      yest,
-    updatedAt: new Date().toISOString(),
-    label:     'Yesterday',
-    startDate: yest,
-    endDate:   yest,
-    brands:    byBrand,
+    date:       yest,
+    updatedAt:  new Date().toISOString(),
+    label:      'Yesterday',
+    startDate:  yest,
+    endDate:    yest,
+    brands:     byBrand,
+    // Pass through financials (fees, refunds, ad spend totals) from S&T preset.
+    // Empty until the next sync runs with PST boundaries; sales/units are unaffected.
+    financials: stPreset.financials || {},
   });
 });
 
