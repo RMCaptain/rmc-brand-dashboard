@@ -139,6 +139,7 @@
     let brandsData = [];
     let presetMetrics = {};
     let todayTableData = null;
+    let yesterdayTableData = null;
     let customTableData = null;
     let customFrom = localStorage.getItem('customFrom') || '';
     let customTo   = localStorage.getItem('customTo')   || '';
@@ -153,8 +154,9 @@
     let activeTableView = localStorage.getItem('tableView') || 'products';
 
     function getActiveTableData() {
-      if (activeBrandPreset === 'today')  return todayTableData;
-      if (activeBrandPreset === 'custom') return customTableData;
+      if (activeBrandPreset === 'today')     return todayTableData;
+      if (activeBrandPreset === 'yesterday') return yesterdayTableData;
+      if (activeBrandPreset === 'custom')    return customTableData;
       return presetMetrics.presets?.[activeBrandPreset];
     }
     let sortCol = 'revenue';
@@ -684,6 +686,8 @@
       productPage = 1; brandPage = 1;
       if (key === 'today') {
         fetch('/api/metrics/today').then(r => r.json()).then(d => { todayTableData = d; renderTiles(); renderBrandTable(); renderProductTable(); });
+      } else if (key === 'yesterday') {
+        fetch('/api/metrics/yesterday').then(r => r.json()).then(d => { yesterdayTableData = d; renderTiles(); renderBrandTable(); renderProductTable(); });
       } else if (key === 'custom') {
         if (customFrom && customTo) {
           fetch(`/api/metrics?from=${customFrom}&to=${customTo}`)

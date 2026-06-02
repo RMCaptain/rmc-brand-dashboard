@@ -212,6 +212,7 @@
     let brandsData = [];
     let presetMetrics = {};
     let todayData = null;
+    let yesterdayData = null;
     let customData = null;
     let customFrom = localStorage.getItem('customFrom') || '';
     let customTo   = localStorage.getItem('customTo')   || '';
@@ -296,6 +297,8 @@
       if (cdr) cdr.classList.toggle('hidden', key !== 'custom');
       if (key === 'today') {
         fetch('/api/metrics/today').then(r => r.json()).then(d => { todayData = d; renderPerformance(); });
+      } else if (key === 'yesterday') {
+        fetch('/api/metrics/yesterday').then(r => r.json()).then(d => { yesterdayData = d; renderPerformance(); });
       } else if (key === 'custom') {
         if (customFrom && customTo) {
           fetch(`/api/metrics?from=${customFrom}&to=${customTo}`)
@@ -308,10 +311,12 @@
     }
 
     function renderPerformance() {
-      const isToday  = activePreset === 'today';
-      const isCustom = activePreset === 'custom';
-      const presetBrandData = isToday  ? (todayData?.brands || {})
-        : isCustom ? (customData?.brands || {})
+      const isToday     = activePreset === 'today';
+      const isYesterday = activePreset === 'yesterday';
+      const isCustom    = activePreset === 'custom';
+      const presetBrandData = isToday     ? (todayData?.brands     || {})
+        : isYesterday ? (yesterdayData?.brands  || {})
+        : isCustom    ? (customData?.brands     || {})
         : (presetMetrics.presets?.[activePreset]?.brands || {});
       document.getElementById('brandCount').textContent = `(${brandsData.length})`;
 

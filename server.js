@@ -1475,6 +1475,80 @@ app.get('/api/preset-metrics', async (req, res) => {
   res.json(await loadPresetMetrics());
 });
 
+// Live "Yesterday" data — Orders API for units/revenue, S&T preset for sessions/buybox/ads
+app.get('/api/metrics/yesterday', async (req, res) => {
+  const ystState = ordersPoller.getYesterdayState();
+  const { brands } = await loadBrands();
+  const pm = await loadPresetMetrics();
+  const stPreset = pm.presets?.yesterday || {};
+
+  const yestDate = ystState.date || (() => {
+    const d = new Date(); d.setUTCDate(d.getUTCDate() - 1);
+    return d.toISOString().split('T')[0];
+  })();
+
+  const byBrand = {};
+  for (const brand of brands) {
+    const stBrand   = stPreset.brands?.[brand.id] || {};
+    const stSummary = stBrand.summary || {};
+    let units = 0, unitsCa = 0, unitsUs = 0, revCad = 0, revUsd = 0;
+    const skus = [];
+
+    for (const asin of (brand.asins || [])) {
+      const od    = ystState.byAsin[asin];
+      const stSku = (stBrand.skus || []).find(s => s.asin === asin) || {};
+
+      // Orders API for units/revenue (near real-time); S&T for sessions, buybox, ads
+      const u  = od?.units      ?? stSku.units      ?? 0;
+      const ca = od?.unitsCa    ?? stSku.unitsCa    ?? 0;
+      const us = od?.unitsUs    ?? stSku.unitsUs    ?? 0;
+      const rc = od?.revenueCad ?? stSku.revenueCad ?? 0;
+      const ru = od?.revenueUsd ?? stSku.revenueUsd ?? 0;
+
+      units += u; unitsCa += ca; unitsUs += us; revCad += rc; revUsd += ru;
+      skus.push({
+        asin,
+        units: u, unitsCa: ca, unitsUs: us,
+        revenueCad:          Math.round(rc * 100) / 100,
+        revenueUsd:          Math.round(ru * 100) / 100,
+        sessions:            stSku.sessions            ?? null,
+        pageViews:           stSku.pageViews           ?? null,
+        buyBox:              stSku.buyBox              ?? null,
+        cvr:                 stSku.cvr                 ?? null,
+        spendCad:            stSku.spendCad            ?? null,
+        spendUsd:            stSku.spendUsd            ?? null,
+        attributedSalesCad:  stSku.attributedSalesCad  ?? null,
+        attributedSalesUsd:  stSku.attributedSalesUsd  ?? null,
+        acos:                stSku.acos                ?? null,
+        title:               stSku.title   || brand.asinTitles?.[asin] || '',
+        imageUrl:            stSku.imageUrl            ?? null,
+        inventory:           stSku.inventory           ?? null,
+        marketplaces:        stSku.marketplaces        || [...(ca > 0 ? ['CA'] : []), ...(us > 0 ? ['US'] : [])],
+      });
+    }
+
+    byBrand[brand.id] = {
+      summary: {
+        units, unitsCa, unitsUs,
+        revenueCad: Math.round(revCad * 100) / 100,
+        revenueUsd: Math.round(revUsd * 100) / 100,
+        sessions:   stSummary.sessions  ?? null,
+        buyBox:     stSummary.buyBox    ?? null,
+        avgCvr:     stSummary.avgCvr    ?? null,
+        adSummary:  stSummary.adSummary ?? null,
+        alerts:     stSummary.alerts    ?? {},
+      },
+      skus,
+    };
+  }
+
+  res.json({
+    date: yestDate, updatedAt: ystState.date ? new Date().toISOString() : null,
+    label: 'Yesterday', startDate: yestDate, endDate: yestDate,
+    brands: byBrand,
+  });
+});
+
 // Live "Today" data from Orders API poller (~15 min lag, units + revenue only)
 app.get('/api/metrics/today', async (req, res) => {
   const todayState = ordersPoller.getState();
@@ -2638,6 +2712,7 @@ function scheduleDailySync() {
     // Rebuild intraday orders state on startup (non-blocking, runs after 10s to let server settle)
     setTimeout(() => {
       ordersPoller.rebuildToday().catch(err => console.warn('[Orders] Startup rebuild error:', err.message));
+      ordersPoller.rebuildYesterday().catch(err => console.warn('[Orders] Yesterday rebuild error:', err.message));
     }, 10000);
 
     // Startup backfill: fill up to 7 missing days (14 report creates, safely under burst quota of 15)
