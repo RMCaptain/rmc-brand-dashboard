@@ -7,13 +7,12 @@
 
 require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 const { getAccessToken, spRequest, getMarketplaceIds, MARKETPLACE_CODE, sleep, createReport, waitForReport, downloadReport } = require('./amazon');
+const { pstDateStr, pstSubtractDays, pstMidnightAsUTC, pstEndOfDayAsUTC } = require('./dateUtils');
 
 const MARKETPLACE_CURRENCY = { 'A2EUQ1WTGCTBG2': 'CAD', 'ATVPDKIKX0DER': 'USD' };
 
 let running = false;
 function isBackfillRunning() { return running; }
-
-function fmtDate(d) { return d.toISOString().split('T')[0]; }
 
 function parseSalesTrafficDay(jsonStr) {
   // Returns { asin: { revenueCad, revenueUsd, units, unitsCa, unitsUs, sessions, pageViews, buyBox } }
@@ -41,11 +40,9 @@ function parseSalesTrafficDay(jsonStr) {
 // Find dates in the last `lookbackDays` that are missing from daily_metrics.
 async function findMissingDates(supabase, lookbackDays = 365) {
   const dates = [];
-  const today = new Date();
+  const todayPst = pstDateStr();
   for (let i = 1; i <= lookbackDays; i++) {
-    const d = new Date(today);
-    d.setDate(today.getDate() - i);
-    dates.push(fmtDate(d));
+    dates.push(pstSubtractDays(todayPst, i));
   }
 
   // Fetch which dates we already have (any ASIN for that date = date is covered)
@@ -87,7 +84,7 @@ async function backfillDays(supabase, brands, limit = 15, lookbackDays = 365) {
           'GET_SALES_AND_TRAFFIC_REPORT',
           [mpId],
           { dateGranularity: 'SUMMARY', asinGranularity: 'CHILD' },
-          { start: date + 'T00:00:00Z', end: date + 'T23:59:59Z' },
+          { start: pstMidnightAsUTC(date), end: pstEndOfDayAsUTC(date) },
           token
         );
         reportJobs.push({ date, mpId, reportId });

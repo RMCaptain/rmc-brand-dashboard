@@ -8,6 +8,7 @@ const path = require('path');
 const cron = require('node-cron');
 const { createClient } = require('@supabase/supabase-js');
 const ordersPoller = require('./sync/orders');
+const { pstDateStr, pstSubtractDays } = require('./sync/dateUtils');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -1482,10 +1483,7 @@ app.get('/api/metrics/yesterday', async (req, res) => {
   const pm = await loadPresetMetrics();
   const stPreset = pm.presets?.yesterday || {};
 
-  const yestDate = ystState.date || (() => {
-    const d = new Date(); d.setUTCDate(d.getUTCDate() - 1);
-    return d.toISOString().split('T')[0];
-  })();
+  const yestDate = ystState.date || pstSubtractDays(pstDateStr(), 1);
 
   const byBrand = {};
   for (const brand of brands) {
@@ -1590,11 +1588,11 @@ app.get('/api/metrics/today', async (req, res) => {
   }
 
   res.json({
-    date:      todayState.date     || new Date().toISOString().split('T')[0],
+    date:      todayState.date     || pstDateStr(),
     updatedAt: todayState.updatedAt,
     label:     'Today',
-    startDate: todayState.date     || new Date().toISOString().split('T')[0],
-    endDate:   todayState.date     || new Date().toISOString().split('T')[0],
+    startDate: todayState.date     || pstDateStr(),
+    endDate:   todayState.date     || pstDateStr(),
     brands:    byBrand,
   });
 });
@@ -2372,20 +2370,17 @@ async function runFullSync(tag = 'Sync') {
     let adHandles = {};
     let adsPopulated = false;
     try {
-      const fmt = d => d.toISOString().split('T')[0];
-      const today = new Date(); today.setHours(0,0,0,0);
-      const yest  = new Date(today); yest.setDate(yest.getDate() - 1);
-      const l7s   = new Date(yest); l7s.setDate(yest.getDate() - 6);
-      const l14s  = new Date(yest); l14s.setDate(yest.getDate() - 13);
-      const l30s  = new Date(today); l30s.setDate(l30s.getDate() - 30);
-      const lms   = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-      const lme   = new Date(today.getFullYear(), today.getMonth(), 0);
+      const todayPst = pstDateStr();
+      const yest     = pstSubtractDays(todayPst, 1);
+      const [ty, tm] = todayPst.split('-').map(Number);
+      const lmsStr   = `${tm === 1 ? ty - 1 : ty}-${String(tm === 1 ? 12 : tm - 1).padStart(2, '0')}-01`;
+      const lmeStr   = pstSubtractDays(`${String(ty).padStart(4,'0')}-${String(tm).padStart(2,'0')}-01`, 1);
       const ranges = {
-        yesterday: { startDate: fmt(yest), endDate: fmt(yest) },
-        last7d:    { startDate: fmt(l7s),  endDate: fmt(yest) },
-        last14d:   { startDate: fmt(l14s), endDate: fmt(yest) },
-        last30d:   { startDate: fmt(l30s), endDate: fmt(yest) },
-        lastMonth: { startDate: fmt(lms),  endDate: fmt(lme)  },
+        yesterday: { startDate: yest,                        endDate: yest  },
+        last7d:    { startDate: pstSubtractDays(yest, 6),    endDate: yest  },
+        last14d:   { startDate: pstSubtractDays(yest, 13),   endDate: yest  },
+        last30d:   { startDate: pstSubtractDays(yest, 29),   endDate: yest  },
+        lastMonth: { startDate: lmsStr,                      endDate: lmeStr },
       };
       const entries = [];
       for (const [key, { startDate, endDate }] of Object.entries(ranges)) {

@@ -6,6 +6,7 @@
 
 require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 const { getAccessToken, spRequest, getMarketplaceIds, sleep } = require('./amazon');
+const { pstDateStr, pstSubtractDays, pstMidnightAsUTC } = require('./dateUtils');
 
 const ENABLED = process.env.SYNC_ENABLED === 'true';
 
@@ -22,15 +23,8 @@ let yesterdayState = {
   byAsin: {}
 };
 
-function todayStr() {
-  return new Date().toISOString().split('T')[0];
-}
-
-function yesterdayStr() {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - 1);
-  return d.toISOString().split('T')[0];
-}
+function todayStr()     { return pstDateStr(); }
+function yesterdayStr() { return pstSubtractDays(pstDateStr(), 1); }
 
 function resetIfNewDay() {
   const today = todayStr();
@@ -121,7 +115,7 @@ async function rebuildToday() {
   console.log(`[Orders] Full rebuild for ${state.date}...`);
   const token          = await getAccessToken();
   const marketplaceIds = getMarketplaceIds();
-  const todayStart     = state.date + 'T00:00:00Z';
+  const todayStart     = pstMidnightAsUTC(state.date);
   let total = 0;
 
   for (const mpId of marketplaceIds) {
@@ -157,8 +151,8 @@ async function rebuildYesterday() {
   for (const mpId of getMarketplaceIds()) {
     const n = await fetchAndProcess(token, {
       MarketplaceIds: mpId,
-      CreatedAfter:   yest + 'T00:00:00Z',
-      CreatedBefore:  todayStr() + 'T00:00:00Z',
+      CreatedAfter:   pstMidnightAsUTC(yest),
+      CreatedBefore:  pstMidnightAsUTC(todayStr()),
       OrderStatuses:  'Unshipped,PartiallyShipped,Shipped'
     }, mpId, target);
     total += n;

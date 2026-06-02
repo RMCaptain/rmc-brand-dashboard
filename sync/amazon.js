@@ -9,6 +9,7 @@ const https = require('https');
 const zlib = require('zlib');
 const fs = require('fs');
 const path = require('path');
+const { pstDateStr, pstSubtractDays, pstMidnightAsUTC, pstEndOfDayAsUTC } = require('./dateUtils');
 
 const LISTINGS_CACHE_PATH = path.join(__dirname, '../data/listings-cache.json');
 const LISTINGS_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -620,31 +621,24 @@ function avg(arr, decimals = 1) {
   return Math.round(val * Math.pow(10, decimals)) / Math.pow(10, decimals);
 }
 
-function fmtDate(d) {
-  return d.toISOString().split('T')[0];
-}
-
 function getPresetRanges() {
-  const today = new Date();
-  const yesterday = new Date(today);
-  yesterday.setDate(today.getDate() - 1);
-  const y = yesterday;
+  const todayPst     = pstDateStr();
+  const yest         = pstSubtractDays(todayPst, 1);
 
-  function sub(base, days) { const d = new Date(base); d.setDate(base.getDate() - days); return d; }
+  // PST-aware month boundaries
+  const [ty, tm] = todayPst.split('-').map(Number);
+  const lastMonthStart = `${tm === 1 ? ty - 1 : ty}-${String(tm === 1 ? 12 : tm - 1).padStart(2, '0')}-01`;
+  const lastMonthEndDate = pstSubtractDays(`${String(ty).padStart(4,'0')}-${String(tm).padStart(2,'0')}-01`, 1);
+  const thisMonthStart = `${String(ty).padStart(4,'0')}-${String(tm).padStart(2,'0')}-01`;
 
-  const lastMonthStart = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-  const lastMonthEnd   = new Date(today.getFullYear(), today.getMonth(), 0);
-  const thisMonthStart = new Date(today.getFullYear(), today.getMonth(), 1);
-  const yearStart      = new Date(today.getFullYear(), 0, 1);
-
-  function r(start, end, label) {
+  function r(startDate, endDate, label) {
     // Clamp start to yesterday if it somehow overshoots (e.g., MTD on the 1st)
-    const s = start > y ? y : start;
+    const s = startDate > yest ? yest : startDate;
     return {
-      start: fmtDate(s) + 'T00:00:00Z',
-      end:   fmtDate(end) + 'T23:59:59Z',
-      startDate: fmtDate(s),
-      endDate:   fmtDate(end),
+      start:     pstMidnightAsUTC(s),
+      end:       pstEndOfDayAsUTC(endDate),
+      startDate: s,
+      endDate,
       label
     };
   }
@@ -653,11 +647,11 @@ function getPresetRanges() {
   // Wider ranges (last60d, last90d, ytd) burn API quota fast and rarely add
   // actionable insight over last30d. Add them back if quota allows.
   return {
-    yesterday:  r(y,                 y,             'Yesterday'),
-    last7d:     r(sub(y, 6),         y,             'Last 7 Days'),
-    last30d:    r(sub(y, 29),        y,             'Last 30 Days'),
-    mtd:        r(thisMonthStart,    y,             'Month to Date'),
-    lastMonth:  r(lastMonthStart,    lastMonthEnd,  'Last Month'),
+    yesterday:  r(yest,                          yest,            'Yesterday'),
+    last7d:     r(pstSubtractDays(yest, 6),      yest,            'Last 7 Days'),
+    last30d:    r(pstSubtractDays(yest, 29),     yest,            'Last 30 Days'),
+    mtd:        r(thisMonthStart,                yest,            'Month to Date'),
+    lastMonth:  r(lastMonthStart,                lastMonthEndDate,'Last Month'),
   };
 }
 
