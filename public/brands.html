@@ -214,6 +214,7 @@
     let todayData = null;
     let yesterdayData = null;
     let customData = null;
+    let rangeData = {}; // { last7d: {...}, last14d: {...}, ... } — fetched from /api/metrics
     let customFrom = localStorage.getItem('customFrom') || '';
     let customTo   = localStorage.getItem('customTo')   || '';
     const VALID_PRESETS = new Set(['today','yesterday','last7d','last14d','last30d','last60d','last90d','mtd','lastMonth','ytd','custom']);
@@ -288,6 +289,38 @@
         .then(d => { customData = d; renderPerformance(); });
     }
 
+    // PST-aware date helpers — match server-side sync/dateUtils
+    function pstDateStr(date = new Date()) {
+      return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(date);
+    }
+    function pstSubtractDays(pstDate, days) {
+      const [y, m, d] = pstDate.split('-').map(Number);
+      const result = new Date(Date.UTC(y, m - 1, d - days));
+      return result.toISOString().split('T')[0];
+    }
+    function getPresetRange(key) {
+      const today = pstDateStr();
+      const yest  = pstSubtractDays(today, 1);
+      const [ty, tm] = today.split('-').map(Number);
+      switch (key) {
+        case 'last7d':    return { from: pstSubtractDays(yest, 6),  to: yest };
+        case 'last14d':   return { from: pstSubtractDays(yest, 13), to: yest };
+        case 'last30d':   return { from: pstSubtractDays(yest, 29), to: yest };
+        case 'last60d':   return { from: pstSubtractDays(yest, 59), to: yest };
+        case 'last90d':   return { from: pstSubtractDays(yest, 89), to: yest };
+        case 'mtd':       return { from: `${String(ty).padStart(4,'0')}-${String(tm).padStart(2,'0')}-01`, to: yest };
+        case 'lastMonth': {
+          const lmY = tm === 1 ? ty - 1 : ty;
+          const lmM = tm === 1 ? 12 : tm - 1;
+          const first = `${String(lmY).padStart(4,'0')}-${String(lmM).padStart(2,'0')}-01`;
+          const last  = pstSubtractDays(`${String(ty).padStart(4,'0')}-${String(tm).padStart(2,'0')}-01`, 1);
+          return { from: first, to: last };
+        }
+        case 'ytd':       return { from: `${String(ty).padStart(4,'0')}-01-01`, to: yest };
+        default:          return null;
+      }
+    }
+
     function setPreset(key) {
       activePreset = key;
       localStorage.setItem('brandPreset', key);
@@ -306,7 +339,15 @@
             .then(d => { customData = d; renderPerformance(); });
         }
       } else {
-        renderPerformance();
+        // last7d/last14d/last30d/last60d/last90d/mtd/lastMonth/ytd — query daily_metrics
+        const r = getPresetRange(key);
+        if (r) {
+          fetch(`/api/metrics?from=${r.from}&to=${r.to}&presetKey=${encodeURIComponent(key)}`)
+            .then(res => res.json())
+            .then(d => { rangeData[key] = d; renderPerformance(); });
+        } else {
+          renderPerformance();
+        }
       }
     }
 
@@ -317,7 +358,7 @@
       const presetBrandData = isToday     ? (todayData?.brands     || {})
         : isYesterday ? (yesterdayData?.brands  || {})
         : isCustom    ? (customData?.brands     || {})
-        : (presetMetrics.presets?.[activePreset]?.brands || {});
+        : (rangeData[activePreset]?.brands || presetMetrics.presets?.[activePreset]?.brands || {});
       document.getElementById('brandCount').textContent = `(${brandsData.length})`;
 
       if (!brandsData.length) {

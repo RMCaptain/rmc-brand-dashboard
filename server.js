@@ -1825,9 +1825,11 @@ app.get('/api/metrics', async (req, res) => {
   try {
     const { brands } = await loadBrands();
 
+    const pm = await loadPresetMetrics();
+
     const { data: rows, error } = await supabase
       .from('daily_metrics')
-      .select('asin,brand_id,units,units_ca,units_us,revenue_cad,revenue_usd,sessions,page_views,buy_box_pct')
+      .select('*')
       .gte('date', from)
       .lte('date', to);
 
@@ -1837,7 +1839,16 @@ app.get('/api/metrics', async (req, res) => {
     const byAsin = {};
     for (const row of (rows || [])) {
       if (!byAsin[row.asin]) {
-        byAsin[row.asin] = { brand_id: row.brand_id, units: 0, units_ca: 0, units_us: 0, revenue_cad: 0, revenue_usd: 0, sessions: 0, page_views: 0, bb_sum: 0, bb_count: 0 };
+        byAsin[row.asin] = {
+          brand_id: row.brand_id,
+          units: 0, units_ca: 0, units_us: 0,
+          revenue_cad: 0, revenue_usd: 0,
+          sessions: 0, page_views: 0,
+          bb_sum: 0, bb_count: 0,
+          spend_cad: 0, spend_usd: 0,
+          attr_sales_cad: 0, attr_sales_usd: 0,
+          inv_onhand: null, inv_inbound: null,
+        };
       }
       const a = byAsin[row.asin];
       a.units       += row.units       || 0;
@@ -1845,55 +1856,138 @@ app.get('/api/metrics', async (req, res) => {
       a.units_us    += row.units_us    || 0;
       a.revenue_cad += row.revenue_cad || 0;
       a.revenue_usd += row.revenue_usd || 0;
+      a.spend_cad      += row.spend_cad             || 0;
+      a.spend_usd      += row.spend_usd             || 0;
+      a.attr_sales_cad += row.attributed_sales_cad  || 0;
+      a.attr_sales_usd += row.attributed_sales_usd  || 0;
       if (row.sessions    != null) a.sessions    += row.sessions;
       if (row.page_views  != null) a.page_views  += row.page_views;
       if (row.buy_box_pct != null) { a.bb_sum += row.buy_box_pct; a.bb_count++; }
+      // Use latest inventory snapshot in window
+      if (row.inventory_on_hand != null) a.inv_onhand = row.inventory_on_hand;
+      if (row.inventory_inbound != null) a.inv_inbound = row.inventory_inbound;
+    }
+
+    function lookupSkuMeta(brandId, asin) {
+      for (const key of ['last30d', 'last7d', 'lastMonth', 'mtd', 'yesterday']) {
+        const sku = (pm.presets?.[key]?.brands?.[brandId]?.skus || []).find(s => s.asin === asin);
+        if (sku && (sku.title || sku.imageUrl)) return sku;
+      }
+      return {};
+    }
+
+    function buildSku(asin, brandId, a, title) {
+      const spendTotal = (a.spend_cad || 0) + (a.spend_usd || 0);
+      const attrTotal  = (a.attr_sales_cad || 0) + (a.attr_sales_usd || 0);
+      return {
+        asin,
+        title,
+        units:      a.units,
+        unitsCa:    a.units_ca, unitsUs: a.units_us,
+        unitsCad:   a.units_ca, unitsUsd: a.units_us,
+        revenueCad: Math.round(a.revenue_cad * 100) / 100,
+        revenueUsd: Math.round(a.revenue_usd * 100) / 100,
+        sessions:   a.sessions   || null,
+        pageViews:  a.page_views || null,
+        buyBox:     a.bb_count > 0 ? Math.round(a.bb_sum / a.bb_count * 100) / 100 : null,
+        cvr:        (a.units && a.sessions) ? Math.round(a.units / a.sessions * 10000) / 100 : null,
+        spendCad:           Math.round((a.spend_cad || 0) * 100) / 100,
+        spendUsd:           Math.round((a.spend_usd || 0) * 100) / 100,
+        attributedSalesCad: Math.round((a.attr_sales_cad || 0) * 100) / 100,
+        attributedSalesUsd: Math.round((a.attr_sales_usd || 0) * 100) / 100,
+        acos: (spendTotal > 0 && attrTotal > 0) ? Math.round(spendTotal / attrTotal * 10000) / 100 : null,
+        inventory: a.inv_onhand != null ? { onHand: a.inv_onhand, inbound: a.inv_inbound || 0 } : null,
+        marketplaces: [...((a.units_ca||0) > 0 ? ['CA'] : []), ...((a.units_us||0) > 0 ? ['US'] : [])],
+      };
     }
 
     // Build brand-keyed result — same shape as preset_metrics brands
     const resultBrands = {};
+    const mappedAsins = new Set();
     for (const brand of brands) {
-      let bUnits = 0, bUnitsCa = 0, bUnitsUs = 0, bRevCad = 0, bRevUsd = 0, bSessions = 0, bPageViews = 0;
+      let bUnits=0, bUnitsCa=0, bUnitsUs=0, bRevCad=0, bRevUsd=0, bSessions=0, bPageViews=0;
+      let bSpendCad=0, bSpendUsd=0, bAttrCad=0, bAttrUsd=0;
+      const buyBoxSamples = [];
       const skus = [];
 
       for (const asin of (brand.asins || [])) {
+        mappedAsins.add(asin);
         const a = byAsin[asin];
         if (!a) continue;
-        const buyBox = a.bb_count > 0 ? Math.round(a.bb_sum / a.bb_count * 100) / 100 : null;
-        skus.push({
-          asin,
-          title:      brand.asinTitles?.[asin] || null,
-          units:      a.units,
-          unitsCad:   a.units_ca,
-          unitsUsd:   a.units_us,
-          revenueCad: Math.round(a.revenue_cad * 100) / 100,
-          revenueUsd: Math.round(a.revenue_usd * 100) / 100,
-          sessions:   a.sessions   || null,
-          pageViews:  a.page_views || null,
-          buyBox,
-        });
-        bUnits    += a.units;      bUnitsCa  += a.units_ca;    bUnitsUs  += a.units_us;
-        bRevCad   += a.revenue_cad; bRevUsd   += a.revenue_usd;
-        bSessions += a.sessions;   bPageViews += a.page_views;
+        const meta = lookupSkuMeta(brand.id, asin);
+        const sku = buildSku(asin, brand.id, a, meta.title || brand.asinTitles?.[asin] || '');
+        sku.imageUrl = meta.imageUrl || null;
+        skus.push(sku);
+        bUnits += a.units; bUnitsCa += a.units_ca; bUnitsUs += a.units_us;
+        bRevCad += a.revenue_cad; bRevUsd += a.revenue_usd;
+        bSessions += a.sessions; bPageViews += a.page_views;
+        bSpendCad += a.spend_cad; bSpendUsd += a.spend_usd;
+        bAttrCad += a.attr_sales_cad; bAttrUsd += a.attr_sales_usd;
+        if (sku.buyBox != null) buyBoxSamples.push(sku.buyBox);
       }
 
       if (!skus.length) continue;
+      const avgBuyBox = buyBoxSamples.length
+        ? Math.round(buyBoxSamples.reduce((s, v) => s + v, 0) / buyBoxSamples.length * 100) / 100
+        : null;
+      const stSummary = pm.presets?.yesterday?.brands?.[brand.id]?.summary || {};
+
       resultBrands[brand.id] = {
         summary: {
-          units:      bUnits,
-          unitsCad:   bUnitsCa,
-          unitsUsd:   bUnitsUs,
+          units:    bUnits,
+          unitsCa:  bUnitsCa, unitsUs: bUnitsUs,
+          unitsCad: bUnitsCa, unitsUsd: bUnitsUs,
           revenueCad: Math.round(bRevCad * 100) / 100,
           revenueUsd: Math.round(bRevUsd * 100) / 100,
           sessions:   bSessions   || null,
           pageViews:  bPageViews  || null,
+          buyBox:     avgBuyBox,
+          avgCvr:     (bUnits && bSessions) ? Math.round(bUnits / bSessions * 10000) / 100 : null,
+          adSummary:  (bSpendCad + bSpendUsd) > 0 ? {
+            spendCad:           Math.round(bSpendCad * 100) / 100,
+            spendUsd:           Math.round(bSpendUsd * 100) / 100,
+            attributedSalesCad: Math.round(bAttrCad * 100) / 100,
+            attributedSalesUsd: Math.round(bAttrUsd * 100) / 100,
+          } : null,
+          alerts: stSummary.alerts || {},
         },
         skus,
       };
     }
 
+    // Safety net: roll any unmapped ASINs into unknown-brand
+    let uUnits=0, uCa=0, uUs=0, uRevCad=0, uRevUsd=0;
+    const uSkus = [];
+    for (const [asin, a] of Object.entries(byAsin)) {
+      if (mappedAsins.has(asin)) continue;
+      if (!a.units && !a.revenue_cad && !a.revenue_usd) continue;
+      uUnits += a.units; uCa += a.units_ca; uUs += a.units_us;
+      uRevCad += a.revenue_cad; uRevUsd += a.revenue_usd;
+      uSkus.push(buildSku(asin, 'unknown-brand', a, ''));
+    }
+    if (uSkus.length > 0) {
+      resultBrands['unknown-brand'] = {
+        summary: {
+          units: uUnits,
+          unitsCa: uCa, unitsUs: uUs,
+          unitsCad: uCa, unitsUsd: uUs,
+          revenueCad: Math.round(uRevCad * 100) / 100,
+          revenueUsd: Math.round(uRevUsd * 100) / 100,
+          sessions: null, buyBox: null, avgCvr: null, adSummary: null, alerts: {},
+        },
+        skus: uSkus,
+      };
+    }
+
     const fmtD = d => new Date(d + 'T12:00:00Z').toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' });
-    res.json({ from, to, label: `${fmtD(from)} – ${fmtD(to)}`, startDate: from, endDate: to, brands: resultBrands });
+    res.json({
+      from, to,
+      label: `${fmtD(from)} – ${fmtD(to)}`,
+      startDate: from, endDate: to,
+      brands: resultBrands,
+      // Financials passthrough — populates after next sync with PST boundaries
+      financials: pm.presets?.[req.query.presetKey]?.financials || {},
+    });
   } catch (err) {
     console.error('[Metrics] Custom range error:', err.message);
     res.status(500).json({ error: err.message });
