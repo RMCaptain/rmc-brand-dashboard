@@ -1544,7 +1544,9 @@ app.get('/api/metrics/yesterday', async (req, res) => {
 
       skus.push({
         asin,
-        units: u, unitsCa: ca, unitsUs: us,
+        units: u,
+        // Frontend (COGS calc) reads unitsCad/unitsUsd; keep both naming styles for safety.
+        unitsCa: ca, unitsUs: us, unitsCad: ca, unitsUsd: us,
         revenueCad:         Math.round(rc * 100) / 100,
         revenueUsd:         Math.round(ru * 100) / 100,
         sessions:           sess || null,
@@ -1644,7 +1646,8 @@ app.get('/api/metrics/today', async (req, res) => {
       units += u; unitsCa += ca; unitsUs += us; revCad += rc; revUsd += ru;
       skus.push({
         asin,
-        units: u, unitsCa: ca, unitsUs: us,
+        units: u,
+        unitsCa: ca, unitsUs: us, unitsCad: ca, unitsUsd: us,
         revenueCad: Math.round(rc * 100) / 100,
         revenueUsd: Math.round(ru * 100) / 100,
         // Fields not available intraday — frontend shows —
