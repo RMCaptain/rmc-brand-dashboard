@@ -4,7 +4,6 @@
 ───────────────────────────────────────────────────────────────────────────── */
 
 :root {
-  color-scheme: dark;
   --brand:       #537D30;
   --brand-hover: #5E8E37;
   --brand-glow:  rgba(83, 125, 48, 0.22);
@@ -273,6 +272,10 @@ nav, main, div, section, form { position: relative; z-index: 1; }
   color-scheme: dark;
 }
 .rmc-select:focus { border-color: var(--brand); }
+.rmc-select option {
+  background: #0D1120;
+  color: #e2e8f0;
+}
 
 /* Line input (PO builder table cells) */
 .line-input {
