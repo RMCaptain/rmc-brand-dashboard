@@ -1593,6 +1593,50 @@ app.get('/api/metrics/yesterday', async (req, res) => {
     };
   }
 
+  // Safety net: roll up any ASINs with daily_metrics rows that aren't mapped to a brand,
+  // so unmapped sales still show up in the top-line totals. These should be assigned via
+  // the Mapping tab — this bucket just prevents silent revenue loss.
+  const mappedAsins = new Set();
+  for (const brand of brands) for (const a of (brand.asins || [])) mappedAsins.add(a);
+
+  let uUnits = 0, uCa = 0, uUs = 0, uRevCad = 0, uRevUsd = 0;
+  const uSkus = [];
+  for (const r of (rows || [])) {
+    if (mappedAsins.has(r.asin)) continue;
+    if (!r.units && !r.revenue_cad && !r.revenue_usd) continue;
+    uUnits  += r.units       || 0;
+    uCa     += r.units_ca    || 0;
+    uUs     += r.units_us    || 0;
+    uRevCad += r.revenue_cad || 0;
+    uRevUsd += r.revenue_usd || 0;
+    uSkus.push({
+      asin:       r.asin,
+      units:      r.units || 0,
+      unitsCa:    r.units_ca || 0, unitsUs: r.units_us || 0,
+      unitsCad:   r.units_ca || 0, unitsUsd: r.units_us || 0,
+      revenueCad: Math.round((r.revenue_cad || 0) * 100) / 100,
+      revenueUsd: Math.round((r.revenue_usd || 0) * 100) / 100,
+      sessions:   r.sessions || null,
+      pageViews:  r.page_views || null,
+      buyBox:     r.buy_box_pct,
+      cvr: null, spendCad: null, spendUsd: null, attributedSalesCad: null, attributedSalesUsd: null, acos: null,
+      title: '', imageUrl: null,
+      inventory: r.inventory_on_hand != null ? { onHand: r.inventory_on_hand, inbound: r.inventory_inbound || 0 } : null,
+      marketplaces: [...((r.units_ca||0) > 0 ? ['CA'] : []), ...((r.units_us||0) > 0 ? ['US'] : [])],
+    });
+  }
+  if (uSkus.length > 0) {
+    byBrand['unknown-brand'] = {
+      summary: {
+        units: uUnits, unitsCa: uCa, unitsUs: uUs,
+        revenueCad: Math.round(uRevCad * 100) / 100,
+        revenueUsd: Math.round(uRevUsd * 100) / 100,
+        sessions: null, buyBox: null, avgCvr: null, adSummary: null, alerts: {},
+      },
+      skus: uSkus,
+    };
+  }
+
   res.json({
     date:       yest,
     updatedAt:  new Date().toISOString(),
@@ -1668,6 +1712,40 @@ app.get('/api/metrics/today', async (req, res) => {
         adSummary: null, alerts: {},
       },
       skus,
+    };
+  }
+
+  // Safety net: roll up unmapped ASINs (any asin with data not in a brand's asins[]).
+  const mappedAsins = new Set();
+  for (const b of brands) for (const a of (b.asins || [])) mappedAsins.add(a);
+  let uUnits = 0, uCa = 0, uUs = 0, uRevCad = 0, uRevUsd = 0;
+  const uSkus = [];
+  for (const [asin, d] of Object.entries(byAsin)) {
+    if (mappedAsins.has(asin)) continue;
+    const u = d?.units || 0, ca = d?.unitsCa || 0, us = d?.unitsUs || 0;
+    const rc = d?.revenueCad || 0, ru = d?.revenueUsd || 0;
+    if (!u && !rc && !ru) continue;
+    uUnits += u; uCa += ca; uUs += us; uRevCad += rc; uRevUsd += ru;
+    uSkus.push({
+      asin, units: u,
+      unitsCa: ca, unitsUs: us, unitsCad: ca, unitsUsd: us,
+      revenueCad: Math.round(rc * 100) / 100,
+      revenueUsd: Math.round(ru * 100) / 100,
+      sessions: null, pageViews: null, buyBox: null, cvr: null,
+      spendCad: null, spendUsd: null, attributedSalesCad: null, attributedSalesUsd: null, acos: null,
+      title: '', imageUrl: null, inventory: null,
+      marketplaces: [...(ca > 0 ? ['CA'] : []), ...(us > 0 ? ['US'] : [])],
+    });
+  }
+  if (uSkus.length > 0) {
+    byBrand['unknown-brand'] = {
+      summary: {
+        units: uUnits, unitsCa: uCa, unitsUs: uUs,
+        revenueCad: Math.round(uRevCad * 100) / 100,
+        revenueUsd: Math.round(uRevUsd * 100) / 100,
+        sessions: null, buyBox: null, avgCvr: null, adSummary: null, alerts: {},
+      },
+      skus: uSkus,
     };
   }
 
