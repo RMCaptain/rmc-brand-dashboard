@@ -1017,10 +1017,7 @@
             </div>
           </td>
           <td class="px-4 py-2.5">
-            <select class="rmc-select" style="font-size:11px;padding:4px 8px"
-              onchange="reassignAsin('${r.brandId}','${r.asin}',this.value)">
-              ${brandsData.map(b => `<option value="${b.id}"${b.id===r.brandId?' selected':''}>${b.name}</option>`).join('')}
-            </select>
+            <span style="font-size:11px;color:var(--text-2)">${r.brandName}</span>
           </td>
           <td class="px-4 py-2.5">
             <input type="text" value="${(r.supplierName||'').replace(/"/g,'&quot;')}" placeholder="Amazon title"
