@@ -1063,13 +1063,12 @@
             </div>
           </td>
           <td class="px-4 py-2.5 text-right">
-            <div class="flex flex-col items-end gap-0.5">
-              <input type="number" min="0" step="0.01" value="${r.buyCost ?? ''}" placeholder="—"
+            ${(r.cfgType === 'multipack' || r.cfgType === 'bundle')
+              ? `<span style="font-size:13px;color:var(--text-3);letter-spacing:0.05em">—</span>`
+              : `<input type="number" min="0" step="0.01" value="${r.buyCost ?? ''}" placeholder="—"
                 class="rmc-input w-24 text-right" style="font-size:11px;padding:3px 6px"
-                onchange="saveBuyCost('${r.brandId}','${r.asin}',this.value)" />
-              ${r.cfgType === 'multipack' ? `<span style="font-size:9px;color:var(--text-3)">base ASIN price</span>` : ''}
-              ${r.cfgType === 'bundle' ? `<span style="font-size:9px;color:var(--text-3)">or leave blank (auto-sum)</span>` : ''}
-            </div>
+                onchange="saveBuyCost('${r.brandId}','${r.asin}',this.value)" />`
+            }
           </td>
           <td class="px-4 py-2.5 text-right">
             <input type="number" min="0" value="${r.leadTime ?? ''}" placeholder="—"
