@@ -38,6 +38,8 @@ function parseSalesTrafficDay(jsonStr) {
 }
 
 // Find dates in the last `lookbackDays` that are missing from daily_metrics.
+// Query each date with limit 1 so we don't hit Supabase's 1000-row cap (full days have
+// 200-400 rows; a multi-date IN() query truncates and reports filled dates as missing).
 async function findMissingDates(supabase, lookbackDays = 365) {
   const dates = [];
   const todayPst = pstDateStr();
@@ -45,13 +47,22 @@ async function findMissingDates(supabase, lookbackDays = 365) {
     dates.push(pstSubtractDays(todayPst, i));
   }
 
-  // Fetch which dates we already have (any ASIN for that date = date is covered)
-  const { data } = await supabase
-    .from('daily_metrics')
-    .select('date')
-    .in('date', dates);
+  const have = new Set();
+  // Run in parallel batches of 10 to stay light on Supabase
+  const BATCH = 10;
+  for (let i = 0; i < dates.length; i += BATCH) {
+    const batch = dates.slice(i, i + BATCH);
+    const results = await Promise.all(batch.map(async d => {
+      const { data } = await supabase
+        .from('daily_metrics')
+        .select('date')
+        .eq('date', d)
+        .limit(1);
+      return (data && data.length > 0) ? d : null;
+    }));
+    for (const r of results) if (r) have.add(r);
+  }
 
-  const have = new Set((data || []).map(r => r.date));
   return dates.filter(d => !have.has(d));
 }
 
