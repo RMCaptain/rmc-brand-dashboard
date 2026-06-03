@@ -130,7 +130,7 @@ async function rebuildToday() {
     const n = await fetchAndProcess(token, {
       MarketplaceIds: mpId,
       CreatedAfter:   todayStart,
-      OrderStatuses:  'Unshipped,PartiallyShipped,Shipped'
+      OrderStatuses:  'Pending,Unshipped,PartiallyShipped,Shipped'
     }, mpId, state);
     total += n;
     await sleep(2000);
@@ -161,7 +161,7 @@ async function rebuildYesterday() {
       MarketplaceIds: mpId,
       CreatedAfter:   pstMidnightAsUTC(yest),
       CreatedBefore:  pstMidnightAsUTC(todayStr()),
-      OrderStatuses:  'Unshipped,PartiallyShipped,Shipped'
+      OrderStatuses:  'Pending,Unshipped,PartiallyShipped,Shipped'
     }, mpId, target);
     total += n;
     await sleep(2000);
@@ -186,7 +186,7 @@ async function poll() {
     await fetchAndProcess(token, {
       MarketplaceIds:    mpId,
       LastUpdatedAfter:  since,
-      OrderStatuses:     'Unshipped,PartiallyShipped,Shipped'
+      OrderStatuses:     'Pending,Unshipped,PartiallyShipped,Shipped'
     }, mpId, state);
     await sleep(2000);
   }
