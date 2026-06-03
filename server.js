@@ -163,16 +163,38 @@ function saveFx(data) {
 
 // Write per-ASIN rows for a single completed day to daily_metrics.
 // Called after each sync for "yesterday" to build up the rolling history.
+//
+// CRITICAL: skip empty/zero rows. Amazon S&T has a 24-48h publishing lag —
+// if we sync within hours of day-end the report comes back with units=0 for
+// most ASINs. Writing those would OVERWRITE good data already in the table.
 async function writeDailyMetrics(yesterdayBrands, date) {
   if (!yesterdayBrands || !date) return;
+
+  // Bail if the whole dataset is empty — strong signal S&T hasn't published yet.
+  let totalUnits = 0, totalRev = 0;
+  for (const brandData of Object.values(yesterdayBrands)) {
+    for (const sku of (brandData.skus || [])) {
+      totalUnits += sku.units || 0;
+      totalRev   += (sku.revenueCad || 0) + (sku.revenueUsd || 0);
+    }
+  }
+  if (totalUnits === 0 && totalRev === 0) {
+    console.warn(`[DailyMetrics] Refusing to write — S&T returned empty data for ${date} (likely publishing lag).`);
+    return;
+  }
+
+  // Write only non-zero rows so we preserve any existing good data per ASIN.
   const rows = [];
   for (const [brandId, brandData] of Object.entries(yesterdayBrands)) {
     for (const sku of (brandData.skus || [])) {
+      const units = sku.units || 0;
+      const rev   = (sku.revenueCad || 0) + (sku.revenueUsd || 0);
+      if (units === 0 && rev === 0) continue;
       rows.push({
         asin:             sku.asin,
         date,
         brand_id:         brandId,
-        units:            sku.units            || 0,
+        units,
         units_ca:         sku.unitsCad         || 0,
         units_us:         sku.unitsUsd         || 0,
         revenue_cad:      sku.revenueCad       || 0,
@@ -188,7 +210,7 @@ async function writeDailyMetrics(yesterdayBrands, date) {
   if (rows.length === 0) return;
   const { error } = await supabase.from('daily_metrics').upsert(rows, { onConflict: 'asin,date' });
   if (error) console.warn('[DailyMetrics] Write error:', error.message);
-  else console.log(`[DailyMetrics] Wrote ${rows.length} rows for ${date}`);
+  else console.log(`[DailyMetrics] Wrote ${rows.length} non-zero rows for ${date}`);
 }
 
 async function fetchFxRate() {

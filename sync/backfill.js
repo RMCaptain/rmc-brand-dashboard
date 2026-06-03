@@ -37,9 +37,9 @@ function parseSalesTrafficDay(jsonStr) {
   return result;
 }
 
-// Find dates in the last `lookbackDays` that are missing from daily_metrics.
-// Query each date with limit 1 so we don't hit Supabase's 1000-row cap (full days have
-// 200-400 rows; a multi-date IN() query truncates and reports filled dates as missing).
+// Find dates in the last `lookbackDays` that are missing or zero-filled in daily_metrics.
+// A date counts as "have" only if it has at least one row with units > 0 — purely
+// zero-filled days are phantom data from premature syncs and need re-fetching.
 async function findMissingDates(supabase, lookbackDays = 365) {
   const dates = [];
   const todayPst = pstDateStr();
@@ -48,7 +48,6 @@ async function findMissingDates(supabase, lookbackDays = 365) {
   }
 
   const have = new Set();
-  // Run in parallel batches of 10 to stay light on Supabase
   const BATCH = 10;
   for (let i = 0; i < dates.length; i += BATCH) {
     const batch = dates.slice(i, i + BATCH);
@@ -57,6 +56,7 @@ async function findMissingDates(supabase, lookbackDays = 365) {
         .from('daily_metrics')
         .select('date')
         .eq('date', d)
+        .gt('units', 0)
         .limit(1);
       return (data && data.length > 0) ? d : null;
     }));
@@ -116,11 +116,13 @@ async function backfillDays(supabase, brands, limit = 15, lookbackDays = 365) {
     })
   );
 
-  // Group by date, merge CA + US into single rows
+  // Track which (date, mpId) reports succeeded so we can require BOTH marketplaces.
+  const succeeded = new Set(); // 'date|mpId'
   const byDate = {}; // date → { asin: { ... } }
   for (const r of settled) {
     if (r.status !== 'fulfilled') { console.warn('[Backfill] Report failed:', r.reason?.message); continue; }
     const { date, mpId, data } = r.value;
+    succeeded.add(`${date}|${mpId}`);
     const currency = MARKETPLACE_CURRENCY[mpId] || 'USD';
     if (!byDate[date]) byDate[date] = {};
 
@@ -136,10 +138,19 @@ async function backfillDays(supabase, brands, limit = 15, lookbackDays = 365) {
     }
   }
 
-  // Upsert all rows to daily_metrics
+  // Upsert only dates where BOTH marketplaces succeeded AND data is non-empty —
+  // partial/empty writes overwrite good data via the (asin,date) upsert key.
   let totalRows = 0;
   const filledDates = [];
+  const skippedDates = [];
   for (const [date, asins] of Object.entries(byDate)) {
+    const missingMp = mpIds.find(mp => !succeeded.has(`${date}|${mp}`));
+    if (missingMp) {
+      console.warn(`[Backfill] Skipping ${date}: report failed for marketplace ${missingMp}`);
+      skippedDates.push(date);
+      continue;
+    }
+
     const rows = Object.entries(asins).map(([asin, d]) => ({
       asin,
       date,
@@ -152,14 +163,20 @@ async function backfillDays(supabase, brands, limit = 15, lookbackDays = 365) {
       sessions:         d.sessions || null,
       page_views:       d.pageViews || null,
       buy_box_pct:      d.buyBoxSamples.length ? Math.round(d.buyBoxSamples.reduce((a, b) => a + b, 0) / d.buyBoxSamples.length * 10) / 10 : null,
-    }));
+    })).filter(r => r.units > 0 || r.revenue_cad > 0 || r.revenue_usd > 0);
 
-    if (rows.length > 0) {
-      const { error } = await supabase.from('daily_metrics').upsert(rows, { onConflict: 'asin,date' });
-      if (error) console.warn(`[Backfill] Upsert error for ${date}:`, error.message);
-      else { totalRows += rows.length; filledDates.push(date); }
+    const totalUnits = rows.reduce((s, r) => s + r.units, 0);
+    if (rows.length === 0 || totalUnits === 0) {
+      console.warn(`[Backfill] Skipping ${date}: S&T returned empty (publishing lag).`);
+      skippedDates.push(date);
+      continue;
     }
+
+    const { error } = await supabase.from('daily_metrics').upsert(rows, { onConflict: 'asin,date' });
+    if (error) { console.warn(`[Backfill] Upsert error for ${date}:`, error.message); skippedDates.push(date); }
+    else { totalRows += rows.length; filledDates.push(date); }
   }
+  if (skippedDates.length) console.log(`[Backfill] Skipped ${skippedDates.length} dates: ${skippedDates.join(', ')}`);
 
   console.log(`[Backfill] Done: ${filledDates.length} dates, ${totalRows} rows written`);
   return { filled: filledDates.length, remaining: missing.length - toFill.length, dates: filledDates };
