@@ -1849,13 +1849,27 @@ app.get('/api/metrics', async (req, res) => {
 
     const pm = await loadPresetMetrics();
 
-    const { data: rows, error } = await supabase
-      .from('daily_metrics')
-      .select('*')
-      .gte('date', from)
-      .lte('date', to);
-
-    if (error) throw new Error(error.message);
+    // Paginate explicitly — Supabase caps responses at 1000 rows by default.
+    // A 30-day window with ~400 rows/day = 12k rows; without pagination we'd
+    // silently truncate and dramatically under-report totals.
+    const PAGE = 1000;
+    const rows = [];
+    let offset = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from('daily_metrics')
+        .select('*')
+        .gte('date', from)
+        .lte('date', to)
+        .order('date', { ascending: true })
+        .range(offset, offset + PAGE - 1);
+      if (error) throw new Error(error.message);
+      if (!data || data.length === 0) break;
+      rows.push(...data);
+      if (data.length < PAGE) break;
+      offset += PAGE;
+      if (offset > 100000) { console.warn('[Metrics] Pagination safety cap hit'); break; }
+    }
 
     // Sum all fields per ASIN across days
     const byAsin = {};
