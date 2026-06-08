@@ -200,6 +200,11 @@ async function poll() {
 // daily_metrics units/revenue (matches Sellerboard). Used by the historical
 // rebuild script and the nightly yesterday-finalize. Not gated on ENABLED —
 // it's a pure, explicitly-invoked computation.
+//
+// EXCLUDES Pending (and Canceled): Pending orders are unconfirmed — Amazon
+// hasn't finalized their price (revenue comes back $0) and a large share cancel.
+// Including them inflated units ~40% while dragging revenue down. Sellerboard
+// counts confirmed sales only, so we count Unshipped/PartiallyShipped/Shipped.
 async function computeDayFromOrders(pstDate, token = null) {
   token = token || await getAccessToken();
   const target   = { byAsin: {}, seenOrderIds: new Set() };
@@ -212,7 +217,7 @@ async function computeDayFromOrders(pstDate, token = null) {
       MarketplaceIds: mpId,
       CreatedAfter:   dayStart,
       CreatedBefore:  dayEnd,
-      OrderStatuses:  'Pending,Unshipped,PartiallyShipped,Shipped'
+      OrderStatuses:  'Unshipped,PartiallyShipped,Shipped'
     }, mpId, target);
     total += n;
     await sleep(2000);
