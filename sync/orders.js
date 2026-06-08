@@ -195,6 +195,32 @@ async function poll() {
   console.log(`[Orders] Poll done: ${Object.keys(state.byAsin).length} ASINs tracked for today`);
 }
 
+// Compute units/revenue for a single PST calendar day straight from the Orders
+// API, across all marketplaces. This is the AUTHORITATIVE source for
+// daily_metrics units/revenue (matches Sellerboard). Used by the historical
+// rebuild script and the nightly yesterday-finalize. Not gated on ENABLED —
+// it's a pure, explicitly-invoked computation.
+async function computeDayFromOrders(pstDate, token = null) {
+  token = token || await getAccessToken();
+  const target   = { byAsin: {}, seenOrderIds: new Set() };
+  const dayStart = pstMidnightAsUTC(pstDate);
+  const dayEnd   = pstMidnightAsUTC(pstSubtractDays(pstDate, -1)); // next PST midnight
+  let total = 0;
+
+  for (const mpId of getMarketplaceIds()) {
+    const n = await fetchAndProcess(token, {
+      MarketplaceIds: mpId,
+      CreatedAfter:   dayStart,
+      CreatedBefore:  dayEnd,
+      OrderStatuses:  'Pending,Unshipped,PartiallyShipped,Shipped'
+    }, mpId, target);
+    total += n;
+    await sleep(2000);
+  }
+
+  return { date: pstDate, byAsin: target.byAsin, orderCount: total };
+}
+
 function getState() {
   resetIfNewDay();
   return {
@@ -213,4 +239,4 @@ function getYesterdayState() {
   };
 }
 
-module.exports = { rebuildToday, rebuildYesterday, poll, getState, getYesterdayState };
+module.exports = { rebuildToday, rebuildYesterday, poll, getState, getYesterdayState, computeDayFromOrders };

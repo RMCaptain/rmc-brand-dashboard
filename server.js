@@ -161,47 +161,32 @@ function saveFx(data) {
   try { fs.writeFileSync(path.join(DATA_DIR, 'fx.json'), JSON.stringify(data, null, 2)); } catch {}
 }
 
-// Write per-ASIN rows for a single completed day to daily_metrics.
-// Called after each sync for "yesterday" to build up the rolling history.
+// Enrich a completed day's daily_metrics rows with S&T TRAFFIC only —
+// sessions, page views, buy box, inventory snapshot. Called after each sync
+// for "yesterday".
 //
-// CRITICAL: skip empty/zero rows. Amazon S&T has a 24-48h publishing lag —
-// if we sync within hours of day-end the report comes back with units=0 for
-// most ASINs. Writing those would OVERWRITE good data already in the table.
+// AUTHORITY MODEL: the Orders API is the single source of truth for units &
+// revenue (it matches Sellerboard). S&T lags 24-48h and counts differently, so
+// this writer must NEVER touch units/revenue columns — it only upserts traffic
+// columns. On conflict, Supabase updates only the provided columns, leaving the
+// orders-sourced units/revenue intact.
 async function writeDailyMetrics(yesterdayBrands, date) {
   if (!yesterdayBrands || !date) return;
 
-  // Bail if the whole dataset is empty — strong signal S&T hasn't published yet.
-  let totalUnits = 0, totalRev = 0;
-  for (const brandData of Object.values(yesterdayBrands)) {
-    for (const sku of (brandData.skus || [])) {
-      totalUnits += sku.units || 0;
-      totalRev   += (sku.revenueCad || 0) + (sku.revenueUsd || 0);
-    }
-  }
-  if (totalUnits === 0 && totalRev === 0) {
-    console.warn(`[DailyMetrics] Refusing to write — S&T returned empty data for ${date} (likely publishing lag).`);
-    return;
-  }
-
-  // Write only non-zero rows so we preserve any existing good data per ASIN.
   const rows = [];
   for (const [brandId, brandData] of Object.entries(yesterdayBrands)) {
     for (const sku of (brandData.skus || [])) {
-      const units = sku.units || 0;
-      const rev   = (sku.revenueCad || 0) + (sku.revenueUsd || 0);
-      if (units === 0 && rev === 0) continue;
+      const hasTraffic =
+        sku.sessions != null || sku.pageViews != null || sku.buyBox != null ||
+        sku.inventory?.onHand != null;
+      if (!hasTraffic) continue;
       rows.push({
-        asin:             sku.asin,
+        asin:              sku.asin,
         date,
-        brand_id:         brandId,
-        units,
-        units_ca:         sku.unitsCad         || 0,
-        units_us:         sku.unitsUsd         || 0,
-        revenue_cad:      sku.revenueCad       || 0,
-        revenue_usd:      sku.revenueUsd       || 0,
-        sessions:         sku.sessions         || null,
-        page_views:       sku.pageViews        || null,
-        buy_box_pct:      sku.buyBox           ?? null,
+        brand_id:          brandId,
+        sessions:          sku.sessions         ?? null,
+        page_views:        sku.pageViews        ?? null,
+        buy_box_pct:       sku.buyBox           ?? null,
         inventory_on_hand: sku.inventory?.onHand  ?? null,
         inventory_inbound: sku.inventory?.inbound ?? null,
       });
@@ -209,8 +194,8 @@ async function writeDailyMetrics(yesterdayBrands, date) {
   }
   if (rows.length === 0) return;
   const { error } = await supabase.from('daily_metrics').upsert(rows, { onConflict: 'asin,date' });
-  if (error) console.warn('[DailyMetrics] Write error:', error.message);
-  else console.log(`[DailyMetrics] Wrote ${rows.length} non-zero rows for ${date}`);
+  if (error) console.warn('[DailyMetrics] Traffic write error:', error.message);
+  else console.log(`[DailyMetrics] Wrote traffic for ${rows.length} rows on ${date} (units/revenue owned by Orders API)`);
 }
 
 async function fetchFxRate() {
@@ -1781,36 +1766,62 @@ app.get('/api/metrics/today', async (req, res) => {
   });
 });
 
+// Upsert orders-sourced units/revenue for a single day into daily_metrics.
+// This is the AUTHORITATIVE write for units/revenue (matches Sellerboard).
+// Writes only the units/revenue columns — leaves S&T traffic columns intact.
+async function persistOrdersDay(date, byAsin) {
+  if (!date || !byAsin || Object.keys(byAsin).length === 0) return 0;
+  const { brands } = await loadBrands();
+  const asinBrand = {};
+  for (const b of brands) for (const a of (b.asins || [])) asinBrand[a] = b.id;
+
+  const rows = Object.entries(byAsin).map(([asin, d]) => ({
+    asin,
+    date,
+    brand_id:    asinBrand[asin] || 'unknown-brand',
+    units:       d.units      || 0,
+    units_ca:    d.unitsCa    || 0,
+    units_us:    d.unitsUs    || 0,
+    revenue_cad: Math.round((d.revenueCad || 0) * 100) / 100,
+    revenue_usd: Math.round((d.revenueUsd || 0) * 100) / 100,
+  }));
+  if (rows.length === 0) return 0;
+
+  const { error } = await supabase
+    .from('daily_metrics')
+    .upsert(rows, { onConflict: 'asin,date' });
+  if (error) { console.warn('[Orders] persist error:', error.message); return 0; }
+  return rows.length;
+}
+
 // Write the orders poller's current today state into daily_metrics. Lets the today
 // endpoint serve persisted data immediately on restart, no waiting for rebuild.
 async function persistOrdersTodayState() {
   try {
     const st = ordersPoller.getState();
-    if (!st.date || Object.keys(st.byAsin).length === 0) return;
-
-    const { brands } = await loadBrands();
-    const asinBrand = {};
-    for (const b of brands) for (const a of (b.asins || [])) asinBrand[a] = b.id;
-
-    const rows = Object.entries(st.byAsin).map(([asin, d]) => ({
-      asin,
-      date:        st.date,
-      brand_id:    asinBrand[asin] || 'unknown-brand',
-      units:       d.units      || 0,
-      units_ca:    d.unitsCa    || 0,
-      units_us:    d.unitsUs    || 0,
-      revenue_cad: Math.round((d.revenueCad || 0) * 100) / 100,
-      revenue_usd: Math.round((d.revenueUsd || 0) * 100) / 100,
-    }));
-    if (rows.length === 0) return;
-
-    const { error } = await supabase
-      .from('daily_metrics')
-      .upsert(rows, { onConflict: 'asin,date' });
-    if (error) console.warn('[Orders] persist error:', error.message);
-    else console.log(`[Orders] Persisted ${rows.length} today rows for ${st.date}`);
+    const n = await persistOrdersDay(st.date, st.byAsin);
+    if (n > 0) console.log(`[Orders] Persisted ${n} today rows for ${st.date}`);
   } catch (e) {
     console.warn('[Orders] persist exception:', e.message);
+  }
+}
+
+// Re-pull yesterday in full from the Orders API and persist as the authoritative
+// units/revenue for that day. Runs nightly after the PST rollover to capture the
+// final orders of the day plus any late status changes the 15-min poller missed.
+async function finalizeYesterdayFromOrders() {
+  try {
+    const yest = pstSubtractDays(pstDateStr(), 1);
+    const { byAsin, orderCount } = await ordersPoller.computeDayFromOrders(yest);
+    // Zero phantom units first (ASINs whose orders were all cancelled), preserve
+    // S&T traffic columns, then write the authoritative orders units/revenue.
+    await supabase.from('daily_metrics')
+      .update({ units: 0, units_ca: 0, units_us: 0, revenue_cad: 0, revenue_usd: 0 })
+      .eq('date', yest);
+    const n = await persistOrdersDay(yest, byAsin);
+    console.log(`[Orders] Finalized yesterday ${yest} from Orders API: ${n} ASIN rows, ${orderCount} orders`);
+  } catch (e) {
+    console.warn('[Orders] finalize yesterday failed:', e.message);
   }
 }
 
@@ -2998,6 +3009,13 @@ function scheduleDailySync() {
     ordersPoller.poll()
       .then(() => persistOrdersTodayState())
       .catch(err => console.warn('[Orders] Poll error:', err.message));
+  });
+
+  // Yesterday finalize: 8:30am UTC (~1:30am PDT, after PST rollover). Re-pulls
+  // yesterday from Orders API so its units/revenue are complete & authoritative.
+  cron.schedule('30 8 * * *', () => {
+    finalizeYesterdayFromOrders()
+      .catch(err => console.warn('[Orders] Yesterday finalize error:', err.message));
   });
 
   // Backfill: 8am UTC daily — fills any missing daily_metrics gaps (runs 2h after main sync)

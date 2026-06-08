@@ -37,9 +37,11 @@ function parseSalesTrafficDay(jsonStr) {
   return result;
 }
 
-// Find dates in the last `lookbackDays` that are missing or zero-filled in daily_metrics.
-// A date counts as "have" only if it has at least one row with units > 0 — purely
-// zero-filled days are phantom data from premature syncs and need re-fetching.
+// Find dates in the last `lookbackDays` that have NO daily_metrics rows at all.
+// Units/revenue are owned by the Orders API (authoritative). This S&T backfill
+// only fills traffic (sessions/buy box) for days that are entirely empty, so a
+// date counts as "have" once any row exists — preventing infinite re-fetch of
+// days where orders has units but S&T traffic is sparse.
 async function findMissingDates(supabase, lookbackDays = 365) {
   const dates = [];
   const todayPst = pstDateStr();
@@ -56,7 +58,6 @@ async function findMissingDates(supabase, lookbackDays = 365) {
         .from('daily_metrics')
         .select('date')
         .eq('date', d)
-        .gt('units', 0)
         .limit(1);
       return (data && data.length > 0) ? d : null;
     }));
@@ -151,23 +152,20 @@ async function backfillDays(supabase, brands, limit = 15, lookbackDays = 365) {
       continue;
     }
 
+    // TRAFFIC ONLY — never write units/revenue. The Orders API owns those columns
+    // (matches Sellerboard); S&T must not clobber them. On conflict, Supabase
+    // updates only the columns provided here, leaving units/revenue intact.
     const rows = Object.entries(asins).map(([asin, d]) => ({
       asin,
       date,
       brand_id:         asinBrand[asin] || 'unknown-brand',
-      units:            d.units,
-      units_ca:         d.unitsCa,
-      units_us:         d.unitsUs,
-      revenue_cad:      Math.round(d.revenueCad * 100) / 100,
-      revenue_usd:      Math.round(d.revenueUsd * 100) / 100,
       sessions:         d.sessions || null,
       page_views:       d.pageViews || null,
       buy_box_pct:      d.buyBoxSamples.length ? Math.round(d.buyBoxSamples.reduce((a, b) => a + b, 0) / d.buyBoxSamples.length * 10) / 10 : null,
-    })).filter(r => r.units > 0 || r.revenue_cad > 0 || r.revenue_usd > 0);
+    })).filter(r => r.sessions != null || r.page_views != null || r.buy_box_pct != null);
 
-    const totalUnits = rows.reduce((s, r) => s + r.units, 0);
-    if (rows.length === 0 || totalUnits === 0) {
-      console.warn(`[Backfill] Skipping ${date}: S&T returned empty (publishing lag).`);
+    if (rows.length === 0) {
+      console.warn(`[Backfill] Skipping ${date}: S&T returned no traffic (publishing lag).`);
       skippedDates.push(date);
       continue;
     }
