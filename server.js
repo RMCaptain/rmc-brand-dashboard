@@ -1836,21 +1836,28 @@ async function finalizeYesterdayFromOrders() {
 }
 
 // Trigger historical daily_metrics backfill — responds immediately, runs in background
-// Manually trigger the daily data-integrity audit. Returns the full findings
-// (deterministic checks + Claude review if ANTHROPIC_API_KEY set). Also posts
-// to Slack as a side effect. Useful for ad-hoc spot-checks.
+// Manually trigger the daily data-integrity audit + self-improvement loop.
+// Findings + Claude review + proposed code improvements all written to
+// audit/history/<date>/ on disk. Returns a summary.
 app.post('/api/audit/run', async (req, res) => {
   try {
     const { runDailyAudit } = require('./audit');
     const result = await runDailyAudit(supabase);
     res.json({
       ok: true,
+      runDir:          result.runDir,
       findings:        result.audit.findings,
       findingsBySev:   result.audit.findingsBySeverity,
       totals:          result.audit.totals,
-      agentText:       result.agentResult?.text || null,
-      agentSkipped:    result.agentResult?.skipped || false,
-      slackPosted:     result.slackResult?.posted || false,
+      agent: {
+        skipped: result.agentResult?.skipped ?? true,
+        text:    result.agentResult?.text || null,
+      },
+      improvements: {
+        skipped: result.improvements?.skipped ?? true,
+        reason:  result.improvements?.reason || null,
+        filesReviewed: result.improvements?.filesReviewed || [],
+      },
     });
   } catch (e) {
     res.status(500).json({ error: e.message });

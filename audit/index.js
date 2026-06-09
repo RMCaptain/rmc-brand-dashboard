@@ -1,118 +1,100 @@
 /**
- * Daily database integrity audit — entry point.
- *   1. runs deterministic checks (audit/checks.js)
- *   2. asks Claude to review + prioritize (audit/agent.js)  [optional]
- *   3. posts a Slack message summarizing findings + actions
+ * Daily database integrity audit + self-improvement loop.
  *
- * Wired to cron in server.js at 9am UTC (after the 8:30 finalize) and
- * exposed at POST /api/audit/run for manual triggers.
+ * Pipeline:
+ *   1. runChecks()       — deterministic integrity rules (audit/checks.js)
+ *   2. reviewWithAgent() — Claude reads findings + raw shapes, prioritizes (audit/agent.js)
+ *   3. proposeImprovements() — Claude reads findings + relevant source code,
+ *                              proposes concrete code-level safeguards
+ *                              (audit/improver.js)
+ *   4. persist all of the above to disk under audit/history/<date>/
+ *
+ * No Slack. The improver writes a markdown file with proposed diffs for human
+ * review the next time someone (or a session) sits down with the codebase.
+ *
+ * Wired to cron in server.js at 9am UTC and exposed at POST /api/audit/run.
  */
 
-const { runChecks } = require('./checks');
-const { reviewWithAgent } = require('./agent');
+const fs   = require('fs');
+const path = require('path');
+const { runChecks }           = require('./checks');
+const { reviewWithAgent }     = require('./agent');
+const { proposeImprovements } = require('./improver');
 
-function severityEmoji(severity) {
-  return severity === 'critical' ? ':rotating_light:'
-       : severity === 'warning'  ? ':warning:'
-       : ':information_source:';
-}
+const HISTORY_DIR = path.join(__dirname, 'history');
 
-function buildSlackBlocks(audit, agentResult) {
-  const { findings, findingsBySeverity, totals, window } = audit;
-  const blocks = [];
+function ensureDir(p) { if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true }); }
 
-  // Header
-  const headerEmoji = findingsBySeverity.critical > 0 ? ':rotating_light:'
-                    : findingsBySeverity.warning  > 0 ? ':warning:'
-                    : ':white_check_mark:';
-  blocks.push({
-    type: 'header',
-    text: { type: 'plain_text', text: `${headerEmoji} RMC Data Integrity — ${window.to} review` },
-  });
+function writeRun(runDir, audit, agentResult, improvements) {
+  ensureDir(runDir);
 
-  // Headline counts
-  blocks.push({
-    type: 'section',
-    text: {
-      type: 'mrkdwn',
-      text: `*${findingsBySeverity.critical} Critical*   ·   *${findingsBySeverity.warning} Warnings*   ·   ${findingsBySeverity.info} Info\n`
-        + `Window: ${window.from} → ${window.to}  ·  7d: CA$${totals.last7d.toFixed(0)}  ·  14d: CA$${totals.last14d.toFixed(0)}  ·  30d: CA$${totals.last30d.toFixed(0)}`,
-    },
-  });
+  fs.writeFileSync(path.join(runDir, 'audit.json'),
+    JSON.stringify({ audit, agentResult }, null, 2));
 
-  // Findings — critical first, then warnings, then info
-  if (findings.length > 0) {
-    const ordered = ['critical', 'warning', 'info'].flatMap(sev =>
-      findings.filter(f => f.severity === sev)
-    );
-    const lines = ordered.slice(0, 25).map(f =>
-      `${severityEmoji(f.severity)} *${f.type}*${f.date ? ` _${f.date}_` : ''} — ${f.message}`
-      + (f.remediation ? `\n      \`${f.remediation}\`` : '')
-    );
-    blocks.push({ type: 'divider' });
-    blocks.push({ type: 'section', text: { type: 'mrkdwn', text: lines.join('\n') } });
-    if (findings.length > 25) {
-      blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: `_…and ${findings.length - 25} more_` }] });
-    }
+  // Human-readable findings + agent review summary
+  const lines = [];
+  lines.push(`# Audit ${audit.window.to}`);
+  lines.push('');
+  lines.push(`Window: ${audit.window.from} → ${audit.window.to}`);
+  lines.push(`Critical: ${audit.findingsBySeverity.critical}  ·  Warning: ${audit.findingsBySeverity.warning}  ·  Info: ${audit.findingsBySeverity.info}`);
+  lines.push(`Totals (blended CAD): 7d=$${audit.totals.last7d.toFixed(0)}, 14d=$${audit.totals.last14d.toFixed(0)}, 30d=$${audit.totals.last30d.toFixed(0)}`);
+  lines.push('');
+  if (audit.findings.length === 0) {
+    lines.push('All checks passed.');
   } else {
-    blocks.push({ type: 'section', text: { type: 'mrkdwn', text: ':white_check_mark: All checks passed.' } });
+    lines.push('## Findings');
+    for (const f of audit.findings) {
+      lines.push(`- **[${f.severity}] ${f.type}**${f.date ? ` (${f.date})` : ''} — ${f.message}`);
+      if (f.remediation) lines.push(`  - Remediation: \`${f.remediation}\``);
+    }
   }
-
-  // Agent narrative
   if (agentResult && !agentResult.skipped && agentResult.text) {
-    blocks.push({ type: 'divider' });
-    blocks.push({ type: 'section', text: { type: 'mrkdwn', text: `*AI review*\n${agentResult.text.slice(0, 2900)}` } });
+    lines.push('');
+    lines.push('## Agent review');
+    lines.push(agentResult.text);
   }
+  fs.writeFileSync(path.join(runDir, 'audit.md'), lines.join('\n'));
 
-  return blocks;
-}
-
-async function postToSlack(blocks, fallback) {
-  // Prefer the audit-specific webhook so checks-and-balances land in their own
-  // channel; fall back to the main one only if not configured.
-  const webhook = process.env.SLACK_AUDIT_WEBHOOK_URL || process.env.SLACK_WEBHOOK_URL;
-  if (!webhook) {
-    console.log('[Audit] No webhook configured (SLACK_AUDIT_WEBHOOK_URL / SLACK_WEBHOOK_URL) — printing report instead');
-    console.log(JSON.stringify({ fallback, blocks }, null, 2));
-    return { posted: false, reason: 'no_webhook' };
+  if (improvements && !improvements.skipped && improvements.text) {
+    fs.writeFileSync(path.join(runDir, 'improvements.md'), improvements.text);
   }
-  const res = await fetch(webhook, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text: fallback, blocks }),
-  });
-  const body = await res.text();
-  if (!res.ok || body !== 'ok') {
-    console.error('[Audit] Slack webhook error:', res.status, body);
-    return { posted: false, reason: 'webhook_error', status: res.status };
-  }
-  return { posted: true };
 }
 
 async function runDailyAudit(supabase) {
   console.log('[Audit] Running daily integrity checks...');
   const audit = await runChecks(supabase);
-  console.log(`[Audit] Found ${audit.findings.length} findings (${audit.findingsBySeverity.critical} critical, ${audit.findingsBySeverity.warning} warnings, ${audit.findingsBySeverity.info} info)`);
+  console.log(`[Audit] ${audit.findings.length} findings (${audit.findingsBySeverity.critical}c/${audit.findingsBySeverity.warning}w/${audit.findingsBySeverity.info}i)`);
 
   let agentResult = null;
   try {
     agentResult = await reviewWithAgent(audit);
-    if (agentResult.skipped) {
-      console.log('[Audit] Agent review skipped:', agentResult.reason);
-    } else {
-      console.log(`[Audit] Agent review done (model=${agentResult.model}, ${agentResult.inputTokens}→${agentResult.outputTokens} tokens)`);
-    }
+    if (agentResult.skipped) console.log('[Audit] Agent review skipped:', agentResult.reason);
+    else console.log(`[Audit] Agent review done (${agentResult.inputTokens}→${agentResult.outputTokens} tokens)`);
   } catch (err) {
     console.warn('[Audit] Agent review failed:', err.message);
   }
 
-  const fallback = audit.findings.length === 0
-    ? `RMC Data Audit: all clear`
-    : `RMC Data Audit: ${audit.findingsBySeverity.critical} critical / ${audit.findingsBySeverity.warning} warnings`;
-  const blocks = buildSlackBlocks(audit, agentResult);
-  const slackResult = await postToSlack(blocks, fallback);
+  // Only invoke the improver when there's something to improve — saves tokens
+  // on the common all-clear days.
+  let improvements = { skipped: true, reason: 'no_findings' };
+  if (audit.findings.length > 0) {
+    try {
+      improvements = await proposeImprovements(audit, agentResult);
+      if (improvements.skipped) console.log('[Improver] Skipped:', improvements.reason);
+      else console.log(`[Improver] Proposal done (${improvements.inputTokens}→${improvements.outputTokens} tokens)`);
+    } catch (err) {
+      console.warn('[Improver] Failed:', err.message);
+      improvements = { skipped: true, reason: err.message };
+    }
+  } else {
+    console.log('[Improver] No findings — skipped');
+  }
 
-  return { audit, agentResult, slackResult };
+  const runDir = path.join(HISTORY_DIR, audit.window.to);
+  writeRun(runDir, audit, agentResult, improvements);
+  console.log(`[Audit] Persisted to ${runDir}`);
+
+  return { audit, agentResult, improvements, runDir };
 }
 
 module.exports = { runDailyAudit };
