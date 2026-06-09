@@ -1809,10 +1809,20 @@ async function persistOrdersTodayState() {
 // Re-pull yesterday in full from the Orders API and persist as the authoritative
 // units/revenue for that day. Runs nightly after the PST rollover to capture the
 // final orders of the day plus any late status changes the 15-min poller missed.
+//
+// CRITICAL: refuse to zero existing rows when the Orders API returned no data.
+// A rate-limit or transient error from SP-API yields byAsin={}; without this
+// guard we'd wipe a fully-populated day with zeros. Prior corruption pattern
+// — same shape as the writeDailyMetrics publishing-lag wipe.
 async function finalizeYesterdayFromOrders() {
   try {
     const yest = pstSubtractDays(pstDateStr(), 1);
     const { byAsin, orderCount } = await ordersPoller.computeDayFromOrders(yest);
+    const asinCount = Object.keys(byAsin || {}).length;
+    if (asinCount === 0) {
+      console.warn(`[Orders] Finalize ${yest}: Orders API returned 0 ASINs (rate-limit or transient). NOT zeroing — preserving prior data.`);
+      return;
+    }
     // Zero phantom units first (ASINs whose orders were all cancelled), preserve
     // S&T traffic columns, then write the authoritative orders units/revenue.
     await supabase.from('daily_metrics')

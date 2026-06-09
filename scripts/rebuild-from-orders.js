@@ -67,18 +67,18 @@ function daysBetween(startStr, endStr) {
       const totCad   = rows.reduce((s, r) => s + r.revenue_cad, 0);
       const totUsd   = rows.reduce((s, r) => s + r.revenue_usd, 0);
 
-      // Zero out units/revenue for ALL existing rows of this date first, so any
-      // phantom units (ASINs with stale non-zero values but no real orders) get
-      // cleared. Sessions/buy-box columns are untouched. Then write orders truth.
-      const { error: zeroErr } = await supabase
-        .from('daily_metrics')
-        .update({ units: 0, units_ca: 0, units_us: 0, revenue_cad: 0, revenue_usd: 0 })
-        .eq('date', date);
-      if (zeroErr) { console.warn(`${date}: ZERO FAILED — ${zeroErr.message}`); }
-
+      // CRITICAL: refuse to zero when Orders API returned nothing — a rate-limit
+      // or transient error must not wipe a populated day. Only zero when we
+      // actually have replacement data.
       if (rows.length === 0) {
-        console.log(`${date}: 0 orders — zeroed (genuine no-sales day or API gap)`);
+        console.warn(`${date}: 0 orders from API (rate-limit or no-sales) — SKIPPED, existing data preserved`);
       } else {
+        const { error: zeroErr } = await supabase
+          .from('daily_metrics')
+          .update({ units: 0, units_ca: 0, units_us: 0, revenue_cad: 0, revenue_usd: 0 })
+          .eq('date', date);
+        if (zeroErr) { console.warn(`${date}: ZERO FAILED — ${zeroErr.message}`); }
+        // Fall through to upsert below
         const { error: upErr } = await supabase
           .from('daily_metrics')
           .upsert(rows, { onConflict: 'asin,date' });
