@@ -9,7 +9,6 @@ const { pstDateStr, pstSubtractDays } = require('../sync/dateUtils');
 const LOOKBACK_DAYS  = 35;
 const ZERO_ROW_FLOOR = 50;   // ≥50 rows but <10 units → phantom-zero corruption
 const ZERO_UNIT_CAP  = 10;
-const PARTIAL_ROW_RATIO = 0.60; // <60% of median row count = partial sync
 const INFLATION_RATIO   = 1.80; // a day >1.8x the surrounding median = S&T-era leftover
 const DEPLETION_RATIO   = 0.50; // a day <50% surrounding median = under-fetched
 
@@ -91,15 +90,26 @@ async function runChecks(supabase) {
       continue;
     }
 
-    // 3. PARTIAL SYNC — row count is anomalously low (May 21 pattern: only CA report wrote)
-    if (rowMedian > 100 && s.rows > 0 && s.rows < rowMedian * PARTIAL_ROW_RATIO) {
-      findings.push({
-        severity: 'warning',
-        date: s.date,
-        type: 'partial_rows',
-        message: `${s.date} has ${s.rows} rows (median ${rowMedian.toFixed(0)}) — partial marketplace sync`,
-        remediation: `node scripts/rebuild-from-orders.js ${s.date}`,
-      });
+    // 3. ONE-MARKETPLACE-ONLY — the true partial-sync signature. A day where one
+    // of CA/US revenue is exactly zero while the other has activity, AND the
+    // window typically shows both. This catches the May 21 original corruption
+    // (only US report succeeded) without false-positiving on low-traffic days
+    // that legitimately have a smaller ASIN footprint.
+    if (s.units > 0) {
+      const onlyCa = s.revUsd === 0 && s.unitsUs === 0 && (s.revCad > 0 || s.unitsCa > 0);
+      const onlyUs = s.revCad === 0 && s.unitsCa === 0 && (s.revUsd > 0 || s.unitsUs > 0);
+      const caDaysInWindow = shapes.filter(x => x.revCad > 0).length;
+      const usDaysInWindow = shapes.filter(x => x.revUsd > 0).length;
+      const windowHasBoth = caDaysInWindow > shapes.length * 0.5 && usDaysInWindow > shapes.length * 0.5;
+      if (windowHasBoth && (onlyCa || onlyUs)) {
+        findings.push({
+          severity: 'warning',
+          date: s.date,
+          type: 'one_marketplace_only',
+          message: `${s.date} has ${onlyCa ? 'CA only' : 'US only'} revenue (${s.units} units) — partial sync, one marketplace report failed.`,
+          remediation: `node scripts/rebuild-from-orders.js ${s.date}`,
+        });
+      }
     }
 
     // 4. INFLATED — revenue or units >1.8x the window median (May 1-14 S&T-era pattern)

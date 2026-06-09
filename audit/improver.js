@@ -21,7 +21,7 @@ const MODEL = 'claude-sonnet-4-6';
 const FILES_BY_FINDING = {
   missing_date:     ['sync/backfill.js', 'server.js'],
   zero_filled:      ['server.js', 'sync/orders.js'],
-  partial_rows:     ['sync/backfill.js', 'sync/orders.js'],
+  one_marketplace_only: ['sync/backfill.js', 'sync/orders.js'],
   inflated:         ['sync/orders.js', 'sync/backfill.js', 'server.js'],
   depleted:         ['sync/orders.js'],
   monotonicity:     ['server.js'],
