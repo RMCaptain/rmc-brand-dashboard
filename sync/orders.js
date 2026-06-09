@@ -172,6 +172,8 @@ async function rebuildToday() {
   resetIfNewDay();
   state.byAsin = {};
   state.seenOrderIds = new Set();
+  state.failedOrderIds = new Set();
+  const failedByMp = {};
 
   console.log(`[Orders] Full rebuild for ${state.date}...`);
   const token          = await getAccessToken();
@@ -186,11 +188,25 @@ async function rebuildToday() {
       OrderStatuses:  'Pending,Unshipped,PartiallyShipped,Shipped'
     }, mpId, state);
     total += n;
+    for (const id of state.failedOrderIds) if (!failedByMp[id]) failedByMp[id] = mpId;
     await sleep(2000);
   }
 
+  // Retry pass — recover orders dropped to rate limits during the main pass.
+  for (const mpId of marketplaceIds) {
+    const ids = [...state.failedOrderIds].filter(id => failedByMp[id] === mpId);
+    if (ids.length === 0) continue;
+    const sub = { byAsin: state.byAsin, seenOrderIds: state.seenOrderIds, failedOrderIds: new Set(ids) };
+    await retryFailedOrders(token, mpId, sub);
+    state.failedOrderIds = new Set([
+      ...[...state.failedOrderIds].filter(id => failedByMp[id] !== mpId),
+      ...sub.failedOrderIds,
+    ]);
+  }
+
   state.updatedAt = new Date().toISOString();
-  console.log(`[Orders] Rebuild done: ${Object.keys(state.byAsin).length} ASINs, ${total} orders`);
+  const unrec = state.failedOrderIds.size;
+  console.log(`[Orders] Rebuild done: ${Object.keys(state.byAsin).length} ASINs, ${total} orders${unrec ? `, ${unrec} unrecoverable` : ''}`);
 }
 
 // Rebuild yesterday state — used on startup when in-memory state was wiped.

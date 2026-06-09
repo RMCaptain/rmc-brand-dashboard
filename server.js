@@ -3059,6 +3059,16 @@ function scheduleDailySync() {
       .catch(err => console.warn('[Orders] Poll error:', err.message));
   });
 
+  // Hourly fresh rebuildToday — wipes today's in-memory state and re-fetches
+  // every order from scratch (with the retry pass) so any rate-limit drops from
+  // the 15-min incremental polls are caught the same day, not 24h later.
+  // Runs at :05 so it doesn't clash with the *:00 / *:15 / *:30 / *:45 polls.
+  cron.schedule('5 * * * *', () => {
+    ordersPoller.rebuildToday()
+      .then(() => persistOrdersTodayState())
+      .catch(err => console.warn('[Orders] Hourly rebuild error:', err.message));
+  });
+
   // Yesterday finalize: 8:30am UTC (~1:30am PDT, after PST rollover). Re-pulls
   // yesterday from Orders API so its units/revenue are complete & authoritative.
   cron.schedule('30 8 * * *', () => {
@@ -3082,7 +3092,7 @@ function scheduleDailySync() {
       .catch(err => console.warn('[Audit] cron error:', err.message));
   });
 
-  console.log('[AutoSync] Crons scheduled: sync 6am/9am/12pm UTC, Slack digest 7am UTC, Orders poll */15min, Backfill 8am UTC, Audit 9am UTC');
+  console.log('[AutoSync] Crons scheduled: sync 6am/9am/12pm UTC, Slack digest 7am UTC, Orders poll */15min, Orders hourly-rebuild :05, Yesterday-finalize 8:30 UTC, Backfill 8am UTC, Audit 9am UTC');
 
   // On startup: catch-up if data is more than 23h old AND no attempt in last 4h
   (async () => {
