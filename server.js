@@ -1836,6 +1836,27 @@ async function finalizeYesterdayFromOrders() {
 }
 
 // Trigger historical daily_metrics backfill — responds immediately, runs in background
+// Manually trigger the daily data-integrity audit. Returns the full findings
+// (deterministic checks + Claude review if ANTHROPIC_API_KEY set). Also posts
+// to Slack as a side effect. Useful for ad-hoc spot-checks.
+app.post('/api/audit/run', async (req, res) => {
+  try {
+    const { runDailyAudit } = require('./audit');
+    const result = await runDailyAudit(supabase);
+    res.json({
+      ok: true,
+      findings:        result.audit.findings,
+      findingsBySev:   result.audit.findingsBySeverity,
+      totals:          result.audit.totals,
+      agentText:       result.agentResult?.text || null,
+      agentSkipped:    result.agentResult?.skipped || false,
+      slackPosted:     result.slackResult?.posted || false,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/backfill', async (req, res) => {
   if (process.env.SYNC_ENABLED !== 'true') {
     return res.status(403).json({ error: 'SYNC_ENABLED is false — backfill disabled locally' });
@@ -3035,7 +3056,16 @@ function scheduleDailySync() {
       .catch(err => console.warn('[Backfill] cron error:', err.message));
   });
 
-  console.log('[AutoSync] Crons scheduled: sync 6am/9am/12pm UTC, Slack digest 7am UTC, Orders poll */15min, Backfill 8am UTC');
+  // Daily data-integrity audit: 9am UTC (after 8:30 finalize). Deterministic checks
+  // + optional Claude review, posts to Slack.
+  cron.schedule('0 9 * * *', () => {
+    console.log('[Audit] 9am UTC cron fired');
+    const { runDailyAudit } = require('./audit');
+    runDailyAudit(supabase)
+      .catch(err => console.warn('[Audit] cron error:', err.message));
+  });
+
+  console.log('[AutoSync] Crons scheduled: sync 6am/9am/12pm UTC, Slack digest 7am UTC, Orders poll */15min, Backfill 8am UTC, Audit 9am UTC');
 
   // On startup: catch-up if data is more than 23h old AND no attempt in last 4h
   (async () => {
