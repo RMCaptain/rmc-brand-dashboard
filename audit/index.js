@@ -68,9 +68,11 @@ function buildSlackBlocks(audit, agentResult) {
 }
 
 async function postToSlack(blocks, fallback) {
-  const webhook = process.env.SLACK_WEBHOOK_URL;
+  // Prefer the audit-specific webhook so checks-and-balances land in their own
+  // channel; fall back to the main one only if not configured.
+  const webhook = process.env.SLACK_AUDIT_WEBHOOK_URL || process.env.SLACK_WEBHOOK_URL;
   if (!webhook) {
-    console.log('[Audit] SLACK_WEBHOOK_URL not set — printing report instead');
+    console.log('[Audit] No webhook configured (SLACK_AUDIT_WEBHOOK_URL / SLACK_WEBHOOK_URL) — printing report instead');
     console.log(JSON.stringify({ fallback, blocks }, null, 2));
     return { posted: false, reason: 'no_webhook' };
   }
