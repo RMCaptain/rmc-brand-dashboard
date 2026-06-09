@@ -57,9 +57,10 @@ async function fetchOrderItems(token, orderId, attempt = 0) {
   return res.body?.payload?.OrderItems || [];
 }
 
-// target = { byAsin: {}, seenOrderIds: Set } — writes into the provided object
+// target = { byAsin: {}, seenOrderIds: Set, failedOrderIds: Set } — writes into the provided object
 async function processOrders(orders, token, mpId, target) {
   const isCA = mpId === 'A2EUQ1WTGCTBG2';
+  if (!target.failedOrderIds) target.failedOrderIds = new Set();
 
   for (const order of orders) {
     if (target.seenOrderIds.has(order.AmazonOrderId)) continue;
@@ -68,9 +69,14 @@ async function processOrders(orders, token, mpId, target) {
     await sleep(550);
 
     const items = await fetchOrderItems(token, order.AmazonOrderId);
-    if (items === null) continue; // rate-limit exhausted — DO NOT mark seen, let next poll retry
+    if (items === null) {
+      // Rate-limit exhausted. Don't mark seen; remember for a retry pass.
+      target.failedOrderIds.add(order.AmazonOrderId);
+      continue;
+    }
 
     target.seenOrderIds.add(order.AmazonOrderId);
+    target.failedOrderIds.delete(order.AmazonOrderId); // succeeded on this attempt
     for (const item of items) {
       const asin = item.ASIN;
       if (!asin) continue;
@@ -85,6 +91,47 @@ async function processOrders(orders, token, mpId, target) {
       else      { target.byAsin[asin].unitsUs += units; target.byAsin[asin].revenueUsd += revenue; }
     }
   }
+}
+
+// Retry orders that exhausted their initial fetchOrderItems retries. Quota
+// typically restores within a few minutes; this pass with longer between-call
+// sleeps recovers most drops. Used after computeDayFromOrders main pass.
+async function retryFailedOrders(token, mpId, target) {
+  if (!target.failedOrderIds || target.failedOrderIds.size === 0) return 0;
+
+  const failedIds = [...target.failedOrderIds];
+  console.log(`[Orders] Retrying ${failedIds.length} previously-failed orders for ${mpId} (extra-paced)...`);
+  await sleep(30000); // let quota restore
+
+  // Reconstruct minimal order objects so processOrders can run unchanged.
+  // The only field it touches besides AmazonOrderId is mpId (currency context).
+  const fakeOrders = failedIds.map(id => ({ AmazonOrderId: id }));
+  target.failedOrderIds = new Set(); // reset; processOrders will re-add if still failing
+
+  const isCA = mpId === 'A2EUQ1WTGCTBG2';
+  let recovered = 0;
+  for (const order of fakeOrders) {
+    await sleep(1500); // 3× normal pace
+    const items = await fetchOrderItems(token, order.AmazonOrderId);
+    if (items === null || items.length === 0) {
+      target.failedOrderIds.add(order.AmazonOrderId);
+      continue;
+    }
+    target.seenOrderIds.add(order.AmazonOrderId);
+    recovered++;
+    for (const item of items) {
+      const asin = item.ASIN;
+      if (!asin) continue;
+      const units   = item.QuantityOrdered || 0;
+      const revenue = parseFloat(item.ItemPrice?.Amount || 0);
+      if (!target.byAsin[asin]) target.byAsin[asin] = { units: 0, unitsCa: 0, unitsUs: 0, revenueCad: 0, revenueUsd: 0 };
+      target.byAsin[asin].units += units;
+      if (isCA) { target.byAsin[asin].unitsCa += units; target.byAsin[asin].revenueCad += revenue; }
+      else      { target.byAsin[asin].unitsUs += units; target.byAsin[asin].revenueUsd += revenue; }
+    }
+  }
+  console.log(`[Orders] Retry pass recovered ${recovered}/${failedIds.length} previously-failed orders`);
+  return recovered;
 }
 
 async function fetchAndProcess(token, params, mpId, target) {
@@ -213,12 +260,13 @@ async function poll() {
 // counts confirmed sales only, so we count Unshipped/PartiallyShipped/Shipped.
 async function computeDayFromOrders(pstDate, token = null) {
   token = token || await getAccessToken();
-  const target   = { byAsin: {}, seenOrderIds: new Set() };
+  const target   = { byAsin: {}, seenOrderIds: new Set(), failedOrderIds: new Set(), failedByMp: {} };
   const dayStart = pstMidnightAsUTC(pstDate);
   const dayEnd   = pstMidnightAsUTC(pstSubtractDays(pstDate, -1)); // next PST midnight
   let total = 0;
 
   for (const mpId of getMarketplaceIds()) {
+    const failedBefore = target.failedOrderIds.size;
     const n = await fetchAndProcess(token, {
       MarketplaceIds: mpId,
       CreatedAfter:   dayStart,
@@ -226,10 +274,32 @@ async function computeDayFromOrders(pstDate, token = null) {
       OrderStatuses:  'Unshipped,PartiallyShipped,Shipped'
     }, mpId, target);
     total += n;
+    // Tag the failures from this marketplace so the retry pass picks the right currency context
+    for (const id of target.failedOrderIds) {
+      if (!target.failedByMp[id]) target.failedByMp[id] = mpId;
+    }
     await sleep(2000);
   }
 
-  return { date: pstDate, byAsin: target.byAsin, orderCount: total };
+  // Retry pass: re-attempt any orders that exhausted their item-fetch retries.
+  // Quota typically restores within ~30s; this slower-paced pass recovers most drops.
+  for (const mpId of getMarketplaceIds()) {
+    const idsForThisMp = [...target.failedOrderIds].filter(id => target.failedByMp[id] === mpId);
+    if (idsForThisMp.length === 0) continue;
+    const subTarget = { ...target, failedOrderIds: new Set(idsForThisMp) };
+    await retryFailedOrders(token, mpId, subTarget);
+    // Carry forward any STILL-failed IDs after retry
+    target.failedOrderIds = new Set([
+      ...[...target.failedOrderIds].filter(id => target.failedByMp[id] !== mpId),
+      ...subTarget.failedOrderIds,
+    ]);
+  }
+
+  if (target.failedOrderIds.size > 0) {
+    console.warn(`[Orders] computeDayFromOrders ${pstDate}: ${target.failedOrderIds.size} orders unrecoverable after retry pass`);
+  }
+
+  return { date: pstDate, byAsin: target.byAsin, orderCount: total, unrecoveredOrders: target.failedOrderIds.size };
 }
 
 function getState() {
