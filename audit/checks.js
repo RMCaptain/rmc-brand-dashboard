@@ -19,7 +19,7 @@ async function fetchDayShape(supabase, date) {
   for (let off = 0; off < 5000; off += 1000) {
     const { data, error } = await supabase
       .from('daily_metrics')
-      .select('units,units_ca,units_us,revenue_cad,revenue_usd,sessions')
+      .select('units,units_ca,units_us,revenue_cad,revenue_usd,sessions,updated_at')
       .eq('date', date)
       .range(off, off + 999);
     if (error) throw new Error(`fetch ${date}: ${error.message}`);
@@ -28,6 +28,7 @@ async function fetchDayShape(supabase, date) {
     if (data.length < 1000) break;
   }
   let units = 0, unitsCa = 0, unitsUs = 0, revCad = 0, revUsd = 0, withSessions = 0;
+  let maxUpdatedAt = null;
   for (const r of all) {
     units   += r.units || 0;
     unitsCa += r.units_ca || 0;
@@ -35,8 +36,9 @@ async function fetchDayShape(supabase, date) {
     revCad  += r.revenue_cad || 0;
     revUsd  += r.revenue_usd || 0;
     if (r.sessions != null && r.sessions > 0) withSessions++;
+    if (r.updated_at && (!maxUpdatedAt || r.updated_at > maxUpdatedAt)) maxUpdatedAt = r.updated_at;
   }
-  return { date, rows: all.length, units, unitsCa, unitsUs, revCad, revUsd, withSessions, blended: revCad + revUsd * 1.38 };
+  return { date, rows: all.length, units, unitsCa, unitsUs, revCad, revUsd, withSessions, blended: revCad + revUsd * 1.38, maxUpdatedAt };
 }
 
 function median(nums) {
@@ -141,6 +143,23 @@ async function runChecks(supabase) {
       message: `Yesterday (${yest}) has only ${yShape.rows} rows. Did finalizeYesterdayFromOrders run? Expected ~${rowMedian.toFixed(0)}.`,
       remediation: `Manually trigger via POST /api/finalize-yesterday or wait for next 8:30 UTC cron`,
     });
+  }
+
+  // 8. STALE WRITE — if yesterday's most recent updated_at is >12h old, the
+  // finalize cron didn't run today (or failed silently). Catches the case
+  // where row count looks plausible but the data is from yesterday-morning's
+  // poll, never re-finalized.
+  if (yShape && yShape.maxUpdatedAt) {
+    const ageHours = (Date.now() - new Date(yShape.maxUpdatedAt).getTime()) / 3.6e6;
+    if (ageHours > 12) {
+      findings.push({
+        severity: 'warning',
+        date: yest,
+        type: 'stale_write',
+        message: `Yesterday (${yest}) hasn't been written in ${ageHours.toFixed(1)}h. Finalize cron may not be running.`,
+        remediation: `Check Render logs for [Orders] Finalize messages; manually trigger via POST /api/audit/run after fixing.`,
+      });
+    }
   }
 
   return {

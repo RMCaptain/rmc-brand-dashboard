@@ -39,6 +39,10 @@ function resetIfNewDay() {
   }
 }
 
+// Returns the items array on success (may be empty), or null on retry-exhausted
+// rate limit. Distinguishing null vs [] lets processOrders avoid marking
+// rate-limited orders as "seen", so they get retried on the next 15-min poll
+// instead of permanently losing that order's revenue.
 async function fetchOrderItems(token, orderId, attempt = 0) {
   const res = await spRequest('GET', `/orders/v0/orders/${orderId}/orderItems`, token);
   if (res.status === 429) {
@@ -46,8 +50,8 @@ async function fetchOrderItems(token, orderId, attempt = 0) {
       await sleep(2000 * (attempt + 1));
       return fetchOrderItems(token, orderId, attempt + 1);
     }
-    console.warn(`[Orders] fetchOrderItems rate-limited on ${orderId} after retries`);
-    return [];
+    console.warn(`[Orders] fetchOrderItems rate-limited on ${orderId} after retries — order left unmarked for retry`);
+    return null;
   }
   if (res.status !== 200) return [];
   return res.body?.payload?.OrderItems || [];
@@ -59,12 +63,14 @@ async function processOrders(orders, token, mpId, target) {
 
   for (const order of orders) {
     if (target.seenOrderIds.has(order.AmazonOrderId)) continue;
-    target.seenOrderIds.add(order.AmazonOrderId);
 
     // Order items: burst 30, restore 2/sec — 550ms keeps us well under the limit
     await sleep(550);
 
     const items = await fetchOrderItems(token, order.AmazonOrderId);
+    if (items === null) continue; // rate-limit exhausted — DO NOT mark seen, let next poll retry
+
+    target.seenOrderIds.add(order.AmazonOrderId);
     for (const item of items) {
       const asin = item.ASIN;
       if (!asin) continue;

@@ -26,6 +26,7 @@ const FILES_BY_FINDING = {
   depleted:         ['sync/orders.js'],
   monotonicity:     ['server.js'],
   yesterday_thin:   ['server.js', 'sync/orders.js'],
+  stale_write:      ['server.js', 'sync/orders.js'],
 };
 
 const SYSTEM_PROMPT = `You are reviewing a Node.js codebase that pulls Amazon SP-API order data into a Supabase daily_metrics table for an internal brand dashboard. Your job: given today's integrity-check findings and the current source for the modules responsible, propose specific code-level safeguards that would PREVENT those classes of bugs from recurring.

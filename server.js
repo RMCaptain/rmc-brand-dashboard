@@ -1796,9 +1796,19 @@ async function persistOrdersDay(date, byAsin) {
 
 // Write the orders poller's current today state into daily_metrics. Lets the today
 // endpoint serve persisted data immediately on restart, no waiting for rebuild.
+//
+// Stale-state guard: if state.date doesn't match the current PST date, the
+// in-memory state is left over from a prior day (e.g., resetIfNewDay hasn't
+// fired yet during a midnight rollover). Writing it to daily_metrics would
+// pin yesterday's running totals to today's row — abort.
 async function persistOrdersTodayState() {
   try {
     const st = ordersPoller.getState();
+    const today = pstDateStr();
+    if (st.date && st.date !== today) {
+      console.warn(`[Orders] Skipping persist — state.date=${st.date} but today=${today} (stale state, rollover pending)`);
+      return;
+    }
     const n = await persistOrdersDay(st.date, st.byAsin);
     if (n > 0) console.log(`[Orders] Persisted ${n} today rows for ${st.date}`);
   } catch (e) {
