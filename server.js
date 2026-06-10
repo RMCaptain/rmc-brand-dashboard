@@ -1775,16 +1775,21 @@ async function persistOrdersDay(date, byAsin) {
   const asinBrand = {};
   for (const b of brands) for (const a of (b.asins || [])) asinBrand[a] = b.id;
 
-  const rows = Object.entries(byAsin).map(([asin, d]) => ({
-    asin,
-    date,
-    brand_id:    asinBrand[asin] || 'unknown-brand',
-    units:       d.units      || 0,
-    units_ca:    d.unitsCa    || 0,
-    units_us:    d.unitsUs    || 0,
-    revenue_cad: Math.round((d.revenueCad || 0) * 100) / 100,
-    revenue_usd: Math.round((d.revenueUsd || 0) * 100) / 100,
-  }));
+  // Drop zero-only entries: an ASIN with units=0 AND revenue=0 shouldn't be
+  // written. Otherwise a Pending-order-leak or partial item-fetch can write
+  // a phantom zero row that clobbers a previously-good value.
+  const rows = Object.entries(byAsin)
+    .filter(([, d]) => (d.units || 0) > 0 || (d.revenueCad || 0) > 0 || (d.revenueUsd || 0) > 0)
+    .map(([asin, d]) => ({
+      asin,
+      date,
+      brand_id:    asinBrand[asin] || 'unknown-brand',
+      units:       d.units      || 0,
+      units_ca:    d.unitsCa    || 0,
+      units_us:    d.unitsUs    || 0,
+      revenue_cad: Math.round((d.revenueCad || 0) * 100) / 100,
+      revenue_usd: Math.round((d.revenueUsd || 0) * 100) / 100,
+    }));
   if (rows.length === 0) return 0;
 
   const { error } = await supabase
@@ -1828,18 +1833,41 @@ async function finalizeYesterdayFromOrders() {
   try {
     const yest = pstSubtractDays(pstDateStr(), 1);
     const { byAsin, orderCount } = await ordersPoller.computeDayFromOrders(yest);
-    const asinCount = Object.keys(byAsin || {}).length;
-    if (asinCount === 0) {
-      console.warn(`[Orders] Finalize ${yest}: Orders API returned 0 ASINs (rate-limit or transient). NOT zeroing — preserving prior data.`);
+
+    // Count entries with REAL data (not just any presence). A Pending-order
+    // leak or partial item-fetch can yield byAsin entries with units=0 that
+    // would pass `Object.keys > 0` and trigger the destructive zero. Require
+    // actual units OR revenue before we believe the API returned real data.
+    const realEntries = Object.values(byAsin || {}).filter(d =>
+      (d.units || 0) > 0 || (d.revenueCad || 0) > 0 || (d.revenueUsd || 0) > 0
+    );
+    if (realEntries.length === 0) {
+      console.warn(`[Orders] Finalize ${yest}: Orders API returned no usable rows (rate-limit or transient). NOT zeroing — preserving prior data.`);
       return;
     }
-    // Zero phantom units first (ASINs whose orders were all cancelled), preserve
-    // S&T traffic columns, then write the authoritative orders units/revenue.
-    await supabase.from('daily_metrics')
-      .update({ units: 0, units_ca: 0, units_us: 0, revenue_cad: 0, revenue_usd: 0 })
-      .eq('date', yest);
+
+    // Compute the set of ASINs we're about to write, then zero ONLY the
+    // existing rows whose ASIN isn't in that set. This catches "ASIN had
+    // sales yesterday-2 but all those orders cancelled by yesterday-1"
+    // without risking a full-day wipe when the API hiccups.
+    const incomingAsins = new Set();
+    for (const [asin, d] of Object.entries(byAsin)) {
+      if ((d.units || 0) > 0 || (d.revenueCad || 0) > 0 || (d.revenueUsd || 0) > 0) incomingAsins.add(asin);
+    }
+    const { data: existing } = await supabase
+      .from('daily_metrics')
+      .select('asin')
+      .eq('date', yest)
+      .gt('units', 0);
+    const toZero = (existing || []).map(r => r.asin).filter(a => !incomingAsins.has(a));
+    if (toZero.length > 0) {
+      await supabase.from('daily_metrics')
+        .update({ units: 0, units_ca: 0, units_us: 0, revenue_cad: 0, revenue_usd: 0 })
+        .eq('date', yest)
+        .in('asin', toZero);
+    }
     const n = await persistOrdersDay(yest, byAsin);
-    console.log(`[Orders] Finalized yesterday ${yest} from Orders API: ${n} ASIN rows, ${orderCount} orders`);
+    console.log(`[Orders] Finalized yesterday ${yest}: ${n} ASIN rows written, ${toZero.length} stale rows zeroed, ${orderCount} orders`);
   } catch (e) {
     console.warn('[Orders] finalize yesterday failed:', e.message);
   }
@@ -1872,6 +1900,51 @@ app.post('/api/audit/run', async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// Daily ad-spend sync — pulls Amazon Ads with timeUnit:DAILY for a window,
+// then upserts spend_cad / spend_usd / attributed_sales_* per (asin, date)
+// into daily_metrics. Only writes the four ad-spend columns; sales/refund
+// columns are preserved via Supabase's column-level upsert.
+async function syncDailyAdSpend({ windowDays = 30 } = {}) {
+  const { pullAdSpendDaily } = require('./sync/ads');
+  const today = pstDateStr();
+  const yest  = pstSubtractDays(today, 1);
+  const from  = pstSubtractDays(today, windowDays);
+  const merged = await pullAdSpendDaily(from, yest);
+
+  const { brands } = await loadBrands();
+  const asinBrand = {};
+  for (const b of brands) for (const a of (b.asins || [])) asinBrand[a] = b.id;
+
+  let rowCount = 0;
+  for (const [date, asins] of Object.entries(merged)) {
+    const rows = Object.entries(asins).map(([asin, d]) => ({
+      asin, date,
+      brand_id: asinBrand[asin] || 'unknown-brand',
+      spend_cad:            Math.round((d.spendCad || 0) * 100) / 100,
+      spend_usd:            Math.round((d.spendUsd || 0) * 100) / 100,
+      attributed_sales_cad: Math.round((d.salesCad || 0) * 100) / 100,
+      attributed_sales_usd: Math.round((d.salesUsd || 0) * 100) / 100,
+    })).filter(r => r.spend_cad > 0 || r.spend_usd > 0);
+    if (rows.length === 0) continue;
+    const { error } = await supabase.from('daily_metrics').upsert(rows, { onConflict: 'asin,date' });
+    if (error) console.warn(`[AdsDaily] ${date} upsert error:`, error.message);
+    else { rowCount += rows.length; }
+  }
+  console.log(`[AdsDaily] Wrote ad spend on ${rowCount} (asin,date) rows`);
+  return { rowCount, datesTouched: Object.keys(merged).length };
+}
+
+// Manual trigger
+app.post('/api/ads/sync-daily', async (req, res) => {
+  if (process.env.SYNC_ENABLED !== 'true') return res.status(403).json({ error: 'SYNC_ENABLED is false' });
+  const windowDays = Math.min(parseInt(req.query.windowDays || '30', 10), 90);
+  res.json({ status: 'started', windowDays });
+  setImmediate(async () => {
+    try { const r = await syncDailyAdSpend({ windowDays }); console.log('[AdsDaily] Done:', JSON.stringify(r)); }
+    catch (e) { console.error('[AdsDaily] Manual sync error:', e.message); }
+  });
 });
 
 // Manually trigger refund sync. Returns when complete (can take ~5-15 min depending
@@ -3114,6 +3187,14 @@ function scheduleDailySync() {
     const { backfillDays } = require('./sync/backfill');
     loadBrands().then(({ brands }) => backfillDays(supabase, brands, 7))
       .catch(err => console.warn('[Backfill] cron error:', err.message));
+  });
+
+  // Daily ad-spend sync: 9:10am UTC — pulls last 30 days of Sponsored Products
+  // spend with timeUnit:DAILY, writes spend_cad/spend_usd into daily_metrics.
+  cron.schedule('10 9 * * *', () => {
+    console.log('[AdsDaily] 9:10 UTC cron fired');
+    syncDailyAdSpend({ windowDays: 30 })
+      .catch(err => console.warn('[AdsDaily] cron error:', err.message));
   });
 
   // Refunds sync: 9:15am UTC daily — pulls last 60 days of refund events,

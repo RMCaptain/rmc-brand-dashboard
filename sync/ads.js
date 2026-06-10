@@ -198,6 +198,101 @@ async function syncAdMetrics(startDate, endDate) {
   return finishAdReports(handles, startDate, endDate);
 }
 
+// ── Daily-granularity puller ─────────────────────────────────────────────────
+// timeUnit:'DAILY' + 'date' column → one row per (asin, date, marketplace).
+// Used by the dedicated daily ad-spend cron that writes to daily_metrics.
+async function createDailyAdReport(profileId, token, startDate, endDate) {
+  const res = await adsReq('POST', '/reporting/reports', profileId, token, {
+    name:      `SP-ASIN-DAILY-${startDate}-${endDate}-${Date.now()}`,
+    startDate,
+    endDate,
+    configuration: {
+      adProduct:    'SPONSORED_PRODUCTS',
+      groupBy:      ['advertiser'],
+      columns:      ['date', 'advertisedAsin', 'cost', 'sales14d', 'clicks', 'impressions', 'purchases14d'],
+      reportTypeId: 'spAdvertisedProduct',
+      timeUnit:     'DAILY',
+      format:       'GZIP_JSON',
+    },
+  }, { 'Content-Type': 'application/vnd.createasyncreportrequest.v3+json' });
+
+  if (res.status === 200 && res.body.reportId) return res.body.reportId;
+  if (res.status === 425) {
+    const match = String(res.body?.detail || '').match(/([0-9a-f-]{36})/i);
+    if (match) { console.log(`[Ads] Reusing existing daily report ${match[1]}`); return match[1]; }
+  }
+  throw new Error(`Ads daily report create failed (${res.status}): ${JSON.stringify(res.body)}`);
+}
+
+// Returns { [date]: { [asin]: { spend, sales, clicks, impressions, orders } } }
+function parseDailyAdReport(rows) {
+  const byDate = {};
+  for (const row of (rows || [])) {
+    const date = row.date;
+    const asin = row.advertisedAsin;
+    if (!date || !asin) continue;
+    if (!byDate[date])           byDate[date]           = {};
+    if (!byDate[date][asin])     byDate[date][asin]     = { spend: 0, sales: 0, clicks: 0, impressions: 0, orders: 0 };
+    const e = byDate[date][asin];
+    e.spend       += Number(row.cost         || 0);
+    e.sales       += Number(row.sales14d     || 0);
+    e.clicks      += Number(row.clicks       || 0);
+    e.impressions += Number(row.impressions  || 0);
+    e.orders      += Number(row.purchases14d || 0);
+  }
+  return byDate;
+}
+
+// Pull both marketplaces, return { [date]: { [asin]: { spendCad, spendUsd, salesCad, salesUsd, ... } } }
+async function pullAdSpendDaily(startDate, endDate) {
+  const token = await getAdsToken();
+  console.log(`[Ads] Daily reports ${startDate} → ${endDate} (CA + US)...`);
+  const [caId, usId] = await Promise.all([
+    createDailyAdReport(PROFILES.CA, token, startDate, endDate),
+    createDailyAdReport(PROFILES.US, token, startDate, endDate),
+  ]);
+  const [caUrl, usUrl] = await Promise.all([
+    waitForAdReport(caId, PROFILES.CA, token),
+    waitForAdReport(usId, PROFILES.US, token),
+  ]);
+  const [caRows, usRows] = await Promise.all([
+    downloadAdReport(caUrl),
+    downloadAdReport(usUrl),
+  ]);
+  const caDaily = parseDailyAdReport(caRows);
+  const usDaily = parseDailyAdReport(usRows);
+
+  // Merge into { [date]: { [asin]: { spendCad, spendUsd, salesCad, salesUsd, ... } } }
+  const merged = {};
+  for (const [date, asins] of Object.entries(caDaily)) {
+    if (!merged[date]) merged[date] = {};
+    for (const [asin, d] of Object.entries(asins)) {
+      if (!merged[date][asin]) merged[date][asin] = { spendCad:0, spendUsd:0, salesCad:0, salesUsd:0, clicks:0, impressions:0, orders:0 };
+      merged[date][asin].spendCad    += d.spend;
+      merged[date][asin].salesCad    += d.sales;
+      merged[date][asin].clicks      += d.clicks;
+      merged[date][asin].impressions += d.impressions;
+      merged[date][asin].orders      += d.orders;
+    }
+  }
+  for (const [date, asins] of Object.entries(usDaily)) {
+    if (!merged[date]) merged[date] = {};
+    for (const [asin, d] of Object.entries(asins)) {
+      if (!merged[date][asin]) merged[date][asin] = { spendCad:0, spendUsd:0, salesCad:0, salesUsd:0, clicks:0, impressions:0, orders:0 };
+      merged[date][asin].spendUsd    += d.spend;
+      merged[date][asin].salesUsd    += d.sales;
+      merged[date][asin].clicks      += d.clicks;
+      merged[date][asin].impressions += d.impressions;
+      merged[date][asin].orders      += d.orders;
+    }
+  }
+  let totDates = Object.keys(merged).length;
+  let totAsins = 0;
+  for (const d of Object.values(merged)) totAsins += Object.keys(d).length;
+  console.log(`[Ads] Daily merged: ${totDates} dates, ${totAsins} (date,asin) rows`);
+  return merged;
+}
+
 function mergeAdData(caData, usData) {
 
   // Merge into unified ASIN map, keeping CA/US spend separate
@@ -236,4 +331,4 @@ function mergeAdData(caData, usData) {
   return result;
 }
 
-module.exports = { syncAdMetrics, startAdReports, finishAdReports };
+module.exports = { syncAdMetrics, startAdReports, finishAdReports, pullAdSpendDaily };
