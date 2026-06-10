@@ -114,15 +114,21 @@ async function processOrders(orders, token, mpId, target) {
     target.failedOrderIds.delete(orderId);
 
     // Apply the fresh contribution + record it for future reconciliation.
-    // Track per-marketplace "priced units" — units that had a non-zero
-    // ItemPrice. The writer uses these separately for CA and US to extrapolate
-    // missing Pending revenue without cross-marketplace pollution.
+    //
+    // Pending orders: Amazon zeros per-item ItemPrice until the order ships.
+    // For these we capture the SellerSKU and add a deferred-pricing record;
+    // computeDayFromOrders resolves all unpriced SKUs in batch via the
+    // SP-API Pricing endpoint at the end (orders-of-magnitude more reliable
+    // than ASIN-based catalog lookup, which the SKU-based one solves).
+    if (!target.unpriced) target.unpriced = [];
+
     const fresh = {};
     for (const item of items) {
       const asin = item.ASIN;
+      const sku  = item.SellerSKU;
       if (!asin) continue;
-      const units   = item.QuantityOrdered || 0;
-      const revenue = parseFloat(item.ItemPrice?.Amount || 0);
+      const units    = item.QuantityOrdered || 0;
+      const revenue  = parseFloat(item.ItemPrice?.Amount || 0);
       addContribution(asin, units, revenue);
       const bucket = target.byAsin[asin];
       bucket.pricedCa = bucket.pricedCa || 0;
@@ -130,6 +136,9 @@ async function processOrders(orders, token, mpId, target) {
       if (revenue > 0) {
         if (isCA) bucket.pricedCa += units;
         else      bucket.pricedUs += units;
+      } else if (units > 0 && sku) {
+        // Defer pricing for this item via SKU lookup later in the pipeline
+        target.unpriced.push({ asin, sku, units, isCA });
       }
       if (!fresh[asin]) fresh[asin] = { units: 0, revenue: 0, pricedCa: 0, pricedUs: 0, isCA };
       fresh[asin].units   += units;
@@ -261,6 +270,9 @@ async function rebuildToday() {
     ]);
   }
 
+  // Resolve Pending-order prices via SKU lookup
+  await resolveUnpricedItems(state, token);
+
   state.updatedAt = new Date().toISOString();
   const unrec = state.failedOrderIds.size;
   console.log(`[Orders] Rebuild done: ${Object.keys(state.byAsin).length} ASINs, ${total} orders${unrec ? `, ${unrec} unrecoverable` : ''}`);
@@ -316,6 +328,9 @@ async function poll() {
     }, mpId, state);
     await sleep(2000);
   }
+
+  // Resolve Pending-order prices via SKU lookup
+  await resolveUnpricedItems(state, token);
 
   state.updatedAt = new Date().toISOString();
   console.log(`[Orders] Poll done: ${Object.keys(state.byAsin).length} ASINs tracked for today`);
@@ -373,7 +388,43 @@ async function computeDayFromOrders(pstDate, token = null) {
     console.warn(`[Orders] computeDayFromOrders ${pstDate}: ${target.failedOrderIds.size} orders unrecoverable after retry pass`);
   }
 
+  await resolveUnpricedItems(target, token);
+
   return { date: pstDate, byAsin: target.byAsin, orderCount: total, unrecoveredOrders: target.failedOrderIds.size };
+}
+
+// For each unpriced (asin, sku, units, isCA) entry in target.unpriced, fetch
+// our seller's listing price from SP-API Pricing (SKU-keyed — far more
+// reliable than ASIN-keyed for our own offers). Adds resolved revenue to
+// byAsin and bumps pricedCa / pricedUs so downstream code sees the units
+// as priced.
+async function resolveUnpricedItems(target, token) {
+  if (!target.unpriced || target.unpriced.length === 0) return 0;
+  const { fetchListingPrices } = require('./amazon');
+  const caSkus = [...new Set(target.unpriced.filter(u => u.isCA).map(u => u.sku))];
+  const usSkus = [...new Set(target.unpriced.filter(u => !u.isCA).map(u => u.sku))];
+  const totalUnits = target.unpriced.reduce((s, u) => s + u.units, 0);
+  console.log(`[Orders] Resolving ${totalUnits} unpriced units (${caSkus.length} CA SKUs, ${usSkus.length} US SKUs)...`);
+  const caPrices = caSkus.length > 0 ? await fetchListingPrices(caSkus, 'A2EUQ1WTGCTBG2', token, { byType: 'Sku' }) : {};
+  const usPrices = usSkus.length > 0 ? await fetchListingPrices(usSkus, 'ATVPDKIKX0DER',   token, { byType: 'Sku' }) : {};
+  let resolved = 0;
+  for (const u of target.unpriced) {
+    const priceObj = u.isCA ? caPrices[u.sku] : usPrices[u.sku];
+    if (!priceObj?.amount) continue;
+    const rev = priceObj.amount * u.units;
+    const bucket = target.byAsin[u.asin];
+    if (!bucket) continue;
+    if (u.isCA) { bucket.revenueCad += rev; bucket.pricedCa += u.units; }
+    else        { bucket.revenueUsd += rev; bucket.pricedUs += u.units; }
+    resolved += u.units;
+  }
+  console.log(`[Orders] Resolved ${resolved}/${totalUnits} unpriced units via SKU lookup`);
+  // Clear so re-calling doesn't double-apply
+  target.unpriced = target.unpriced.filter(u => {
+    const p = u.isCA ? caPrices[u.sku] : usPrices[u.sku];
+    return !p?.amount;
+  });
+  return resolved;
 }
 
 function getState() {
