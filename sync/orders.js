@@ -14,7 +14,9 @@ let state = {
   date: null,
   updatedAt: null,
   byAsin: {},
-  seenOrderIds: new Set()
+  seenOrderIds: new Set(),
+  failedOrderIds: new Set(),
+  orderContrib: {},
 };
 
 // Preserved when the day rolls over, and rebuilt on startup
@@ -35,7 +37,7 @@ function resetIfNewDay() {
       console.log(`[Orders] Carried ${state.date} → yesterdayState (${Object.keys(state.byAsin).length} ASINs)`);
     }
     console.log(`[Orders] New day (${today}) — resetting intraday state`);
-    state = { date: today, updatedAt: null, byAsin: {}, seenOrderIds: new Set() };
+    state = { date: today, updatedAt: null, byAsin: {}, seenOrderIds: new Set(), failedOrderIds: new Set(), orderContrib: {} };
   }
 }
 
@@ -57,39 +59,71 @@ async function fetchOrderItems(token, orderId, attempt = 0) {
   return res.body?.payload?.OrderItems || [];
 }
 
-// target = { byAsin: {}, seenOrderIds: Set, failedOrderIds: Set } — writes into the provided object
+// target = { byAsin: {}, seenOrderIds: Set, failedOrderIds: Set, orderContrib: {} }
+//
+// orderContrib tracks each order's current contribution to byAsin so we can
+// CORRECTLY reconcile when the same order appears again (status change,
+// price/qty edit, Pending→Shipped finalization). Without this, the 15-min
+// incremental poll using LastUpdatedAfter sees updated orders but skips them
+// via seenOrderIds — missing the change. With this, we subtract the prior
+// contribution and apply the new one.
 async function processOrders(orders, token, mpId, target) {
   const isCA = mpId === 'A2EUQ1WTGCTBG2';
   if (!target.failedOrderIds) target.failedOrderIds = new Set();
+  if (!target.orderContrib)   target.orderContrib   = {};
+
+  function addContribution(asin, units, revenue) {
+    if (!target.byAsin[asin]) target.byAsin[asin] = { units: 0, unitsCa: 0, unitsUs: 0, revenueCad: 0, revenueUsd: 0 };
+    target.byAsin[asin].units += units;
+    if (isCA) { target.byAsin[asin].unitsCa += units; target.byAsin[asin].revenueCad += revenue; }
+    else      { target.byAsin[asin].unitsUs += units; target.byAsin[asin].revenueUsd += revenue; }
+  }
+
+  function reverseContribution(orderId) {
+    const prior = target.orderContrib[orderId];
+    if (!prior) return;
+    for (const [asin, c] of Object.entries(prior)) {
+      if (!target.byAsin[asin]) continue;
+      target.byAsin[asin].units      -= c.units;
+      if (c.isCA) { target.byAsin[asin].unitsCa -= c.units; target.byAsin[asin].revenueCad -= c.revenue; }
+      else        { target.byAsin[asin].unitsUs -= c.units; target.byAsin[asin].revenueUsd -= c.revenue; }
+    }
+  }
 
   for (const order of orders) {
-    if (target.seenOrderIds.has(order.AmazonOrderId)) continue;
+    const orderId = order.AmazonOrderId;
 
     // Order items: burst 30, restore 2/sec — 550ms keeps us well under the limit
     await sleep(550);
 
-    const items = await fetchOrderItems(token, order.AmazonOrderId);
+    const items = await fetchOrderItems(token, orderId);
     if (items === null) {
       // Rate-limit exhausted. Don't mark seen; remember for a retry pass.
-      target.failedOrderIds.add(order.AmazonOrderId);
+      target.failedOrderIds.add(orderId);
       continue;
     }
 
-    target.seenOrderIds.add(order.AmazonOrderId);
-    target.failedOrderIds.delete(order.AmazonOrderId); // succeeded on this attempt
+    // Re-poll case: subtract this order's prior contribution before re-applying.
+    if (target.seenOrderIds.has(orderId)) {
+      reverseContribution(orderId);
+    } else {
+      target.seenOrderIds.add(orderId);
+    }
+    target.failedOrderIds.delete(orderId);
+
+    // Apply the fresh contribution + record it for future reconciliation
+    const fresh = {};
     for (const item of items) {
       const asin = item.ASIN;
       if (!asin) continue;
       const units   = item.QuantityOrdered || 0;
       const revenue = parseFloat(item.ItemPrice?.Amount || 0);
-
-      if (!target.byAsin[asin]) {
-        target.byAsin[asin] = { units: 0, unitsCa: 0, unitsUs: 0, revenueCad: 0, revenueUsd: 0 };
-      }
-      target.byAsin[asin].units += units;
-      if (isCA) { target.byAsin[asin].unitsCa += units; target.byAsin[asin].revenueCad += revenue; }
-      else      { target.byAsin[asin].unitsUs += units; target.byAsin[asin].revenueUsd += revenue; }
+      addContribution(asin, units, revenue);
+      if (!fresh[asin]) fresh[asin] = { units: 0, revenue: 0, isCA };
+      fresh[asin].units   += units;
+      fresh[asin].revenue += revenue;
     }
+    target.orderContrib[orderId] = fresh;
   }
 }
 
@@ -109,6 +143,7 @@ async function retryFailedOrders(token, mpId, target) {
   target.failedOrderIds = new Set(); // reset; processOrders will re-add if still failing
 
   const isCA = mpId === 'A2EUQ1WTGCTBG2';
+  if (!target.orderContrib) target.orderContrib = {};
   let recovered = 0;
   for (const order of fakeOrders) {
     await sleep(1500); // 3× normal pace
@@ -119,6 +154,7 @@ async function retryFailedOrders(token, mpId, target) {
     }
     target.seenOrderIds.add(order.AmazonOrderId);
     recovered++;
+    const fresh = {};
     for (const item of items) {
       const asin = item.ASIN;
       if (!asin) continue;
@@ -128,7 +164,11 @@ async function retryFailedOrders(token, mpId, target) {
       target.byAsin[asin].units += units;
       if (isCA) { target.byAsin[asin].unitsCa += units; target.byAsin[asin].revenueCad += revenue; }
       else      { target.byAsin[asin].unitsUs += units; target.byAsin[asin].revenueUsd += revenue; }
+      if (!fresh[asin]) fresh[asin] = { units: 0, revenue: 0, isCA };
+      fresh[asin].units   += units;
+      fresh[asin].revenue += revenue;
     }
+    target.orderContrib[order.AmazonOrderId] = fresh;
   }
   console.log(`[Orders] Retry pass recovered ${recovered}/${failedIds.length} previously-failed orders`);
   return recovered;
@@ -173,6 +213,7 @@ async function rebuildToday() {
   state.byAsin = {};
   state.seenOrderIds = new Set();
   state.failedOrderIds = new Set();
+  state.orderContrib = {};
   const failedByMp = {};
 
   console.log(`[Orders] Full rebuild for ${state.date}...`);
@@ -196,7 +237,7 @@ async function rebuildToday() {
   for (const mpId of marketplaceIds) {
     const ids = [...state.failedOrderIds].filter(id => failedByMp[id] === mpId);
     if (ids.length === 0) continue;
-    const sub = { byAsin: state.byAsin, seenOrderIds: state.seenOrderIds, failedOrderIds: new Set(ids) };
+    const sub = { byAsin: state.byAsin, seenOrderIds: state.seenOrderIds, failedOrderIds: new Set(ids), orderContrib: state.orderContrib };
     await retryFailedOrders(token, mpId, sub);
     state.failedOrderIds = new Set([
       ...[...state.failedOrderIds].filter(id => failedByMp[id] !== mpId),
@@ -221,7 +262,7 @@ async function rebuildYesterday() {
   }
 
   console.log(`[Orders] Rebuilding yesterday (${yest})...`);
-  const target = { byAsin: {}, seenOrderIds: new Set() };
+  const target = { byAsin: {}, seenOrderIds: new Set(), failedOrderIds: new Set(), orderContrib: {} };
   const token  = await getAccessToken();
   let total = 0;
 
@@ -276,7 +317,7 @@ async function poll() {
 // counts confirmed sales only, so we count Unshipped/PartiallyShipped/Shipped.
 async function computeDayFromOrders(pstDate, token = null) {
   token = token || await getAccessToken();
-  const target   = { byAsin: {}, seenOrderIds: new Set(), failedOrderIds: new Set(), failedByMp: {} };
+  const target   = { byAsin: {}, seenOrderIds: new Set(), failedOrderIds: new Set(), orderContrib: {}, failedByMp: {} };
   const dayStart = pstMidnightAsUTC(pstDate);
   const dayEnd   = pstMidnightAsUTC(pstSubtractDays(pstDate, -1)); // next PST midnight
   let total = 0;
@@ -302,7 +343,7 @@ async function computeDayFromOrders(pstDate, token = null) {
   for (const mpId of getMarketplaceIds()) {
     const idsForThisMp = [...target.failedOrderIds].filter(id => target.failedByMp[id] === mpId);
     if (idsForThisMp.length === 0) continue;
-    const subTarget = { ...target, failedOrderIds: new Set(idsForThisMp) };
+    const subTarget = { byAsin: target.byAsin, seenOrderIds: target.seenOrderIds, failedOrderIds: new Set(idsForThisMp), orderContrib: target.orderContrib };
     await retryFailedOrders(token, mpId, subTarget);
     // Carry forward any STILL-failed IDs after retry
     target.failedOrderIds = new Set([
