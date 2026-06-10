@@ -1874,6 +1874,26 @@ app.post('/api/audit/run', async (req, res) => {
   }
 });
 
+// Manually trigger refund sync. Returns when complete (can take ~5-15 min depending
+// on how many fresh refund events). For ad-hoc runs after the initial schema migration.
+app.post('/api/refunds/sync', async (req, res) => {
+  if (process.env.SYNC_ENABLED !== 'true') {
+    return res.status(403).json({ error: 'SYNC_ENABLED is false — refunds sync disabled locally' });
+  }
+  const windowDays = Math.min(parseInt(req.query.windowDays || '60', 10), 180);
+  res.json({ status: 'started', windowDays, message: 'Refund sync running in background — check server logs' });
+  setImmediate(async () => {
+    try {
+      const { syncRefunds } = require('./sync/refunds');
+      const { brands } = await loadBrands();
+      const r = await syncRefunds(supabase, brands, { windowDays });
+      console.log('[Refunds] Manual sync complete:', JSON.stringify(r));
+    } catch (e) {
+      console.error('[Refunds] Manual sync error:', e.message);
+    }
+  });
+});
+
 app.post('/api/backfill', async (req, res) => {
   if (process.env.SYNC_ENABLED !== 'true') {
     return res.status(403).json({ error: 'SYNC_ENABLED is false — backfill disabled locally' });
@@ -1955,6 +1975,10 @@ app.get('/api/metrics', async (req, res) => {
       a.spend_usd      += row.spend_usd             || 0;
       a.attr_sales_cad += row.attributed_sales_cad  || 0;
       a.attr_sales_usd += row.attributed_sales_usd  || 0;
+      a.refunded_units     = (a.refunded_units     || 0) + (row.refunded_units    || 0);
+      a.refund_amount_cad  = (a.refund_amount_cad  || 0) + (row.refund_amount_cad || 0);
+      a.refund_amount_usd  = (a.refund_amount_usd  || 0) + (row.refund_amount_usd || 0);
+      a.refund_count       = (a.refund_count       || 0) + (row.refund_count     || 0);
       if (row.sessions    != null) a.sessions    += row.sessions;
       if (row.page_views  != null) a.page_views  += row.page_views;
       if (row.buy_box_pct != null) { a.bb_sum += row.buy_box_pct; a.bb_count++; }
@@ -2002,6 +2026,7 @@ app.get('/api/metrics', async (req, res) => {
     for (const brand of brands) {
       let bUnits=0, bUnitsCa=0, bUnitsUs=0, bRevCad=0, bRevUsd=0, bSessions=0, bPageViews=0;
       let bSpendCad=0, bSpendUsd=0, bAttrCad=0, bAttrUsd=0;
+      let bRefundedUnits=0, bRefundCad=0, bRefundUsd=0, bRefundCount=0;
       const buyBoxSamples = [];
       const skus = [];
 
@@ -2018,6 +2043,10 @@ app.get('/api/metrics', async (req, res) => {
         bSessions += a.sessions; bPageViews += a.page_views;
         bSpendCad += a.spend_cad; bSpendUsd += a.spend_usd;
         bAttrCad += a.attr_sales_cad; bAttrUsd += a.attr_sales_usd;
+        bRefundedUnits += a.refunded_units    || 0;
+        bRefundCad     += a.refund_amount_cad || 0;
+        bRefundUsd     += a.refund_amount_usd || 0;
+        bRefundCount   += a.refund_count      || 0;
         if (sku.buyBox != null) buyBoxSamples.push(sku.buyBox);
       }
 
@@ -2038,6 +2067,10 @@ app.get('/api/metrics', async (req, res) => {
           pageViews:  bPageViews  || null,
           buyBox:     avgBuyBox,
           avgCvr:     (bUnits && bSessions) ? Math.round(bUnits / bSessions * 10000) / 100 : null,
+          refundedUnits:  bRefundedUnits,
+          refundAmountCad: Math.round(bRefundCad * 100) / 100,
+          refundAmountUsd: Math.round(bRefundUsd * 100) / 100,
+          refundCount:    bRefundCount,
           adSummary:  (bSpendCad + bSpendUsd) > 0 ? {
             spendCad:           Math.round(bSpendCad * 100) / 100,
             spendUsd:           Math.round(bSpendUsd * 100) / 100,
@@ -3081,6 +3114,18 @@ function scheduleDailySync() {
     const { backfillDays } = require('./sync/backfill');
     loadBrands().then(({ brands }) => backfillDays(supabase, brands, 7))
       .catch(err => console.warn('[Backfill] cron error:', err.message));
+  });
+
+  // Refunds sync: 9:15am UTC daily — pulls last 60 days of refund events,
+  // attributes each to the original order's PST date, writes per-(asin,date)
+  // refund totals to daily_metrics. Idempotent via refund_events PK.
+  cron.schedule('15 9 * * *', () => {
+    console.log('[Refunds] 9:15am UTC cron fired');
+    (async () => {
+      const { syncRefunds } = require('./sync/refunds');
+      const { brands } = await loadBrands();
+      await syncRefunds(supabase, brands, { windowDays: 60 });
+    })().catch(err => console.warn('[Refunds] cron error:', err.message));
   });
 
   // Daily data-integrity audit: 9am UTC (after 8:30 finalize). Deterministic checks
