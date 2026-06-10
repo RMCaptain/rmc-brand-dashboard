@@ -84,9 +84,11 @@ async function processOrders(orders, token, mpId, target) {
     if (!prior) return;
     for (const [asin, c] of Object.entries(prior)) {
       if (!target.byAsin[asin]) continue;
-      target.byAsin[asin].units      -= c.units;
+      target.byAsin[asin].units -= c.units;
       if (c.isCA) { target.byAsin[asin].unitsCa -= c.units; target.byAsin[asin].revenueCad -= c.revenue; }
       else        { target.byAsin[asin].unitsUs -= c.units; target.byAsin[asin].revenueUsd -= c.revenue; }
+      if (target.byAsin[asin].pricedCa != null) target.byAsin[asin].pricedCa -= (c.pricedCa || 0);
+      if (target.byAsin[asin].pricedUs != null) target.byAsin[asin].pricedUs -= (c.pricedUs || 0);
     }
   }
 
@@ -111,7 +113,10 @@ async function processOrders(orders, token, mpId, target) {
     }
     target.failedOrderIds.delete(orderId);
 
-    // Apply the fresh contribution + record it for future reconciliation
+    // Apply the fresh contribution + record it for future reconciliation.
+    // Track per-marketplace "priced units" — units that had a non-zero
+    // ItemPrice. The writer uses these separately for CA and US to extrapolate
+    // missing Pending revenue without cross-marketplace pollution.
     const fresh = {};
     for (const item of items) {
       const asin = item.ASIN;
@@ -119,9 +124,20 @@ async function processOrders(orders, token, mpId, target) {
       const units   = item.QuantityOrdered || 0;
       const revenue = parseFloat(item.ItemPrice?.Amount || 0);
       addContribution(asin, units, revenue);
-      if (!fresh[asin]) fresh[asin] = { units: 0, revenue: 0, isCA };
+      const bucket = target.byAsin[asin];
+      bucket.pricedCa = bucket.pricedCa || 0;
+      bucket.pricedUs = bucket.pricedUs || 0;
+      if (revenue > 0) {
+        if (isCA) bucket.pricedCa += units;
+        else      bucket.pricedUs += units;
+      }
+      if (!fresh[asin]) fresh[asin] = { units: 0, revenue: 0, pricedCa: 0, pricedUs: 0, isCA };
       fresh[asin].units   += units;
       fresh[asin].revenue += revenue;
+      if (revenue > 0) {
+        if (isCA) fresh[asin].pricedCa += units;
+        else      fresh[asin].pricedUs += units;
+      }
     }
     target.orderContrib[orderId] = fresh;
   }
@@ -311,10 +327,11 @@ async function poll() {
 // rebuild script and the nightly yesterday-finalize. Not gated on ENABLED —
 // it's a pure, explicitly-invoked computation.
 //
-// EXCLUDES Pending (and Canceled): Pending orders are unconfirmed — Amazon
-// hasn't finalized their price (revenue comes back $0) and a large share cancel.
-// Including them inflated units ~40% while dragging revenue down. Sellerboard
-// counts confirmed sales only, so we count Unshipped/PartiallyShipped/Shipped.
+// INCLUDES Pending: Sellerboard counts Pending in its tiles. Pending units
+// have units populated but ItemPrice = $0 from the API. processOrders tracks
+// pricedUnits per ASIN so the writer can extrapolate revenue for unpriced
+// units using the day's average price (priced revenue / priced units).
+// Canceled excluded (legitimately not a sale).
 async function computeDayFromOrders(pstDate, token = null) {
   token = token || await getAccessToken();
   const target   = { byAsin: {}, seenOrderIds: new Set(), failedOrderIds: new Set(), orderContrib: {}, failedByMp: {} };
@@ -328,7 +345,7 @@ async function computeDayFromOrders(pstDate, token = null) {
       MarketplaceIds: mpId,
       CreatedAfter:   dayStart,
       CreatedBefore:  dayEnd,
-      OrderStatuses:  'Unshipped,PartiallyShipped,Shipped'
+      OrderStatuses:  'Pending,Unshipped,PartiallyShipped,Shipped'
     }, mpId, target);
     total += n;
     // Tag the failures from this marketplace so the retry pass picks the right currency context

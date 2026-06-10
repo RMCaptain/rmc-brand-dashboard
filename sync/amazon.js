@@ -1717,4 +1717,42 @@ async function fetchActivePromotions(marketplaceIds, token) {
   return Object.fromEntries(Object.entries(asinPromos).map(([k, v]) => [k, [...v]]));
 }
 
-module.exports = { syncBrandMetrics, importBrandsFromAmazon, fetchUpcsForAsins, fetchFinancialEvents, enrichListingHealth, scrapeSellerNames, fetchStrandedInventory, getAccessToken, spRequest, getMarketplaceIds, MARKETPLACE_CODE, sleep, createReport, waitForReport, downloadReport };
+// Fetch the seller's listing prices for up to 20 ASINs at once via the SP-API
+// Product Pricing endpoint. Returns { [asin]: { amount, currency } } — keyed
+// by ASIN, only entries with a real MyPrice are included.
+// Used to estimate revenue for Pending orders whose ItemPrice is $0 in the
+// Orders API response.
+async function fetchListingPrices(asins, mpId, token) {
+  if (!asins || asins.length === 0) return {};
+  token = token || await getAccessToken();
+  const out = {};
+  const CHUNK = 20;
+  for (let i = 0; i < asins.length; i += CHUNK) {
+    const chunk = asins.slice(i, i + CHUNK);
+    const qs = new URLSearchParams({
+      MarketplaceId: mpId,
+      ItemType: 'Asin',
+    });
+    for (const a of chunk) qs.append('Asins', a);
+    const path = `/products/pricing/v0/price?${qs.toString()}`;
+    try {
+      const res = await spRequest('GET', path, token, null, 30000);
+      if (res.status === 429) { await sleep(2000); i -= CHUNK; continue; }
+      if (res.status !== 200) { console.warn(`[Pricing] HTTP ${res.status}: ${JSON.stringify(res.body || {}).slice(0, 200)}`); continue; }
+      for (const item of (res.body?.payload || [])) {
+        const asin = item.ASIN;
+        const offer = item.Product?.Offers?.[0];
+        const price = offer?.BuyingPrice?.ListingPrice || offer?.BuyingPrice?.LandedPrice;
+        if (asin && price && price.Amount > 0) {
+          out[asin] = { amount: Number(price.Amount), currency: price.CurrencyCode };
+        }
+      }
+      await sleep(500); // 2 req/sec
+    } catch (e) {
+      console.warn(`[Pricing] batch failed: ${e.message}`);
+    }
+  }
+  return out;
+}
+
+module.exports = { syncBrandMetrics, importBrandsFromAmazon, fetchUpcsForAsins, fetchFinancialEvents, enrichListingHealth, scrapeSellerNames, fetchStrandedInventory, getAccessToken, spRequest, getMarketplaceIds, MARKETPLACE_CODE, sleep, createReport, waitForReport, downloadReport, fetchListingPrices };

@@ -1775,21 +1775,73 @@ async function persistOrdersDay(date, byAsin) {
   const asinBrand = {};
   for (const b of brands) for (const a of (b.asins || [])) asinBrand[a] = b.id;
 
-  // Drop zero-only entries: an ASIN with units=0 AND revenue=0 shouldn't be
-  // written. Otherwise a Pending-order-leak or partial item-fetch can write
-  // a phantom zero row that clobbers a previously-good value.
+  // Phase 1: identify ASINs with unpriced units in each marketplace that DON'T
+  // have any priced reference on the same day. Those need a catalog-price
+  // lookup; everything else extrapolates from same-marketplace avg.
+  const needCatalogCa = [];
+  const needCatalogUs = [];
+  for (const [asin, d] of Object.entries(byAsin)) {
+    const unitsCa = d.unitsCa || 0;
+    const unitsUs = d.unitsUs || 0;
+    const pricedCa = d.pricedCa || 0;
+    const pricedUs = d.pricedUs || 0;
+    if (unitsCa > pricedCa && pricedCa === 0) needCatalogCa.push(asin);
+    if (unitsUs > pricedUs && pricedUs === 0) needCatalogUs.push(asin);
+  }
+
+  let catalogCa = {}, catalogUs = {};
+  if (needCatalogCa.length > 0 || needCatalogUs.length > 0) {
+    const { fetchListingPrices } = require('./sync/amazon');
+    try {
+      if (needCatalogCa.length > 0) {
+        catalogCa = await fetchListingPrices(needCatalogCa, 'A2EUQ1WTGCTBG2');
+        console.log(`[Orders] Catalog CA prices fetched for ${Object.keys(catalogCa).length}/${needCatalogCa.length} ASINs`);
+      }
+      if (needCatalogUs.length > 0) {
+        catalogUs = await fetchListingPrices(needCatalogUs, 'ATVPDKIKX0DER');
+        console.log(`[Orders] Catalog US prices fetched for ${Object.keys(catalogUs).length}/${needCatalogUs.length} ASINs`);
+      }
+    } catch (e) {
+      console.warn('[Orders] Catalog price fetch failed (continuing without):', e.message);
+    }
+  }
+
+  // Phase 2: build rows. Per ASIN per marketplace:
+  //   1) if priced units exist on this marketplace, use their avg price for unpriced units
+  //   2) else if catalog price found, use that
+  //   3) else accept the under-count (will self-heal as orders confirm)
   const rows = Object.entries(byAsin)
     .filter(([, d]) => (d.units || 0) > 0 || (d.revenueCad || 0) > 0 || (d.revenueUsd || 0) > 0)
-    .map(([asin, d]) => ({
-      asin,
-      date,
-      brand_id:    asinBrand[asin] || 'unknown-brand',
-      units:       d.units      || 0,
-      units_ca:    d.unitsCa    || 0,
-      units_us:    d.unitsUs    || 0,
-      revenue_cad: Math.round((d.revenueCad || 0) * 100) / 100,
-      revenue_usd: Math.round((d.revenueUsd || 0) * 100) / 100,
-    }));
+    .map(([asin, d]) => {
+      const unitsCa  = d.unitsCa  || 0;
+      const unitsUs  = d.unitsUs  || 0;
+      const pricedCa = d.pricedCa || 0;
+      const pricedUs = d.pricedUs || 0;
+      const unpricedCa = Math.max(0, unitsCa - pricedCa);
+      const unpricedUs = Math.max(0, unitsUs - pricedUs);
+      let revCad = d.revenueCad || 0;
+      let revUsd = d.revenueUsd || 0;
+
+      if (unpricedCa > 0) {
+        if (pricedCa > 0)               revCad += (revCad / pricedCa) * unpricedCa;
+        else if (catalogCa[asin]?.amount) revCad += catalogCa[asin].amount * unpricedCa;
+      }
+      if (unpricedUs > 0) {
+        if (pricedUs > 0)               revUsd += (revUsd / pricedUs) * unpricedUs;
+        else if (catalogUs[asin]?.amount) revUsd += catalogUs[asin].amount * unpricedUs;
+      }
+
+      return {
+        asin,
+        date,
+        brand_id:    asinBrand[asin] || 'unknown-brand',
+        units:       d.units || 0,
+        units_ca:    unitsCa,
+        units_us:    unitsUs,
+        revenue_cad: Math.round(revCad * 100) / 100,
+        revenue_usd: Math.round(revUsd * 100) / 100,
+      };
+    });
   if (rows.length === 0) return 0;
 
   const { error } = await supabase
