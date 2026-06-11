@@ -1644,6 +1644,39 @@ app.get('/api/metrics/yesterday', async (req, res) => {
     };
   }
 
+  // Roll up daily_metrics into the financials block the tile expects.
+  // Ad spend + refunds come from daily_metrics (authoritative). amazonFees +
+  // serviceFees still passthrough from preset_metrics until financial events
+  // get persisted per-day.
+  let topSpendCad=0, topSpendUsd=0, topRefundCad=0, topRefundUsd=0, topRefundCount=0;
+  for (const r of (rows || [])) {
+    topSpendCad    += r.spend_cad           || 0;
+    topSpendUsd    += r.spend_usd           || 0;
+    topRefundCad   += r.refund_amount_cad   || 0;
+    topRefundUsd   += r.refund_amount_usd   || 0;
+    topRefundCount += r.refund_count        || 0;
+  }
+  const ystFinancialsPT = stPreset.financials || {};
+  const financialsOut = {
+    CAD: {
+      adSpend:      Math.round(topSpendCad * 100) / 100,
+      refundAmount: Math.round(topRefundCad * 100) / 100,
+      amazonFees:   ystFinancialsPT.CAD?.amazonFees  || 0,
+      serviceFees:  ystFinancialsPT.CAD?.serviceFees || 0,
+      refundFees:   ystFinancialsPT.CAD?.refundFees  || 0,
+      breakdown:    ystFinancialsPT.CAD?.breakdown   || {},
+    },
+    USD: {
+      adSpend:      Math.round(topSpendUsd * 100) / 100,
+      refundAmount: Math.round(topRefundUsd * 100) / 100,
+      amazonFees:   ystFinancialsPT.USD?.amazonFees  || 0,
+      serviceFees:  ystFinancialsPT.USD?.serviceFees || 0,
+      refundFees:   ystFinancialsPT.USD?.refundFees  || 0,
+      breakdown:    ystFinancialsPT.USD?.breakdown   || {},
+    },
+    refundCount: topRefundCount,
+  };
+
   res.json({
     date:       yest,
     updatedAt:  new Date().toISOString(),
@@ -1651,9 +1684,7 @@ app.get('/api/metrics/yesterday', async (req, res) => {
     startDate:  yest,
     endDate:    yest,
     brands:     byBrand,
-    // Pass through financials (fees, refunds, ad spend totals) from S&T preset.
-    // Empty until the next sync runs with PST boundaries; sales/units are unaffected.
-    financials: stPreset.financials || {},
+    financials: financialsOut,
   });
 });
 
@@ -2196,14 +2227,46 @@ app.get('/api/metrics', async (req, res) => {
       };
     }
 
+    // Top-level financials block — what the tile renderer reads to compute
+    // refunds, ad cost, profit. Ad spend + refunds come from daily_metrics
+    // (authoritative per-day). amazonFees + serviceFees still come from the
+    // preset_metrics cache via passthrough (S&T-sourced financial events).
+    let topSpendCad=0, topSpendUsd=0, topRefundCad=0, topRefundUsd=0, topRefundCount=0;
+    for (const a of Object.values(byAsin)) {
+      topSpendCad     += a.spend_cad           || 0;
+      topSpendUsd     += a.spend_usd           || 0;
+      topRefundCad    += a.refund_amount_cad   || 0;
+      topRefundUsd    += a.refund_amount_usd   || 0;
+      topRefundCount  += a.refund_count        || 0;
+    }
+    const passthrough = pm.presets?.[req.query.presetKey]?.financials || {};
+    const financials = {
+      CAD: {
+        adSpend:      Math.round(topSpendCad * 100) / 100,
+        refundAmount: Math.round(topRefundCad * 100) / 100,
+        amazonFees:   passthrough.CAD?.amazonFees   || 0,
+        serviceFees:  passthrough.CAD?.serviceFees  || 0,
+        refundFees:   passthrough.CAD?.refundFees   || 0,
+        breakdown:    passthrough.CAD?.breakdown    || {},
+      },
+      USD: {
+        adSpend:      Math.round(topSpendUsd * 100) / 100,
+        refundAmount: Math.round(topRefundUsd * 100) / 100,
+        amazonFees:   passthrough.USD?.amazonFees   || 0,
+        serviceFees:  passthrough.USD?.serviceFees  || 0,
+        refundFees:   passthrough.USD?.refundFees   || 0,
+        breakdown:    passthrough.USD?.breakdown    || {},
+      },
+      refundCount: topRefundCount,
+    };
+
     const fmtD = d => new Date(d + 'T12:00:00Z').toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' });
     res.json({
       from, to,
       label: `${fmtD(from)} – ${fmtD(to)}`,
       startDate: from, endDate: to,
       brands: resultBrands,
-      // Financials passthrough — populates after next sync with PST boundaries
-      financials: pm.presets?.[req.query.presetKey]?.financials || {},
+      financials,
     });
   } catch (err) {
     console.error('[Metrics] Custom range error:', err.message);
