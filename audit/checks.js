@@ -18,7 +18,7 @@ async function fetchDayShape(supabase, date) {
   for (let off = 0; off < 5000; off += 1000) {
     const { data, error } = await supabase
       .from('daily_metrics')
-      .select('units,units_ca,units_us,revenue_cad,revenue_usd,sessions,updated_at')
+      .select('units,units_ca,units_us,revenue_cad,revenue_usd,sessions,spend_cad,spend_usd,updated_at')
       .eq('date', date)
       .range(off, off + 999);
     if (error) throw new Error(`fetch ${date}: ${error.message}`);
@@ -27,17 +27,27 @@ async function fetchDayShape(supabase, date) {
     if (data.length < 1000) break;
   }
   let units = 0, unitsCa = 0, unitsUs = 0, revCad = 0, revUsd = 0, withSessions = 0;
+  let spendCad = 0, spendUsd = 0, rowsWithSpend = 0;
   let maxUpdatedAt = null;
   for (const r of all) {
-    units   += r.units || 0;
-    unitsCa += r.units_ca || 0;
-    unitsUs += r.units_us || 0;
-    revCad  += r.revenue_cad || 0;
-    revUsd  += r.revenue_usd || 0;
+    units    += r.units || 0;
+    unitsCa  += r.units_ca || 0;
+    unitsUs  += r.units_us || 0;
+    revCad   += r.revenue_cad || 0;
+    revUsd   += r.revenue_usd || 0;
+    spendCad += r.spend_cad || 0;
+    spendUsd += r.spend_usd || 0;
+    if ((r.spend_cad || 0) > 0 || (r.spend_usd || 0) > 0) rowsWithSpend++;
     if (r.sessions != null && r.sessions > 0) withSessions++;
     if (r.updated_at && (!maxUpdatedAt || r.updated_at > maxUpdatedAt)) maxUpdatedAt = r.updated_at;
   }
-  return { date, rows: all.length, units, unitsCa, unitsUs, revCad, revUsd, withSessions, blended: revCad + revUsd * 1.38, maxUpdatedAt };
+  return {
+    date, rows: all.length, units, unitsCa, unitsUs, revCad, revUsd, withSessions,
+    spendCad, spendUsd, rowsWithSpend,
+    blended: revCad + revUsd * 1.38,
+    adSpendBlended: spendCad + spendUsd * 1.38,
+    maxUpdatedAt,
+  };
 }
 
 function median(nums) {
@@ -168,6 +178,24 @@ async function runChecks(supabase) {
         type: 'stale_write',
         message: `Yesterday (${yest}) hasn't been written in ${ageHours.toFixed(1)}h. Finalize cron may not be running.`,
         remediation: `Check Render logs for [Orders] Finalize messages; manually trigger via POST /api/audit/run after fixing.`,
+      });
+    }
+  }
+
+  // 9. MISSING AD SPEND — a day with real sales but zero ad spend is suspicious.
+  // Most days RMC has Sponsored Products spend on at least some ASINs. If a
+  // day in the window has units > some threshold but adSpend == 0, the daily
+  // ads cron didn't write it (or its run failed silently). Skips today
+  // since the 2h ads cron may not have fired yet on a fresh start.
+  for (const s of shapes) {
+    if (s.date === yest || s.date === todayPst) continue; // today/yesterday are still settling
+    if (s.units >= 20 && s.adSpendBlended === 0 && s.rowsWithSpend === 0) {
+      findings.push({
+        severity: 'warning',
+        date: s.date,
+        type: 'missing_ad_spend',
+        message: `${s.date} has ${s.units} units / CA$${s.blended.toFixed(0)} sales but $0 ad spend. The :20 hourly or 9:10 daily ads cron didn't write it.`,
+        remediation: `POST /api/ads/sync-daily?windowDays=3 (will backfill recent days)`,
       });
     }
   }
