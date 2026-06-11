@@ -9,6 +9,22 @@ const cron = require('node-cron');
 const { createClient } = require('@supabase/supabase-js');
 const ordersPoller = require('./sync/orders');
 const { pstDateStr, pstSubtractDays } = require('./sync/dateUtils');
+const { loadAllImages, setImageManual, backfillMissingImages, migrateLegacyImages } = require('./sync/images');
+
+// In-memory image map, refreshed from Supabase. Used by /api/metrics responses
+// to attach imageUrl to every SKU without a per-request DB roundtrip.
+let imagesByAsin = {};
+let imagesLastLoaded = 0;
+async function refreshImagesCache() {
+  try {
+    const fresh = await loadAllImages(supabase);
+    imagesByAsin = Object.fromEntries(Object.entries(fresh).map(([asin, v]) => [asin, v.url]));
+    imagesLastLoaded = Date.now();
+    console.log(`[Images] In-memory cache refreshed: ${Object.keys(imagesByAsin).length} ASINs`);
+  } catch (e) {
+    console.warn('[Images] Cache refresh failed (keeping old cache):', e.message);
+  }
+}
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -1568,7 +1584,7 @@ app.get('/api/metrics/yesterday', async (req, res) => {
                               ? Math.round(spendTotal / attrTotal * 10000) / 100
                               : null,
         title:              meta.title    || brand.asinTitles?.[asin] || '',
-        imageUrl:           meta.imageUrl || null,
+        imageUrl:           imagesByAsin[asin] || meta.imageUrl || null,
         inventory:          dm?.inventory_on_hand != null
                               ? { onHand: dm.inventory_on_hand, inbound: dm.inventory_inbound || 0 }
                               : (meta.inventory ?? null),
@@ -1627,7 +1643,7 @@ app.get('/api/metrics/yesterday', async (req, res) => {
       pageViews:  r.page_views || null,
       buyBox:     r.buy_box_pct,
       cvr: null, spendCad: null, spendUsd: null, attributedSalesCad: null, attributedSalesUsd: null, acos: null,
-      title: '', imageUrl: null,
+      title: '', imageUrl: imagesByAsin[r.asin] || null,
       inventory: r.inventory_on_hand != null ? { onHand: r.inventory_on_hand, inbound: r.inventory_inbound || 0 } : null,
       marketplaces: [...((r.units_ca||0) > 0 ? ['CA'] : []), ...((r.units_us||0) > 0 ? ['US'] : [])],
     });
@@ -1736,7 +1752,7 @@ app.get('/api/metrics/today', async (req, res) => {
         sessions: null, pageViews: null, buyBox: null, cvr: null,
         spendCad: null, spendUsd: null, attributedSalesCad: null, attributedSalesUsd: null, acos: null,
         title: brand.asinTitles?.[asin] || '',
-        imageUrl: null,
+        imageUrl: imagesByAsin[asin] || null,
         marketplaces: [...(ca > 0 ? ['CA'] : []), ...(us > 0 ? ['US'] : [])],
         inventory: null,
       });
@@ -1771,7 +1787,7 @@ app.get('/api/metrics/today', async (req, res) => {
       revenueUsd: Math.round(ru * 100) / 100,
       sessions: null, pageViews: null, buyBox: null, cvr: null,
       spendCad: null, spendUsd: null, attributedSalesCad: null, attributedSalesUsd: null, acos: null,
-      title: '', imageUrl: null, inventory: null,
+      title: '', imageUrl: imagesByAsin[asin] || null, inventory: null,
       marketplaces: [...(ca > 0 ? ['CA'] : []), ...(us > 0 ? ['US'] : [])],
     });
   }
@@ -1947,6 +1963,56 @@ app.post('/api/audit/run', async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// ── Image management endpoints ───────────────────────────────────────────────
+
+// Return the full ASIN → imageUrl map. Used by the dashboard to populate
+// images independent of which preset is active.
+app.get('/api/asins/images', (req, res) => {
+  res.json({
+    images: imagesByAsin,
+    count: Object.keys(imagesByAsin).length,
+    lastLoaded: imagesLastLoaded ? new Date(imagesLastLoaded).toISOString() : null,
+  });
+});
+
+// Manual override — set an image URL for one ASIN. Locks it from automated overwrite.
+app.put('/api/asins/:asin/image', async (req, res) => {
+  const { asin } = req.params;
+  const { url } = req.body || {};
+  if (!url || typeof url !== 'string') return res.status(400).json({ error: 'url required in body' });
+  try {
+    await setImageManual(supabase, asin, url);
+    imagesByAsin[asin] = url; // hot-update local cache
+    res.json({ ok: true, asin, url });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Manual trigger for catalog API backfill — fetches up to N missing/stale ASINs.
+app.post('/api/asins/images/backfill', async (req, res) => {
+  if (process.env.SYNC_ENABLED !== 'true') return res.status(403).json({ error: 'SYNC_ENABLED is false' });
+  const limit = Math.min(parseInt(req.query.limit || '100', 10), 200);
+  res.json({ status: 'started', limit });
+  setImmediate(async () => {
+    try {
+      const { brands } = await loadBrands();
+      const result = await backfillMissingImages(supabase, brands, { limit });
+      await refreshImagesCache();
+      console.log('[Images] Backfill complete:', JSON.stringify(result));
+    } catch (e) { console.error('[Images] Backfill error:', e.message); }
+  });
+});
+
+// One-shot migration — seed asin_images from existing preset_metrics + image-cache.json.
+app.post('/api/asins/images/migrate', async (req, res) => {
+  try {
+    const result = await migrateLegacyImages(supabase);
+    await refreshImagesCache();
+    res.json({ ok: true, ...result });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // Daily ad-spend sync — pulls Amazon Ads with timeUnit:DAILY for a window,
@@ -2137,6 +2203,7 @@ app.get('/api/metrics', async (req, res) => {
         acos: (spendTotal > 0 && attrTotal > 0) ? Math.round(spendTotal / attrTotal * 10000) / 100 : null,
         inventory: a.inv_onhand != null ? { onHand: a.inv_onhand, inbound: a.inv_inbound || 0 } : null,
         marketplaces: [...((a.units_ca||0) > 0 ? ['CA'] : []), ...((a.units_us||0) > 0 ? ['US'] : [])],
+        imageUrl: imagesByAsin[asin] || null,
       };
     }
 
@@ -2156,7 +2223,7 @@ app.get('/api/metrics', async (req, res) => {
         if (!a) continue;
         const meta = lookupSkuMeta(brand.id, asin);
         const sku = buildSku(asin, brand.id, a, meta.title || brand.asinTitles?.[asin] || '');
-        sku.imageUrl = meta.imageUrl || null;
+        sku.imageUrl = imagesByAsin[asin] || meta.imageUrl || null;
         skus.push(sku);
         bUnits += a.units; bUnitsCa += a.units_ca; bUnitsUs += a.units_us;
         bRevCad += a.revenue_cad; bRevUsd += a.revenue_usd;
@@ -3268,6 +3335,25 @@ function scheduleDailySync() {
       .catch(err => console.warn('[Backfill] cron error:', err.message));
   });
 
+  // Image backfill: 10am UTC daily — fetches images for up to 100 missing/stale
+  // ASINs via Catalog API and writes to Supabase asin_images table. Bounded
+  // per run; full catalog refreshes every ~4 days.
+  cron.schedule('0 10 * * *', () => {
+    console.log('[Images] 10 UTC cron fired');
+    (async () => {
+      const { brands } = await loadBrands();
+      await backfillMissingImages(supabase, brands, { limit: 100 });
+      await refreshImagesCache();
+    })().catch(err => console.warn('[Images] cron error:', err.message));
+  });
+
+  // Image cache refresh: hourly. Pulls latest asin_images map into memory so
+  // /api/metrics responses always see fresh URLs (in case manual overrides
+  // were set or another instance updated rows).
+  cron.schedule('30 * * * *', () => {
+    refreshImagesCache().catch(err => console.warn('[Images] hourly refresh:', err.message));
+  });
+
   // Daily ad-spend sync: 9:10am UTC — pulls last 30 days of Sponsored Products
   // spend with timeUnit:DAILY, writes spend_cad/spend_usd into daily_metrics.
   cron.schedule('10 9 * * *', () => {
@@ -3306,7 +3392,10 @@ function scheduleDailySync() {
       .catch(err => console.warn('[Audit] cron error:', err.message));
   });
 
-  console.log('[AutoSync] Crons scheduled: sync 6am/9am/12pm UTC, Slack digest 7am UTC, Orders poll */15min, Orders hourly-rebuild :05, Yesterday-finalize 8:30 UTC, Backfill 8am UTC, Audit 9am UTC');
+  console.log('[AutoSync] Crons scheduled: sync 6am/9am/12pm UTC, Slack digest 7am UTC, Orders poll */15min, Orders hourly-rebuild :05, Yesterday-finalize 8:30 UTC, Backfill 8am UTC, Audit 9am UTC, AdsDaily 9:10 UTC + */2h :20, Refunds 9:15 UTC, Images backfill 10 UTC + :30 hourly refresh');
+
+  // Load image cache at startup so first requests see images.
+  refreshImagesCache().catch(err => console.warn('[Images] Startup load:', err.message));
 
   // On startup: catch-up if data is more than 23h old AND no attempt in last 4h
   (async () => {

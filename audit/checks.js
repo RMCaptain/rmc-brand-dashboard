@@ -182,7 +182,51 @@ async function runChecks(supabase) {
     }
   }
 
-  // 9. MISSING AD SPEND — a day with real sales but zero ad spend is suspicious.
+  // 9. MISSING IMAGES — ASINs with sales in the window but no image in asin_images.
+  // Flagged as info (not warning) — frontend handles gracefully with the
+  // ASIN-code placeholder. But worth tracking so the backfill cron has
+  // a manual trigger target.
+  try {
+    const recentAsins = new Set();
+    const since = pstSubtractDays(todayPst, 14);
+    const { data: salesAsins } = await supabase
+      .from('daily_metrics')
+      .select('asin')
+      .gte('date', since)
+      .gt('units', 0)
+      .limit(5000);
+    for (const r of (salesAsins || [])) recentAsins.add(r.asin);
+
+    if (recentAsins.size > 0) {
+      const asinList = [...recentAsins];
+      const haveImage = new Set();
+      for (let i = 0; i < asinList.length; i += 200) {
+        const chunk = asinList.slice(i, i + 200);
+        const { data } = await supabase
+          .from('asin_images')
+          .select('asin')
+          .in('asin', chunk);
+        for (const r of (data || [])) haveImage.add(r.asin);
+      }
+      const missing = [...recentAsins].filter(a => !haveImage.has(a));
+      if (missing.length > 0) {
+        findings.push({
+          severity: 'info',
+          date: null,
+          type: 'missing_images',
+          message: `${missing.length} ASINs sold in the last 14 days have no image cached (${asinList.length - missing.length}/${asinList.length} have images).`,
+          remediation: `POST /api/asins/images/backfill?limit=200 (catalog API; ~2 min)`,
+        });
+      }
+    }
+  } catch (e) {
+    // Audit shouldn't fail if asin_images table doesn't exist yet
+    if (!/asin_images.*does not exist/i.test(e.message || '')) {
+      console.warn('[Audit] missing_images check failed:', e.message);
+    }
+  }
+
+  // 10. MISSING AD SPEND — a day with real sales but zero ad spend is suspicious.
   // Most days RMC has Sponsored Products spend on at least some ASINs. If a
   // day in the window has units > some threshold but adSpend == 0, the daily
   // ads cron didn't write it (or its run failed silently). Skips today
