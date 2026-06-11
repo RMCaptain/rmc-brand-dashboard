@@ -1922,12 +1922,12 @@ app.post('/api/audit/run', async (req, res) => {
 // then upserts spend_cad / spend_usd / attributed_sales_* per (asin, date)
 // into daily_metrics. Only writes the four ad-spend columns; sales/refund
 // columns are preserved via Supabase's column-level upsert.
-async function syncDailyAdSpend({ windowDays = 30 } = {}) {
+async function syncDailyAdSpend({ windowDays = 30, includeToday = true } = {}) {
   const { pullAdSpendDaily } = require('./sync/ads');
   const today = pstDateStr();
-  const yest  = pstSubtractDays(today, 1);
-  const from  = pstSubtractDays(today, windowDays);
-  const merged = await pullAdSpendDaily(from, yest);
+  const endDate = includeToday ? today : pstSubtractDays(today, 1);
+  const from    = pstSubtractDays(today, windowDays);
+  const merged  = await pullAdSpendDaily(from, endDate);
 
   const { brands } = await loadBrands();
   const asinBrand = {};
@@ -3208,9 +3208,18 @@ function scheduleDailySync() {
   // Daily ad-spend sync: 9:10am UTC — pulls last 30 days of Sponsored Products
   // spend with timeUnit:DAILY, writes spend_cad/spend_usd into daily_metrics.
   cron.schedule('10 9 * * *', () => {
-    console.log('[AdsDaily] 9:10 UTC cron fired');
-    syncDailyAdSpend({ windowDays: 30 })
+    console.log('[AdsDaily] 9:10 UTC daily-30d cron fired');
+    syncDailyAdSpend({ windowDays: 30, includeToday: true })
       .catch(err => console.warn('[AdsDaily] cron error:', err.message));
+  });
+
+  // Today + yesterday only, every 2 hours (at :20). Lightweight — pulls
+  // just 2 days of data so today's tile populates throughout the day as
+  // Amazon publishes spend (typically 1-3h lag from the impression/click).
+  cron.schedule('20 */2 * * *', () => {
+    console.log('[AdsDaily] :20 hourly today+yesterday cron fired');
+    syncDailyAdSpend({ windowDays: 1, includeToday: true })
+      .catch(err => console.warn('[AdsDaily] hourly error:', err.message));
   });
 
   // Refunds sync: 9:15am UTC daily — pulls last 60 days of refund events,
