@@ -1847,22 +1847,14 @@ async function finalizeYesterdayFromOrders() {
     const yest = pstSubtractDays(pstDateStr(), 1);
     const { byAsin, orderCount } = await ordersPoller.computeDayFromOrders(yest);
 
-    // Count entries with REAL data (not just any presence). A Pending-order
-    // leak or partial item-fetch can yield byAsin entries with units=0 that
-    // would pass `Object.keys > 0` and trigger the destructive zero. Require
-    // actual units OR revenue before we believe the API returned real data.
     const realEntries = Object.values(byAsin || {}).filter(d =>
       (d.units || 0) > 0 || (d.revenueCad || 0) > 0 || (d.revenueUsd || 0) > 0
     );
     if (realEntries.length === 0) {
-      console.warn(`[Orders] Finalize ${yest}: Orders API returned no usable rows (rate-limit or transient). NOT zeroing — preserving prior data.`);
+      console.warn(`[Orders] Finalize ${yest}: Orders API returned no usable rows. NOT zeroing — preserving prior data.`);
       return;
     }
 
-    // Compute the set of ASINs we're about to write, then zero ONLY the
-    // existing rows whose ASIN isn't in that set. This catches "ASIN had
-    // sales yesterday-2 but all those orders cancelled by yesterday-1"
-    // without risking a full-day wipe when the API hiccups.
     const incomingAsins = new Set();
     for (const [asin, d] of Object.entries(byAsin)) {
       if ((d.units || 0) > 0 || (d.revenueCad || 0) > 0 || (d.revenueUsd || 0) > 0) incomingAsins.add(asin);
@@ -1872,15 +1864,26 @@ async function finalizeYesterdayFromOrders() {
       .select('asin')
       .eq('date', yest)
       .gt('units', 0);
+    const existingCount = (existing || []).length;
+    const incomingCount = incomingAsins.size;
+
+    // SANITY CHECK: if the new pull has dramatically fewer ASINs than what's
+    // already persisted, the SP-API likely hiccuped — refuse to zero-stale
+    // and just upsert what we got. This is the bug that wiped Jun 10:
+    // partial 17-unit pull was used to zero out 200+ good ASINs.
     const toZero = (existing || []).map(r => r.asin).filter(a => !incomingAsins.has(a));
-    if (toZero.length > 0) {
+    if (existingCount > 50 && incomingCount < existingCount * 0.5) {
+      console.warn(`[Orders] Finalize ${yest}: incoming has ${incomingCount} ASINs vs ${existingCount} existing — suspicious. Upserting without zeroing stale rows.`);
+      // skip zero step; write only what we have, leave others as-is
+    } else if (toZero.length > 0) {
       await supabase.from('daily_metrics')
         .update({ units: 0, units_ca: 0, units_us: 0, revenue_cad: 0, revenue_usd: 0 })
         .eq('date', yest)
         .in('asin', toZero);
     }
+
     const n = await persistOrdersDay(yest, byAsin);
-    console.log(`[Orders] Finalized yesterday ${yest}: ${n} ASIN rows written, ${toZero.length} stale rows zeroed, ${orderCount} orders`);
+    console.log(`[Orders] Finalized yesterday ${yest}: ${n} ASIN rows written, ${toZero.length} stale candidates, ${orderCount} orders`);
   } catch (e) {
     console.warn('[Orders] finalize yesterday failed:', e.message);
   }
