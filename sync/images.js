@@ -121,35 +121,33 @@ async function upsertImages(supabase, entries, source) {
 
 // ── Catalog API fetcher ──────────────────────────────────────────────────────
 // Per-ASIN /catalog/2022-04-01/items/{asin}?includedData=images.
+// IMPORTANT: the comma-joined marketplaceIds param silently returns no images.
+// Have to query each marketplace separately; first hit wins.
 // Returns { [asin]: imageUrl }.
 async function fetchCatalogImages(asins, marketplaceIds, token) {
   if (!asins || asins.length === 0) return {};
   token = token || await getAccessToken();
-  const mpParam = marketplaceIds.join(',');
-  const result  = {};
+  const result = {};
   let hits = 0, misses = 0;
 
   for (const asin of asins) {
-    const path = `/catalog/2022-04-01/items/${encodeURIComponent(asin)}?marketplaceIds=${mpParam}&includedData=images`;
-    try {
-      let res = await spRequest('GET', path, token);
-      if (res.status === 429) {
-        await sleep(5000);
-        res = await spRequest('GET', path, token);
+    let found = null;
+    for (const mpId of marketplaceIds) {
+      const path = `/catalog/2022-04-01/items/${encodeURIComponent(asin)}?marketplaceIds=${mpId}&includedData=images`;
+      try {
+        let res = await spRequest('GET', path, token);
+        if (res.status === 429) { await sleep(5000); res = await spRequest('GET', path, token); }
+        if (res.status === 200 && res.body?.images) {
+          const allImgs = (res.body.images || []).flatMap(mp => mp.images || []);
+          const main = allImgs.find(img => img.variant === 'MAIN') || allImgs[0];
+          if (main?.link) { found = main.link; break; }
+        }
+      } catch (e) {
+        console.warn(`[Images] catalog error for ${asin}/${mpId}: ${e.message}`);
       }
-      if (res.status === 200 && res.body?.images) {
-        const allImgs = (res.body.images || []).flatMap(mp => mp.images || []);
-        const main = allImgs.find(img => img.variant === 'MAIN') || allImgs[0];
-        if (main?.link) { result[asin] = main.link; hits++; }
-        else misses++;
-      } else {
-        misses++;
-      }
-    } catch (e) {
-      console.warn(`[Images] catalog error for ${asin}: ${e.message}`);
-      misses++;
+      await sleep(600); // 2 req/s catalog limit, with margin
     }
-    await sleep(600); // 2 req/s catalog limit, with margin
+    if (found) { result[asin] = found; hits++; } else misses++;
   }
   console.log(`[Images] Catalog API: ${hits} hits, ${misses} misses across ${asins.length} ASINs`);
   return result;
