@@ -1885,10 +1885,18 @@ async function persistOrdersTodayState() {
 // units/revenue for that day. Runs nightly after the PST rollover to capture the
 // final orders of the day plus any late status changes the 15-min poller missed.
 //
-// CRITICAL: refuse to zero existing rows when the Orders API returned no data.
-// A rate-limit or transient error from SP-API yields byAsin={}; without this
-// guard we'd wipe a fully-populated day with zeros. Prior corruption pattern
-// — same shape as the writeDailyMetrics publishing-lag wipe.
+// NO ZERO-STALE. The zero-stale step (zeroing existing rows whose ASIN isn't in
+// the new pull) was repeatedly the source of catastrophic wipes when SP-API
+// returned partial data. My threshold-based safeguards kept getting bypassed:
+//   - Jun 10: incoming=17 ASINs slipped past asin-count threshold
+//   - Jun 16: existingCount<50 because previous partial had narrowed it,
+//             so threshold never fired
+//
+// Cosmetic cost of removing it: an ASIN whose orders were all cancelled
+// between two finalizes shows stale (non-zero) units for ~24h until the
+// next finalize confirms. Trivial vs the wipe risk.
+//
+// All we do now: bail if empty, otherwise upsert. The "zero" path is gone.
 async function finalizeYesterdayFromOrders() {
   try {
     const yest = pstSubtractDays(pstDateStr(), 1);
@@ -1898,39 +1906,12 @@ async function finalizeYesterdayFromOrders() {
       (d.units || 0) > 0 || (d.revenueCad || 0) > 0 || (d.revenueUsd || 0) > 0
     );
     if (realEntries.length === 0) {
-      console.warn(`[Orders] Finalize ${yest}: Orders API returned no usable rows. NOT zeroing — preserving prior data.`);
+      console.warn(`[Orders] Finalize ${yest}: Orders API returned no usable rows. NOT writing — preserving prior data.`);
       return;
     }
 
-    const incomingAsins = new Set();
-    for (const [asin, d] of Object.entries(byAsin)) {
-      if ((d.units || 0) > 0 || (d.revenueCad || 0) > 0 || (d.revenueUsd || 0) > 0) incomingAsins.add(asin);
-    }
-    const { data: existing } = await supabase
-      .from('daily_metrics')
-      .select('asin')
-      .eq('date', yest)
-      .gt('units', 0);
-    const existingCount = (existing || []).length;
-    const incomingCount = incomingAsins.size;
-
-    // SANITY CHECK: if the new pull has dramatically fewer ASINs than what's
-    // already persisted, the SP-API likely hiccuped — refuse to zero-stale
-    // and just upsert what we got. This is the bug that wiped Jun 10:
-    // partial 17-unit pull was used to zero out 200+ good ASINs.
-    const toZero = (existing || []).map(r => r.asin).filter(a => !incomingAsins.has(a));
-    if (existingCount > 50 && incomingCount < existingCount * 0.5) {
-      console.warn(`[Orders] Finalize ${yest}: incoming has ${incomingCount} ASINs vs ${existingCount} existing — suspicious. Upserting without zeroing stale rows.`);
-      // skip zero step; write only what we have, leave others as-is
-    } else if (toZero.length > 0) {
-      await supabase.from('daily_metrics')
-        .update({ units: 0, units_ca: 0, units_us: 0, revenue_cad: 0, revenue_usd: 0 })
-        .eq('date', yest)
-        .in('asin', toZero);
-    }
-
     const n = await persistOrdersDay(yest, byAsin);
-    console.log(`[Orders] Finalized yesterday ${yest}: ${n} ASIN rows written, ${toZero.length} stale candidates, ${orderCount} orders`);
+    console.log(`[Orders] Finalized yesterday ${yest}: ${n} ASIN rows written, ${orderCount} orders`);
   } catch (e) {
     console.warn('[Orders] finalize yesterday failed:', e.message);
   }
