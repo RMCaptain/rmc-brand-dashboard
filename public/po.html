@@ -290,15 +290,46 @@
   <!-- Saved POs Modal -->
   <div id="savedPOsModal" class="hidden fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center" onclick="closeSavedPOs(event)">
     <div class="bg-slate-800 border border-slate-700 rounded-xl w-full max-w-2xl mx-4 shadow-2xl" onclick="event.stopPropagation()">
-      <div class="px-6 py-4 border-b border-slate-700 flex items-center justify-between">
+      <div class="px-6 py-4 border-b border-slate-700 flex items-center justify-between gap-3">
         <h2 class="text-sm font-semibold text-white">Saved Purchase Orders</h2>
-        <button onclick="closeSavedPOs()" class="text-slate-500 hover:text-white transition-colors">
+        <div class="flex items-center gap-2">
+          <button onclick="openTrash()" class="text-xs px-3 py-1.5 bg-slate-700 text-slate-200 rounded-lg hover:bg-slate-600 border border-slate-600 transition-colors" title="View deleted POs">
+            Trash
+          </button>
+          <button onclick="closeSavedPOs()" class="text-slate-500 hover:text-white transition-colors">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div class="px-6 py-3 border-b border-slate-700/50">
+        <input id="savedPOsSearch" type="text" placeholder="Search by PO#, brand, or status…"
+          oninput="filterSavedPOs(this.value)"
+          class="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500 placeholder-slate-500"
+          autocomplete="off" />
+      </div>
+      <div id="savedPOsList" class="overflow-y-auto" style="max-height:380px">
+        <div class="px-6 py-8 text-center text-sm text-slate-500">Loading…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Trash / Admin Recovery Modal -->
+  <div id="trashModal" class="hidden fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center" onclick="closeTrash(event)">
+    <div class="bg-slate-800 border border-slate-700 rounded-xl w-full max-w-2xl mx-4 shadow-2xl" onclick="event.stopPropagation()">
+      <div class="px-6 py-4 border-b border-slate-700 flex items-center justify-between">
+        <div>
+          <h2 class="text-sm font-semibold text-white">Trash — Deleted POs</h2>
+          <p class="text-xs text-slate-500 mt-0.5">Recover within 90 days. Purge to permanently delete.</p>
+        </div>
+        <button onclick="closeTrash()" class="text-slate-500 hover:text-white transition-colors">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
           </svg>
         </button>
       </div>
-      <div id="savedPOsList" class="overflow-y-auto" style="max-height:420px">
+      <div id="trashList" class="overflow-y-auto" style="max-height:420px">
         <div class="px-6 py-8 text-center text-sm text-slate-500">Loading…</div>
       </div>
     </div>
@@ -419,14 +450,17 @@
         const reorderBuffer = brand.reorderBuffer ?? 30;
         const velocity = velocityMap[asin] || 0;
         const stockNumber = cfg.stockNumber || '';
+        // Subtract inbound (in-transit to Amazon) from the auto-suggested order qty —
+        // don't reorder what's already on the way.
+        const inbound = Number(brand.inboundByAsin?.[asin] || 0);
 
-        const rawQty = velocity * (leadTime + reorderBuffer);
+        const rawQty = Math.max(0, velocity * (leadTime + reorderBuffer) - inbound);
         let qty = 0;
         if (rawQty > 0 && casePack > 0) qty = Math.ceil(rawQty / casePack) * casePack;
         const cases = casePack > 0 ? Math.ceil(qty / casePack) : 0;
 
         const base = { stockNumber,
-          _velocity: velocity, _leadTime: leadTime, _reorderBuffer: reorderBuffer };
+          _velocity: velocity, _leadTime: leadTime, _reorderBuffer: reorderBuffer, _inbound: inbound };
 
         if (cfg.type === 'bundle' && cfg.components?.length > 0) {
           // Bundle header row — display only, stripped from download
@@ -945,6 +979,7 @@
       const manualPoNum = document.getElementById('poNumber').value;
       const payload = {
         brandId:     selectedBrand.id,
+        existingPoId: currentPOId,  // if editing a saved PO, server force-save targets this row
         poNumber:    manualPoNum ? Number(manualPoNum) : undefined,
         status:      document.getElementById('poStatus').value,
         date:        document.getElementById('poDate').value,
@@ -979,6 +1014,17 @@
           throw new Error(err.error || 'Generation failed');
         }
 
+        // Server force-saves the PO and returns its ID via header. Track it so
+        // subsequent edits/regenerates target the same row instead of forking.
+        const savedId = res.headers.get('X-PO-Saved-Id');
+        if (savedId) {
+          currentPOId = savedId;
+          // Move the local draft to the 'po:<id>' key now that the PO is committed
+          clearDraft().catch(() => {});
+        }
+        const saveErr = res.headers.get('X-PO-Save-Error');
+        if (saveErr) console.warn('[PO] Force-save warning:', saveErr);
+
         const blob = await res.blob();
         const url  = URL.createObjectURL(blob);
         const a    = document.createElement('a');
@@ -999,8 +1045,15 @@
 
     let currentPOId = null;
     let dirty = false;
-    const DRAFT_KEY = 'po_draft_v1';
     let _autosaveTimer = null;
+
+    // Drafts live in Supabase via /api/po-drafts so work picked up on any machine.
+    // Key shape: 'po:<id>' when editing an existing PO, 'new:<brandId>' for a fresh build.
+    function draftKey() {
+      if (currentPOId) return `po:${currentPOId}`;
+      if (selectedBrand?.id) return `new:${selectedBrand.id}`;
+      return null;
+    }
 
     function markDirty() {
       dirty = true;
@@ -1008,45 +1061,67 @@
       _autosaveTimer = setTimeout(autosaveDraft, 2000);
     }
 
-    function autosaveDraft() {
+    async function autosaveDraft() {
       if (!selectedBrand || lines.length === 0) return;
+      const key = draftKey();
+      if (!key) return;
+      const draft = {
+        savedAt: new Date().toISOString(),
+        currentPOId,
+        brandId: selectedBrand.id,
+        poNumber: document.getElementById('poNumber').value,
+        poStatus: document.getElementById('poStatus').value,
+        poDate:   document.getElementById('poDate').value,
+        poNotes:  document.getElementById('poNotes').value,
+        optionalCols: getOptionalCols(),
+        lines,
+      };
       try {
-        const draft = {
-          savedAt: new Date().toISOString(),
-          currentPOId,
-          brandId: selectedBrand.id,
-          poNumber: document.getElementById('poNumber').value,
-          poStatus: document.getElementById('poStatus').value,
-          poDate:   document.getElementById('poDate').value,
-          poNotes:  document.getElementById('poNotes').value,
-          optionalCols: getOptionalCols(),
-          lines
-        };
-        localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+        await fetch(`/api/po-drafts/${encodeURIComponent(key)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ brand_id: selectedBrand.id, current_po_id: currentPOId, data: draft }),
+        });
       } catch {}
     }
 
-    function clearDraft() {
-      try { localStorage.removeItem(DRAFT_KEY); } catch {}
+    async function clearDraft() {
+      const key = draftKey();
       dirty = false;
+      if (!key) return;
+      try { await fetch(`/api/po-drafts/${encodeURIComponent(key)}`, { method: 'DELETE' }); } catch {}
     }
 
-    function getDraft() {
+    async function getDraftForKey(key) {
       try {
-        const raw = localStorage.getItem(DRAFT_KEY);
-        if (!raw) return null;
-        const d = JSON.parse(raw);
-        // Expire drafts older than 7 days
+        const res = await fetch(`/api/po-drafts/${encodeURIComponent(key)}`);
+        if (!res.ok) return null;
+        const row = await res.json();
+        if (!row?.data) return null;
+        const d = row.data;
+        // Stale guard — drafts older than 7 days are auto-deleted
         if (d.savedAt && (Date.now() - new Date(d.savedAt).getTime()) > 7 * 24 * 60 * 60 * 1000) {
-          localStorage.removeItem(DRAFT_KEY);
+          fetch(`/api/po-drafts/${encodeURIComponent(key)}`, { method: 'DELETE' }).catch(() => {});
           return null;
         }
         return d;
       } catch { return null; }
     }
 
-    function showDraftBanner() {
-      const d = getDraft();
+    // List all drafts (most recent first). Returns array of { key, brand_id, current_po_id, updated_at }.
+    async function listDrafts() {
+      try { const r = await fetch('/api/po-drafts'); return r.ok ? r.json() : []; } catch { return []; }
+    }
+
+    // Convenience: returns the most-recently-updated draft (any brand / state).
+    async function getDraft() {
+      const all = await listDrafts();
+      if (!all.length) return null;
+      return getDraftForKey(all[0].key);
+    }
+
+    async function showDraftBanner() {
+      const d = await getDraft();
       if (!d || !d.lines || d.lines.length === 0) return;
       document.getElementById('draftSavedAt').textContent = new Date(d.savedAt).toLocaleString();
       document.getElementById('draftBanner').classList.remove('hidden');
@@ -1057,7 +1132,7 @@
     }
 
     async function restoreDraft() {
-      const d = getDraft();
+      const d = await getDraft();
       if (!d) { hideDraftBanner(); return; }
       // Restore the brand (and its data) first so selectedBrand is populated
       document.getElementById('brandSelect').value = d.brandId || '';
@@ -1169,66 +1244,144 @@
       }
     }
 
+    // Cache of saved POs, used by the search filter so we don't re-fetch on every keystroke
+    let _savedPOsCache = [];
+
+    function renderSavedPOs(filter = '') {
+      const list = document.getElementById('savedPOsList');
+      const needle = (filter || '').trim().toLowerCase();
+      const filtered = needle
+        ? _savedPOsCache.filter(po =>
+            String(po.po_number || '').includes(needle) ||
+            (po.brand_name || '').toLowerCase().includes(needle) ||
+            (po.status || '').toLowerCase().includes(needle))
+        : _savedPOsCache;
+      if (filtered.length === 0) {
+        list.innerHTML = `<div class="px-6 py-8 text-center text-sm text-slate-500">${needle ? 'No matches.' : 'No saved POs yet.'}</div>`;
+        return;
+      }
+      const statusColors = { 'Working':'text-yellow-400','Submitted':'text-blue-400','Discrepancy Reporting':'text-orange-400','Complete':'text-green-400' };
+      list.innerHTML = filtered.map(po => {
+        const date = po.data?.date || po.created_at?.split('T')[0] || '—';
+        const statusColor = statusColors[po.status] || 'text-slate-400';
+        const isActive = po.id === currentPOId;
+        return `
+          <div class="px-6 py-4 border-b border-slate-700/50 flex items-center justify-between gap-4 hover:bg-slate-700/20 transition-colors ${isActive ? 'bg-indigo-950/30' : ''}">
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2">
+                ${po.po_number ? `<span class="text-xs font-mono bg-slate-700 text-slate-300 rounded px-1.5 py-0.5">PO-${po.po_number}</span>` : ''}
+                <span class="text-sm font-medium text-white truncate">${po.brand_name || '—'}</span>
+                ${isActive ? '<span class="text-xs text-indigo-400 font-medium">· current</span>' : ''}
+              </div>
+              <div class="flex items-center gap-3 mt-1">
+                <span class="text-xs ${statusColor}">${po.status || 'Working'}</span>
+                <span class="text-xs text-slate-500">${date}</span>
+                <span class="text-xs text-slate-500">${(po.data?.lines?.length || 0)} lines</span>
+              </div>
+            </div>
+            <div class="flex items-center gap-2 shrink-0">
+              <button onclick="loadPO('${po.id}')"
+                class="text-xs px-3 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 transition-colors font-medium">
+                Load
+              </button>
+              <button onclick="confirmDeletePO('${po.id}', this)" title="Move to trash (recoverable)"
+                class="text-xs px-2 py-1.5 text-slate-500 hover:text-red-400 transition-colors">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                </svg>
+              </button>
+            </div>
+          </div>`;
+      }).join('');
+    }
+
+    function filterSavedPOs(value) { renderSavedPOs(value); }
+
     async function openSavedPOs() {
       document.getElementById('savedPOsModal').classList.remove('hidden');
+      document.getElementById('savedPOsSearch').value = '';
       document.getElementById('savedPOsList').innerHTML = '<div class="px-6 py-8 text-center text-sm text-slate-500">Loading…</div>';
-
       try {
         const res = await fetch('/api/pos');
         if (!res.ok) throw new Error('Failed to load');
-        const pos = await res.json();
-        if (!pos.length) {
-          document.getElementById('savedPOsList').innerHTML =
-            '<div class="px-6 py-8 text-center text-sm text-slate-500">No saved POs yet.</div>';
-          return;
-        }
-        document.getElementById('savedPOsList').innerHTML = pos.map(po => {
-          const date = po.data?.date || po.created_at?.split('T')[0] || '—';
-          const statusColors = {
-            'Working': 'text-yellow-400',
-            'Submitted': 'text-blue-400',
-            'Discrepancy Reporting': 'text-orange-400',
-            'Complete': 'text-green-400'
-          };
-          const statusColor = statusColors[po.status] || 'text-slate-400';
-          const isActive = po.id === currentPOId;
-          return `
-            <div class="px-6 py-4 border-b border-slate-700/50 flex items-center justify-between gap-4 hover:bg-slate-700/20 transition-colors ${isActive ? 'bg-indigo-950/30' : ''}">
-              <div class="flex-1 min-w-0">
-                <div class="flex items-center gap-2">
-                  ${po.po_number ? `<span class="text-xs font-mono bg-slate-700 text-slate-300 rounded px-1.5 py-0.5">PO-${po.po_number}</span>` : ''}
-                  <span class="text-sm font-medium text-white truncate">${po.brand_name || '—'}</span>
-                  ${isActive ? '<span class="text-xs text-indigo-400 font-medium">· current</span>' : ''}
-                </div>
-                <div class="flex items-center gap-3 mt-1">
-                  <span class="text-xs ${statusColor}">${po.status || 'Working'}</span>
-                  <span class="text-xs text-slate-500">${date}</span>
-                  <span class="text-xs text-slate-500">${(po.data?.lines?.length || 0)} lines</span>
-                </div>
-              </div>
-              <div class="flex items-center gap-2 shrink-0">
-                <button onclick="loadPO('${po.id}')"
-                  class="text-xs px-3 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 transition-colors font-medium">
-                  Load
-                </button>
-                <button onclick="confirmDeletePO('${po.id}', this)"
-                  class="text-xs px-2 py-1.5 text-slate-500 hover:text-red-400 transition-colors">
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-                  </svg>
-                </button>
-              </div>
-            </div>`;
-        }).join('');
+        _savedPOsCache = await res.json();
+        renderSavedPOs('');
       } catch (err) {
-        document.getElementById('savedPOsList').innerHTML =
-          `<div class="px-6 py-8 text-center text-sm text-red-400">Error: ${err.message}</div>`;
+        document.getElementById('savedPOsList').innerHTML = `<div class="px-6 py-8 text-center text-sm text-red-400">Error: ${err.message}</div>`;
       }
     }
 
     function closeSavedPOs(e) {
       if (e && e.target !== document.getElementById('savedPOsModal')) return;
       document.getElementById('savedPOsModal').classList.add('hidden');
+    }
+
+    // ── Trash / Recovery ──────────────────────────────────────────────────────
+    async function openTrash() {
+      document.getElementById('savedPOsModal').classList.add('hidden');
+      document.getElementById('trashModal').classList.remove('hidden');
+      document.getElementById('trashList').innerHTML = '<div class="px-6 py-8 text-center text-sm text-slate-500">Loading…</div>';
+      try {
+        const res = await fetch('/api/pos/trash');
+        if (!res.ok) throw new Error('Failed to load');
+        const pos = await res.json();
+        if (!pos.length) {
+          document.getElementById('trashList').innerHTML = '<div class="px-6 py-8 text-center text-sm text-slate-500">Trash is empty.</div>';
+          return;
+        }
+        document.getElementById('trashList').innerHTML = pos.map(po => {
+          const date = po.deleted_at?.split('T')[0] || '—';
+          return `
+            <div class="px-6 py-4 border-b border-slate-700/50 flex items-center justify-between gap-4 hover:bg-slate-700/20 transition-colors">
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2">
+                  ${po.po_number ? `<span class="text-xs font-mono bg-slate-700 text-slate-300 rounded px-1.5 py-0.5">PO-${po.po_number}</span>` : ''}
+                  <span class="text-sm font-medium text-white truncate">${po.brand_name || '—'}</span>
+                </div>
+                <div class="flex items-center gap-3 mt-1">
+                  <span class="text-xs text-slate-500">${po.status || 'Working'}</span>
+                  <span class="text-xs text-slate-500">deleted ${date}${po.deleted_by ? ' by ' + po.deleted_by : ''}</span>
+                </div>
+              </div>
+              <div class="flex items-center gap-2 shrink-0">
+                <button onclick="restorePO('${po.id}', this)"
+                  class="text-xs px-3 py-1.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 transition-colors font-medium">
+                  Restore
+                </button>
+                <button onclick="purgePO('${po.id}', this)" title="Permanently delete (irreversible)"
+                  class="text-xs px-3 py-1.5 bg-red-700 text-white rounded-lg hover:bg-red-600 transition-colors font-medium">
+                  Purge
+                </button>
+              </div>
+            </div>`;
+        }).join('');
+      } catch (err) {
+        document.getElementById('trashList').innerHTML = `<div class="px-6 py-8 text-center text-sm text-red-400">Error: ${err.message}</div>`;
+      }
+    }
+
+    function closeTrash(e) {
+      if (e && e.target !== document.getElementById('trashModal')) return;
+      document.getElementById('trashModal').classList.add('hidden');
+    }
+
+    async function restorePO(id, btn) {
+      btn.disabled = true; btn.textContent = '…';
+      try {
+        const res = await fetch(`/api/pos/${id}/restore`, { method: 'POST' });
+        if (!res.ok) throw new Error((await res.json()).error || 'Restore failed');
+        await openTrash();
+      } catch (err) { alert('Restore failed: ' + err.message); btn.disabled = false; btn.textContent = 'Restore'; }
+    }
+
+    async function purgePO(id, btn) {
+      if (!confirm('Permanently delete this PO? This cannot be undone.')) return;
+      btn.disabled = true; btn.textContent = '…';
+      try {
+        const res = await fetch(`/api/pos/${id}/purge`, { method: 'DELETE' });
+        if (!res.ok) throw new Error((await res.json()).error || 'Purge failed');
+        await openTrash();
+      } catch (err) { alert('Purge failed: ' + err.message); btn.disabled = false; btn.textContent = 'Purge'; }
     }
 
     async function loadPO(id) {

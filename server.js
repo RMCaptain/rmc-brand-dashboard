@@ -288,7 +288,35 @@ app.get('/api/brands/:id', async (req, res) => {
   const presetMeta = Object.fromEntries(
     Object.entries(pm.presets || {}).map(([k, v]) => [k, { label: v.label, startDate: v.startDate, endDate: v.endDate }])
   );
-  res.json({ ...brand, metrics: presetData[brand.id] || null, lastSync: pm.lastSync, presets: presetMeta });
+
+  // Inbound inventory snapshot per ASIN — most recent non-null
+  // inventory_inbound value from daily_metrics. Used by the PO Builder so
+  // auto-suggested quantities subtract what's already on the way to Amazon
+  // (don't over-order what we already have in transit).
+  const inboundByAsin = {};
+  if (brand.asins?.length) {
+    const todayPst = pstDateStr();
+    const since = pstSubtractDays(todayPst, 14); // most recent 2 weeks is enough
+    const { data: invRows } = await supabase
+      .from('daily_metrics')
+      .select('asin,inventory_inbound,date')
+      .in('asin', brand.asins)
+      .gte('date', since)
+      .order('date', { ascending: false });
+    for (const r of (invRows || [])) {
+      if (r.inventory_inbound == null) continue;
+      // First (newest) non-null per ASIN wins; subsequent rows ignored
+      if (inboundByAsin[r.asin] == null) inboundByAsin[r.asin] = r.inventory_inbound;
+    }
+  }
+
+  res.json({
+    ...brand,
+    metrics: presetData[brand.id] || null,
+    lastSync: pm.lastSync,
+    presets: presetMeta,
+    inboundByAsin,
+  });
 });
 
 app.post('/api/brands', async (req, res) => {
@@ -714,12 +742,53 @@ app.put('/api/po/settings', async (req, res) => {
 
 // ── Purchase Order CRUD ──────────────────────────────────────────────────────
 
+// Caller identity for audit log. Express's HTTP Basic Auth populates req.user
+// (when the auth middleware extracts it); fall back to anonymous label.
+function actorFrom(req) {
+  return req.user || req.headers['x-rmc-user'] || 'anonymous';
+}
+
+// Append an entry to a PO's audit_log JSONB array. Each entry: who, when, what.
+// Action: 'create' | 'update' | 'soft_delete' | 'restore' | 'generate_pdf' | 'generate_xlsx' | 'force_save'.
+// For 'update', diff is { changedFields: ['status', 'lines', ...] } so we can show what changed in the UI.
+async function appendAuditEntry(poId, actor, action, diff = {}) {
+  if (!poId) return;
+  const { data: row } = await supabase
+    .from('purchase_orders')
+    .select('audit_log')
+    .eq('id', poId)
+    .maybeSingle();
+  const log = Array.isArray(row?.audit_log) ? row.audit_log : [];
+  log.push({ at: new Date().toISOString(), actor, action, ...diff });
+  // Cap at 200 entries per PO to keep row size bounded; oldest entries trimmed first.
+  const trimmed = log.length > 200 ? log.slice(-200) : log;
+  await supabase.from('purchase_orders').update({ audit_log: trimmed }).eq('id', poId);
+}
+
+// Compare two PO records and return the list of fields that meaningfully changed.
+// Used by the update handler to record what an actor edited.
+function poDiff(prev, next) {
+  const changed = [];
+  for (const k of ['po_number', 'brand_id', 'brand_name', 'status']) {
+    if ((prev?.[k] ?? null) !== (next?.[k] ?? null)) changed.push(k);
+  }
+  // data is a JSONB blob — compare serialized
+  const prevD = JSON.stringify(prev?.data || {});
+  const nextD = JSON.stringify(next?.data || {});
+  if (prevD !== nextD) changed.push('data');
+  return changed;
+}
+
+// All listings exclude soft-deleted rows by default. Pass ?includeDeleted=true to see them.
 app.get('/api/pos', async (req, res) => {
   try {
-    const { data, error } = await supabase
+    const includeDeleted = req.query.includeDeleted === 'true';
+    let q = supabase
       .from('purchase_orders')
-      .select('id, po_number, brand_id, brand_name, status, created_at, updated_at')
+      .select('id, po_number, brand_id, brand_name, status, created_at, updated_at, deleted_at, deleted_by')
       .order('updated_at', { ascending: false });
+    if (!includeDeleted) q = q.is('deleted_at', null);
+    const { data, error } = await q;
     if (error) throw error;
     res.json(data || []);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -732,23 +801,26 @@ app.post('/api/pos', async (req, res) => {
     if (poNum != null && (!Number.isFinite(poNum) || poNum < 0)) {
       return res.status(400).json({ error: 'po_number must be a non-negative number' });
     }
+    const actor = actorFrom(req);
 
-    // Idempotency guard: if a row with the same po_number + brand already exists, update it
-    // instead of creating a duplicate. Prevents double-clicks / retries from forking saves.
+    // Idempotency guard: if a non-deleted row with the same po_number + brand exists, update it.
     if (poNum != null && brand_id) {
       const { data: existing } = await supabase
         .from('purchase_orders')
-        .select('id')
+        .select('id, po_number, brand_id, brand_name, status, data')
         .eq('po_number', poNum)
         .eq('brand_id', brand_id)
+        .is('deleted_at', null)
         .maybeSingle();
       if (existing?.id) {
+        const changed = poDiff(existing, { po_number: poNum, brand_id, brand_name, status: status || 'draft', data });
         const { data: updated, error: uerr } = await supabase
           .from('purchase_orders')
           .update({ brand_name, status: status || 'draft', data, updated_at: new Date().toISOString() })
           .eq('id', existing.id)
           .select().single();
         if (uerr) throw uerr;
+        await appendAuditEntry(existing.id, actor, 'update', { changedFields: changed });
         return res.json(updated);
       }
     }
@@ -758,7 +830,22 @@ app.post('/api/pos', async (req, res) => {
       .insert({ po_number: poNum, brand_id, brand_name, status: status || 'draft', data, updated_at: new Date().toISOString() })
       .select().single();
     if (error) throw error;
+    await appendAuditEntry(row.id, actor, 'create', { po_number: poNum });
     res.json(row);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// NOTE: /api/pos/trash must be declared BEFORE /api/pos/:id since Express
+// matches routes in order — otherwise :id matches "trash" literally.
+app.get('/api/pos/trash', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('purchase_orders')
+      .select('id, po_number, brand_id, brand_name, status, created_at, updated_at, deleted_at, deleted_by')
+      .not('deleted_at', 'is', null)
+      .order('deleted_at', { ascending: false });
+    if (error) throw error;
+    res.json(data || []);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -777,22 +864,92 @@ app.put('/api/pos/:id', async (req, res) => {
     if (poNum != null && (!Number.isFinite(poNum) || poNum < 0)) {
       return res.status(400).json({ error: 'po_number must be a non-negative number' });
     }
+    const actor = actorFrom(req);
+    // Pull prior state for diff
+    const { data: prev } = await supabase.from('purchase_orders').select('po_number,brand_id,brand_name,status,data').eq('id', req.params.id).maybeSingle();
+    const next = { po_number: poNum, brand_id, brand_name, status, data };
+    const changed = poDiff(prev, next);
+
     const { data: row, error } = await supabase
       .from('purchase_orders')
       .update({ po_number: poNum, brand_id, brand_name, status, data, updated_at: new Date().toISOString() })
       .eq('id', req.params.id).select().single();
     if (error) throw error;
+    if (changed.length) await appendAuditEntry(row.id, actor, 'update', { changedFields: changed });
     res.json(row);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Soft-delete: marks deleted_at, preserves row. Recoverable via /api/pos/:id/restore.
 app.delete('/api/pos/:id', async (req, res) => {
   try {
+    const actor = actorFrom(req);
+    const { data: row, error } = await supabase
+      .from('purchase_orders')
+      .update({ deleted_at: new Date().toISOString(), deleted_by: actor })
+      .eq('id', req.params.id)
+      .is('deleted_at', null)
+      .select().maybeSingle();
+    if (error) throw error;
+    if (!row) return res.status(404).json({ error: 'PO not found or already deleted' });
+    await appendAuditEntry(row.id, actor, 'soft_delete');
+    res.json({ success: true, id: row.id });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Restore a soft-deleted PO. Admin recovery.
+app.post('/api/pos/:id/restore', async (req, res) => {
+  try {
+    const actor = actorFrom(req);
+    const { data: row, error } = await supabase
+      .from('purchase_orders')
+      .update({ deleted_at: null, deleted_by: null })
+      .eq('id', req.params.id)
+      .not('deleted_at', 'is', null)
+      .select().maybeSingle();
+    if (error) throw error;
+    if (!row) return res.status(404).json({ error: 'PO not found or not deleted' });
+    await appendAuditEntry(row.id, actor, 'restore');
+    res.json({ success: true, po: row });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Hard-purge — permanent delete. Only allowed for already-soft-deleted POs.
+app.delete('/api/pos/:id/purge', async (req, res) => {
+  try {
+    const actor = actorFrom(req);
+    const { data: existing } = await supabase
+      .from('purchase_orders')
+      .select('id, deleted_at, po_number, brand_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (!existing) return res.status(404).json({ error: 'PO not found' });
+    if (!existing.deleted_at) return res.status(400).json({ error: 'PO must be soft-deleted before purge' });
     const { error } = await supabase.from('purchase_orders').delete().eq('id', req.params.id);
     if (error) throw error;
+    console.log(`[PO] ${actor} purged PO ${existing.po_number} (${existing.brand_id})`);
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+// Refresh bundle-component prices from live brand data. Each bundle component's
+// `buyCost` (per the brand record) is the source of truth at PO generation time.
+// Without this, a bundle generated today and again next month would use the same
+// captured price even if the underlying buy cost changed.
+//
+// Only touches bundle-component lines. Single + multipack rows keep whatever
+// price was set on the PO (operator can override manually in the line editor).
+function refreshBundleComponentPrices(lines, brands) {
+  if (!Array.isArray(lines) || !brands?.length) return lines || [];
+  return lines.map(line => {
+    if (line._type !== 'bundle-component' || !line.asin) return line;
+    const compBrand = brands.find(b => b.asins?.includes(line.asin));
+    if (!compBrand) return line;
+    const fresh = compBrand.buyCost?.[line.asin] ?? compBrand.cogs?.[line.asin];
+    if (fresh == null) return line;
+    return { ...line, price: Number(fresh) };
+  });
+}
 
 // POST generate PO PDF
 // Consolidates PO lines for supplier download:
@@ -1030,12 +1187,65 @@ async function renderPoPdf({ brand, settings, poNum, lines, status, notes, date,
     return Buffer.isBuffer(pdfData) ? pdfData : Buffer.from(pdfData);
 }
 
+// Force-save the PO record before returning a generated file. Production guarantee:
+// any PO that gets emailed to a supplier MUST exist in the database. Caller passes
+// existingPoId when updating an existing PO; otherwise we create a new row.
+async function forceSavePO({ existingPoId, po_number, brand_id, brand_name, status, data, actor, generatedFormat }) {
+  const update = { brand_name, status: status || 'draft', data, updated_at: new Date().toISOString() };
+  if (po_number != null) update.po_number = po_number;
+
+  if (existingPoId) {
+    const { data: prev } = await supabase.from('purchase_orders').select('po_number,brand_id,brand_name,status,data').eq('id', existingPoId).maybeSingle();
+    const changed = poDiff(prev, { po_number, brand_id, brand_name, status, data });
+    const { data: row, error } = await supabase
+      .from('purchase_orders')
+      .update(update)
+      .eq('id', existingPoId)
+      .select().single();
+    if (error) throw error;
+    if (changed.length) await appendAuditEntry(row.id, actor, 'update', { changedFields: changed });
+    await appendAuditEntry(row.id, actor, generatedFormat === 'pdf' ? 'generate_pdf' : 'generate_xlsx', { po_number });
+    return row;
+  }
+
+  // Look for an existing non-deleted PO with this (po_number, brand_id) to avoid duplicates
+  if (po_number != null && brand_id) {
+    const { data: existing } = await supabase
+      .from('purchase_orders')
+      .select('id, po_number, brand_id, brand_name, status, data')
+      .eq('po_number', po_number)
+      .eq('brand_id', brand_id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (existing?.id) {
+      const changed = poDiff(existing, { po_number, brand_id, brand_name, status, data });
+      const { data: row, error } = await supabase
+        .from('purchase_orders').update(update).eq('id', existing.id).select().single();
+      if (error) throw error;
+      if (changed.length) await appendAuditEntry(row.id, actor, 'update', { changedFields: changed });
+      await appendAuditEntry(row.id, actor, generatedFormat === 'pdf' ? 'generate_pdf' : 'generate_xlsx', { po_number });
+      return row;
+    }
+  }
+
+  const { data: row, error } = await supabase
+    .from('purchase_orders')
+    .insert({ po_number, brand_id, brand_name, status: status || 'draft', data, updated_at: new Date().toISOString() })
+    .select().single();
+  if (error) throw error;
+  await appendAuditEntry(row.id, actor, 'create', { po_number, viaForceSave: true });
+  await appendAuditEntry(row.id, actor, generatedFormat === 'pdf' ? 'generate_pdf' : 'generate_xlsx', { po_number });
+  return row;
+}
+
 app.post('/api/po/generate-pdf', async (req, res) => {
   try {
-    const { brandId, lines, status, notes, poNumber, date, optionalCols } = req.body;
+    const { brandId, lines: rawLines, status, notes, poNumber, date, optionalCols, existingPoId } = req.body;
     const { brands } = await loadBrands();
     const brand = brands.find(b => b.id === brandId);
     if (!brand) return res.status(404).json({ error: 'Brand not found' });
+    // Refresh bundle component prices from live brand data right before render
+    const lines = refreshBundleComponentPrices(rawLines, brands);
 
     for (let attempt = 0; attempt < 5; attempt++) {
       const settings = await loadPoSettings();
@@ -1053,6 +1263,25 @@ app.post('/api/po/generate-pdf', async (req, res) => {
           console.warn(`[PO PDF] PO# ${poNum} conflict on attempt ${attempt + 1}, retrying`);
           continue;
         }
+      }
+
+      // FORCE SAVE — every generated PO writes to the database so the supplier copy
+      // is always traceable. Failure here doesn't block the download but is logged.
+      try {
+        const saved = await forceSavePO({
+          existingPoId,
+          po_number: Number(poNum),
+          brand_id:  brand.id,
+          brand_name: brand.name,
+          status,
+          data: { lines, notes, date, optionalCols, poDate: date, poStatus: status, poNumber: poNum },
+          actor: actorFrom(req),
+          generatedFormat: 'pdf',
+        });
+        res.setHeader('X-PO-Saved-Id', saved.id);
+      } catch (saveErr) {
+        console.error('[PO PDF] Force-save failed (file still returned):', saveErr.message);
+        res.setHeader('X-PO-Save-Error', saveErr.message);
       }
 
       res.setHeader('Content-Type', 'application/pdf');
@@ -1325,10 +1554,11 @@ async function renderPoExcel({ brand, settings, poNum, lines, status, notes, dat
 
 app.post('/api/po/generate', async (req, res) => {
   try {
-    const { brandId, lines, status, notes, poNumber, date, optionalCols } = req.body;
+    const { brandId, lines: rawLines, status, notes, poNumber, date, optionalCols, existingPoId } = req.body;
     const { brands } = await loadBrands();
     const brand = brands.find(b => b.id === brandId);
     if (!brand) return res.status(404).json({ error: 'Brand not found' });
+    const lines = refreshBundleComponentPrices(rawLines, brands);
 
     for (let attempt = 0; attempt < 5; attempt++) {
       const settings = await loadPoSettings();
@@ -1346,6 +1576,25 @@ app.post('/api/po/generate', async (req, res) => {
         }
       }
 
+      // FORCE SAVE — every generated PO writes to the database. Same guarantee
+      // as the PDF route: no PO can leave the system without a record.
+      try {
+        const saved = await forceSavePO({
+          existingPoId,
+          po_number: Number(poNum),
+          brand_id:  brand.id,
+          brand_name: brand.name,
+          status,
+          data: { lines, notes, date, optionalCols, poDate: date, poStatus: status, poNumber: poNum },
+          actor: actorFrom(req),
+          generatedFormat: 'xlsx',
+        });
+        res.setHeader('X-PO-Saved-Id', saved.id);
+      } catch (saveErr) {
+        console.error('[PO Excel] Force-save failed (file still returned):', saveErr.message);
+        res.setHeader('X-PO-Save-Error', saveErr.message);
+      }
+
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       res.setHeader('Content-Length', xlsxBuf.length);
       res.setHeader('Content-Disposition', `attachment; filename="PO-${poNum}-${brand.name.replace(/[^a-z0-9]/gi, '-')}.xlsx"`);
@@ -1357,6 +1606,53 @@ app.post('/api/po/generate', async (req, res) => {
     console.error('[PO Excel] Error:', err);
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── Cloud drafts — replaces localStorage so drafts work cross-machine ───────
+// Keyed by 'new:<brandId>' (fresh draft) or 'po:<poId>' (editing existing).
+// One row per key; latest data wins (no concurrent-edit protection — by design).
+app.get('/api/po-drafts/:key', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('po_drafts').select('*').eq('key', req.params.key).maybeSingle();
+    if (error) throw error;
+    res.json(data || null);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/po-drafts/:key', async (req, res) => {
+  try {
+    const { brand_id, current_po_id, data } = req.body;
+    const row = {
+      key: req.params.key,
+      brand_id: brand_id || null,
+      current_po_id: current_po_id || null,
+      data,
+      updated_at: new Date().toISOString(),
+    };
+    const { error } = await supabase.from('po_drafts').upsert(row, { onConflict: 'key' });
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/po-drafts/:key', async (req, res) => {
+  try {
+    const { error } = await supabase.from('po_drafts').delete().eq('key', req.params.key);
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// List all drafts (for "pick up where you left off" UI). Returns newest first.
+app.get('/api/po-drafts', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('po_drafts').select('key, brand_id, current_po_id, updated_at')
+      .order('updated_at', { ascending: false });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // --- Import Routes ---
