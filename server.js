@@ -765,6 +765,43 @@ async function appendAuditEntry(poId, actor, action, diff = {}) {
   await supabase.from('purchase_orders').update({ audit_log: trimmed }).eq('id', poId);
 }
 
+// Rebuild the purchase_order_lines projection for a PO from its data.lines.
+// The lines table is a derived read-model for reporting; purchase_orders.data
+// stays the source of truth. We delete + reinsert from the in-memory array we
+// just persisted, so the projection can never drift from the blob. Strips the
+// display-only _-prefixed meta fields, keeping the queryable business fields.
+async function syncPoLines(poId, data) {
+  if (!poId) return;
+  const lines = Array.isArray(data?.lines) ? data.lines : [];
+  const { error: delErr } = await supabase.from('purchase_order_lines').delete().eq('po_id', poId);
+  if (delErr) throw delErr;
+  if (!lines.length) return;
+  const toInt = (v) => (v != null && v !== '' ? Math.round(Number(v)) : null);
+  const rows = lines.map((ln, i) => ({
+    po_id:        poId,
+    seq:          i,
+    line_type:    ln._type || 'single',
+    asin:         ln.asin || null,
+    description:  ln.description || null,
+    upc:          ln.upc || null,
+    stock_number: ln.stockNumber || null,
+    unit_price:   Number(ln.price) || 0,
+    quantity:     toInt(ln.quantity) || 0,
+    case_pack:    toInt(ln.casePack),
+    cases:        toInt(ln.cases),
+  }));
+  const { error: insErr } = await supabase.from('purchase_order_lines').insert(rows);
+  if (insErr) throw insErr;
+}
+
+// Best-effort wrapper: the projection is secondary to the data blob, so a sync
+// failure (e.g. table not yet migrated) must never fail the PO save. The
+// projection self-heals on the next save or a backfill re-run.
+async function syncPoLinesSafe(poId, data) {
+  try { await syncPoLines(poId, data); }
+  catch (err) { console.warn(`[POLines] projection sync failed for ${poId}:`, err.message); }
+}
+
 // Compare two PO records and return the list of fields that meaningfully changed.
 // Used by the update handler to record what an actor edited.
 function poDiff(prev, next) {
@@ -821,6 +858,7 @@ app.post('/api/pos', async (req, res) => {
           .select().single();
         if (uerr) throw uerr;
         await appendAuditEntry(existing.id, actor, 'update', { changedFields: changed });
+        await syncPoLinesSafe(existing.id, data);
         return res.json(updated);
       }
     }
@@ -831,6 +869,7 @@ app.post('/api/pos', async (req, res) => {
       .select().single();
     if (error) throw error;
     await appendAuditEntry(row.id, actor, 'create', { po_number: poNum });
+    await syncPoLinesSafe(row.id, data);
     res.json(row);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -891,6 +930,7 @@ app.put('/api/pos/:id', async (req, res) => {
       .eq('id', req.params.id).select().single();
     if (error) throw error;
     if (changed.length) await appendAuditEntry(row.id, actor, 'update', { changedFields: changed });
+    await syncPoLinesSafe(row.id, data);
     res.json(row);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -1220,6 +1260,7 @@ async function forceSavePO({ existingPoId, po_number, brand_id, brand_name, stat
     if (error) throw error;
     if (changed.length) await appendAuditEntry(row.id, actor, 'update', { changedFields: changed });
     await appendAuditEntry(row.id, actor, generatedFormat === 'pdf' ? 'generate_pdf' : 'generate_xlsx', { po_number });
+    await syncPoLinesSafe(row.id, data);
     return row;
   }
 
@@ -1239,6 +1280,7 @@ async function forceSavePO({ existingPoId, po_number, brand_id, brand_name, stat
       if (error) throw error;
       if (changed.length) await appendAuditEntry(row.id, actor, 'update', { changedFields: changed });
       await appendAuditEntry(row.id, actor, generatedFormat === 'pdf' ? 'generate_pdf' : 'generate_xlsx', { po_number });
+      await syncPoLinesSafe(row.id, data);
       return row;
     }
   }
@@ -1250,6 +1292,7 @@ async function forceSavePO({ existingPoId, po_number, brand_id, brand_name, stat
   if (error) throw error;
   await appendAuditEntry(row.id, actor, 'create', { po_number, viaForceSave: true });
   await appendAuditEntry(row.id, actor, generatedFormat === 'pdf' ? 'generate_pdf' : 'generate_xlsx', { po_number });
+  await syncPoLinesSafe(row.id, data);
   return row;
 }
 
