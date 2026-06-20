@@ -857,6 +857,21 @@ app.get('/api/pos/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Lightweight audit history — returns just the audit_log array (newest first),
+// avoiding the full PO data blob. Powers the per-PO History modal.
+app.get('/api/pos/:id/audit', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('purchase_orders')
+      .select('audit_log')
+      .eq('id', req.params.id)
+      .single();
+    if (error) throw error;
+    const log = Array.isArray(data?.audit_log) ? data.audit_log : [];
+    res.json(log.slice().reverse());
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.put('/api/pos/:id', async (req, res) => {
   try {
     const { po_number, brand_id, brand_name, status, data } = req.body;

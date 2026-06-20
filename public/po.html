@@ -335,6 +335,26 @@
     </div>
   </div>
 
+  <!-- Audit History Modal -->
+  <div id="auditModal" class="hidden fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center" onclick="closeAuditLog(event)">
+    <div class="bg-slate-800 border border-slate-700 rounded-xl w-full max-w-lg mx-4 shadow-2xl" onclick="event.stopPropagation()">
+      <div class="px-6 py-4 border-b border-slate-700 flex items-center justify-between">
+        <div>
+          <h2 class="text-sm font-semibold text-white">PO History</h2>
+          <p id="auditSubtitle" class="text-xs text-slate-500 mt-0.5"></p>
+        </div>
+        <button onclick="closeAuditLog()" class="text-slate-500 hover:text-white transition-colors">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+      <div id="auditList" class="overflow-y-auto px-6" style="max-height:420px">
+        <div class="py-8 text-center text-sm text-slate-500">Loading…</div>
+      </div>
+    </div>
+  </div>
+
   <!-- Generating spinner overlay -->
   <div id="generatingOverlay" class="hidden fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center">
     <div class="bg-slate-800 border border-slate-700 rounded-xl p-8 text-center">
@@ -1284,6 +1304,18 @@
                 class="text-xs px-3 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 transition-colors font-medium">
                 Load
               </button>
+              <button onclick="loadPO('${po.id}', true)" title="Clone into a new PO (reorder)"
+                class="text-xs px-2 py-1.5 text-slate-500 hover:text-green-400 transition-colors">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h6a2 2 0 002-2v-2"/>
+                </svg>
+              </button>
+              <button onclick="openAuditLog('${po.id}')" title="View history"
+                class="text-xs px-2 py-1.5 text-slate-500 hover:text-indigo-400 transition-colors">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+              </button>
               <button onclick="confirmDeletePO('${po.id}', this)" title="Move to trash (recoverable)"
                 class="text-xs px-2 py-1.5 text-slate-500 hover:text-red-400 transition-colors">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1314,6 +1346,61 @@
     function closeSavedPOs(e) {
       if (e && e.target !== document.getElementById('savedPOsModal')) return;
       document.getElementById('savedPOsModal').classList.add('hidden');
+    }
+
+    // ── Audit / History ───────────────────────────────────────────────────────
+    const _auditActionMeta = {
+      create:        { label: 'Created',        color: 'text-green-400'  },
+      update:        { label: 'Edited',         color: 'text-yellow-400' },
+      soft_delete:   { label: 'Moved to trash', color: 'text-red-400'    },
+      restore:       { label: 'Restored',       color: 'text-green-400'  },
+      generate_pdf:  { label: 'Generated PDF',  color: 'text-indigo-400' },
+      generate_xlsx: { label: 'Generated Excel',color: 'text-indigo-400' },
+    };
+    const _auditFieldLabels = { data: 'line items / details', po_number: 'PO #', brand_id: 'brand', brand_name: 'brand', status: 'status' };
+
+    function _fmtAuditTime(iso) {
+      const d = new Date(iso);
+      if (isNaN(d)) return iso || '—';
+      return d.toLocaleString(undefined, { month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit' });
+    }
+
+    async function openAuditLog(id) {
+      const po = _savedPOsCache.find(p => p.id === id);
+      document.getElementById('auditSubtitle').textContent = po
+        ? `${po.po_number ? 'PO-' + po.po_number + ' · ' : ''}${po.brand_name || ''}`.trim()
+        : '';
+      document.getElementById('auditModal').classList.remove('hidden');
+      const list = document.getElementById('auditList');
+      list.innerHTML = '<div class="py-8 text-center text-sm text-slate-500">Loading…</div>';
+      try {
+        const res = await fetch(`/api/pos/${id}/audit`);
+        if (!res.ok) throw new Error('Failed to load history');
+        const entries = await res.json();
+        if (!entries.length) {
+          list.innerHTML = '<div class="py-8 text-center text-sm text-slate-500">No history recorded yet.</div>';
+          return;
+        }
+        list.innerHTML = entries.map(e => {
+          const meta = _auditActionMeta[e.action] || { label: e.action || 'Changed', color: 'text-slate-400' };
+          const fieldList = Array.isArray(e.changedFields)
+            ? e.changedFields.map(f => _auditFieldLabels[f] || f).filter((v, i, a) => a.indexOf(v) === i)
+            : [];
+          const fields = fieldList.length ? `<span class="text-xs text-slate-500"> · ${fieldList.join(', ')}</span>` : '';
+          return `
+            <div class="py-3 border-b border-slate-700/50 last:border-0">
+              <div class="text-sm"><span class="font-medium ${meta.color}">${meta.label}</span>${fields}</div>
+              <div class="text-xs text-slate-500 mt-0.5">${_fmtAuditTime(e.at)} · ${e.actor || 'anonymous'}</div>
+            </div>`;
+        }).join('');
+      } catch (err) {
+        list.innerHTML = `<div class="py-8 text-center text-sm text-red-400">Error: ${err.message}</div>`;
+      }
+    }
+
+    function closeAuditLog(e) {
+      if (e && e.target !== document.getElementById('auditModal')) return;
+      document.getElementById('auditModal').classList.add('hidden');
     }
 
     // ── Trash / Recovery ──────────────────────────────────────────────────────
@@ -1384,7 +1471,7 @@
       } catch (err) { alert('Purge failed: ' + err.message); btn.disabled = false; btn.textContent = 'Purge'; }
     }
 
-    async function loadPO(id) {
+    async function loadPO(id, asClone = false) {
       try {
         const res = await fetch(`/api/pos/${id}`);
         if (!res.ok) throw new Error('Failed to load PO');
@@ -1398,10 +1485,16 @@
         const brandRes = await fetch(`/api/brands/${po.brand_id}`).then(r => r.json());
         selectedBrand = brandRes;
 
-        // Restore form fields
-        if (po.po_number) document.getElementById('poNumber').value = po.po_number;
-        document.getElementById('poStatus').value = po.status || 'Working';
-        if (po.data?.date) document.getElementById('poDate').value = po.data.date;
+        // Restore form fields. A clone starts a fresh PO: blank number, reset status, today's date.
+        if (asClone) {
+          document.getElementById('poNumber').value = '';
+          document.getElementById('poStatus').value = 'Working';
+          document.getElementById('poDate').value = new Date().toISOString().split('T')[0];
+        } else {
+          if (po.po_number) document.getElementById('poNumber').value = po.po_number;
+          document.getElementById('poStatus').value = po.status || 'Working';
+          if (po.data?.date) document.getElementById('poDate').value = po.data.date;
+        }
         if (po.data?.notes) document.getElementById('poNotes').value = po.data.notes;
 
         // Restore optional cols
@@ -1414,7 +1507,7 @@
 
         // Restore lines
         lines = po.data?.lines || [];
-        currentPOId = po.id;
+        currentPOId = asClone ? null : po.id;
         document.getElementById('savePOLabel').textContent = 'Save PO';
 
         // Snapshot banner — loaded data is frozen at _savedAt; user can refresh from catalog
