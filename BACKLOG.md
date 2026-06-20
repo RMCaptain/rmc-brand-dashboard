@@ -38,7 +38,7 @@
 | # | Feature | Status | Notes |
 |---|---------|--------|-------|
 | 3 | Bundle / Multipack Opportunity Finder | `[ ]` | Velocity + co-purchase + PPC signals |
-| 4 | Monthly Client Brand Report | `[ ]` | Auto-generated PDF/email; brand manager approves before send |
+| 4 | Monthly Client Brand Report | `[~]` v1 DONE 2026-06-19 — config-driven client-facing `brand-report.html` (Sales + Traffic/Conversion + Advertising), linked from brand cards. Next: plug-and-play config dashboard, then auto PDF/email w/ approval. |
 | 5 | Client-Facing Brand Portal | `[ ]` | Read-only per-brand view with Supabase Auth |
 
 ---
@@ -51,7 +51,8 @@ These were intentionally deferred during the production-blockers fix session so 
 |---|---------|-------|
 | P1 | **Seasonality / time-window velocity editor** | Currently uses `last30d` average. Build editor that lets brand manager pick a custom date window per ASIN (e.g. "use Nov-Dec velocity for Q4 reorders") so seasonal SKUs reorder against the right baseline. |
 | P2 | **Email-to-supplier workflow** | One-click "Send PO to supplier" with attached PDF, captured supplier contact, sent-history. Avoids manual email attachment + stale-version mistakes. |
-| P3 | **PO spend reporting / metrics dashboard** | `[~]` v1 DONE 2026-06-19 — Spend-by-brand modal in PO Builder (`GET /api/po-report/spend-by-brand`, date presets YTD/90d/30d/All). Deferred cuts: commitment by status, spend trend by month, units by ASIN. |
+| P3 | **PO spend reporting / metrics dashboard** | `[~]` v1 DONE 2026-06-19 — Spend-by-brand modal in PO Builder (`GET /api/po-report/spend-by-brand`, date presets YTD/90d/30d/All). |
+| P3b | **PO report — additional cuts** | `[ ]` Pending — commitment by status, spend trend by month, units-by-ASIN (units works without costs). Mike: "come back to 1." |
 | P4 | **Restructure `purchase_orders.data` (JSONB) → relational** | `[x]` DONE 2026-06-19 — `purchase_order_lines` projection (`sql/po-lines-projection.sql`), synced on every save via `syncPoLines`, verified zero-drift. `data` stays source of truth. |
 | P5 | **Audit log viewer** | `[x]` DONE 2026-06-19 (dc299d4) — History modal per PO via `GET /api/pos/:id/audit`. |
 | P6 | **PO templates / clone** | `[x]` DONE 2026-06-19 (dc299d4) — Clone button reloads a PO as a fresh row (blank #, Working, today). |
