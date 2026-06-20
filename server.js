@@ -911,6 +911,69 @@ app.get('/api/pos/:id/audit', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── P3: PO spend reporting ──────────────────────────────────────────────────
+// Spend grouped by brand over a date range. Joins the line projection to parent
+// POs in app code (low PO volume; avoids an RPC migration). The PO date lives in
+// data->>'date'; soft-deleted POs are excluded. Bundle-header rows carry $0 so
+// summing extended_cost never double-counts; they're also excluded from units.
+app.get('/api/po-report/spend-by-brand', async (req, res) => {
+  try {
+    const { from, to, status } = req.query;
+
+    let pq = supabase
+      .from('purchase_orders')
+      .select('id, brand_id, brand_name, status, podate:data->>date')
+      .is('deleted_at', null);
+    if (status) pq = pq.eq('status', status);
+    const { data: pos, error: perr } = await pq;
+    if (perr) throw perr;
+
+    const inRange = (d) => (!from || (d && d >= from)) && (!to || (d && d <= to));
+    const poMeta = new Map();
+    for (const po of pos) {
+      if (inRange(po.podate)) poMeta.set(po.id, po);
+    }
+
+    // Lines for in-range POs — paginate past Supabase's 1000-row cap.
+    const lines = [];
+    for (let off = 0; ; off += 1000) {
+      const { data, error } = await supabase
+        .from('purchase_order_lines')
+        .select('po_id, line_type, extended_cost, quantity')
+        .range(off, off + 999);
+      if (error) throw error;
+      lines.push(...data);
+      if (data.length < 1000) break;
+    }
+
+    const byBrand = new Map();
+    for (const ln of lines) {
+      const po = poMeta.get(ln.po_id);
+      if (!po) continue;
+      const key = po.brand_id || 'unknown';
+      if (!byBrand.has(key)) byBrand.set(key, { brand_id: po.brand_id, brand_name: po.brand_name || 'Unknown', spend: 0, units: 0, poIds: new Set() });
+      const b = byBrand.get(key);
+      b.spend += Number(ln.extended_cost || 0);
+      if (ln.line_type !== 'bundle-header') b.units += Number(ln.quantity || 0);
+      b.poIds.add(ln.po_id);
+    }
+
+    const brands = [...byBrand.values()]
+      .map(b => ({ brand_id: b.brand_id, brand_name: b.brand_name, spend: b.spend, units: b.units, po_count: b.poIds.size }))
+      .sort((a, b) => b.spend - a.spend || b.units - a.units);
+
+    res.json({
+      from: from || null, to: to || null, status: status || null,
+      brands,
+      totals: {
+        spend: brands.reduce((s, r) => s + r.spend, 0),
+        units: brands.reduce((s, r) => s + r.units, 0),
+        po_count: brands.reduce((s, r) => s + r.po_count, 0),
+      },
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.put('/api/pos/:id', async (req, res) => {
   try {
     const { po_number, brand_id, brand_name, status, data } = req.body;

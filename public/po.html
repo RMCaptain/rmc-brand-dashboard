@@ -45,6 +45,14 @@
           Saved POs
         </button>
 
+        <!-- Spend Report button -->
+        <button onclick="openSpendReport()" class="flex items-center gap-2 px-3 py-2 text-sm font-medium bg-slate-700 text-slate-200 rounded-lg hover:bg-slate-600 border border-slate-600 transition-colors">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+          </svg>
+          Spend Report
+        </button>
+
         <!-- Save PO button -->
         <button onclick="savePO()" id="savePOBtn" class="flex items-center gap-2 px-3 py-2 text-sm font-medium bg-slate-700 text-slate-200 rounded-lg hover:bg-slate-600 border border-slate-600 transition-colors">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -351,6 +359,29 @@
       </div>
       <div id="auditList" class="overflow-y-auto px-6" style="max-height:420px">
         <div class="py-8 text-center text-sm text-slate-500">Loading…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Spend Report Modal (P3) -->
+  <div id="spendModal" class="hidden fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center" onclick="closeSpendReport(event)">
+    <div class="bg-slate-800 border border-slate-700 rounded-xl w-full max-w-2xl mx-4 shadow-2xl" onclick="event.stopPropagation()">
+      <div class="px-6 py-4 border-b border-slate-700 flex items-center justify-between gap-3">
+        <h2 class="text-sm font-semibold text-white">PO Spend by Brand</h2>
+        <div class="flex items-center gap-1.5">
+          <button data-spend-preset="ytd" onclick="setSpendPreset('ytd')" class="text-xs px-2.5 py-1 rounded-lg border border-slate-600 transition-colors">YTD</button>
+          <button data-spend-preset="90d" onclick="setSpendPreset('90d')" class="text-xs px-2.5 py-1 rounded-lg border border-slate-600 transition-colors">90d</button>
+          <button data-spend-preset="30d" onclick="setSpendPreset('30d')" class="text-xs px-2.5 py-1 rounded-lg border border-slate-600 transition-colors">30d</button>
+          <button data-spend-preset="all" onclick="setSpendPreset('all')" class="text-xs px-2.5 py-1 rounded-lg border border-slate-600 transition-colors">All</button>
+          <button onclick="closeSpendReport()" class="text-slate-500 hover:text-white transition-colors ml-1">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div id="spendBody" class="overflow-y-auto" style="max-height:440px">
+        <div class="px-6 py-8 text-center text-sm text-slate-500">Loading…</div>
       </div>
     </div>
   </div>
@@ -1401,6 +1432,92 @@
     function closeAuditLog(e) {
       if (e && e.target !== document.getElementById('auditModal')) return;
       document.getElementById('auditModal').classList.add('hidden');
+    }
+
+    // ── Spend Report (P3) ──────────────────────────────────────────────────────
+    let _spendPreset = 'ytd';
+    const _ymd = (d) => d.toISOString().split('T')[0];
+    function _spendRange(preset) {
+      const today = new Date();
+      const to = _ymd(today);
+      if (preset === 'ytd') return { from: `${today.getFullYear()}-01-01`, to };
+      if (preset === '90d') { const d = new Date(today); d.setDate(d.getDate() - 89); return { from: _ymd(d), to }; }
+      if (preset === '30d') { const d = new Date(today); d.setDate(d.getDate() - 29); return { from: _ymd(d), to }; }
+      return { from: '', to: '' }; // all time
+    }
+    const _money = (n) => (Number(n) || 0).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+    const _num = (n) => (Number(n) || 0).toLocaleString('en-US');
+
+    function openSpendReport() {
+      document.getElementById('spendModal').classList.remove('hidden');
+      setSpendPreset(_spendPreset);
+    }
+    function closeSpendReport(e) {
+      if (e && e.target !== document.getElementById('spendModal')) return;
+      document.getElementById('spendModal').classList.add('hidden');
+    }
+
+    async function setSpendPreset(preset) {
+      _spendPreset = preset;
+      document.querySelectorAll('[data-spend-preset]').forEach(b => {
+        const on = b.dataset.spendPreset === preset;
+        b.classList.toggle('bg-indigo-600', on);
+        b.classList.toggle('text-white', on);
+        b.classList.toggle('text-slate-300', !on);
+      });
+      const body = document.getElementById('spendBody');
+      body.innerHTML = '<div class="px-6 py-8 text-center text-sm text-slate-500">Loading…</div>';
+      const { from, to } = _spendRange(preset);
+      const qs = new URLSearchParams();
+      if (from) qs.set('from', from);
+      if (to) qs.set('to', to);
+      try {
+        const res = await fetch(`/api/po-report/spend-by-brand?${qs}`);
+        if (!res.ok) throw new Error('Failed to load report');
+        renderSpendReport(await res.json());
+      } catch (err) {
+        body.innerHTML = `<div class="px-6 py-8 text-center text-sm text-red-400">Error: ${err.message}</div>`;
+      }
+    }
+
+    function renderSpendReport(data) {
+      const body = document.getElementById('spendBody');
+      if (!data.brands.length) {
+        body.innerHTML = '<div class="px-6 py-8 text-center text-sm text-slate-500">No POs in this period.</div>';
+        return;
+      }
+      const rows = data.brands.map(b => `
+        <tr class="border-b border-slate-700/40">
+          <td class="px-4 py-2.5 text-sm text-white">${b.brand_name}</td>
+          <td class="px-4 py-2.5 text-sm text-slate-400 text-right">${b.po_count}</td>
+          <td class="px-4 py-2.5 text-sm text-slate-400 text-right">${_num(b.units)}</td>
+          <td class="px-4 py-2.5 text-sm font-medium text-slate-100 text-right">${_money(b.spend)}</td>
+        </tr>`).join('');
+      const t = data.totals;
+      const zeroHint = t.spend === 0
+        ? `<div class="px-6 py-2.5 text-xs text-yellow-500/90 bg-yellow-500/5 border-t border-slate-700/50">Spend shows $0 because buy costs aren't mapped yet — it will populate once costs are entered.</div>`
+        : '';
+      body.innerHTML = `
+        <table class="w-full">
+          <thead>
+            <tr class="text-xs text-slate-500 border-b border-slate-700">
+              <th class="px-4 py-2 text-left font-medium">Brand</th>
+              <th class="px-4 py-2 text-right font-medium">POs</th>
+              <th class="px-4 py-2 text-right font-medium">Units</th>
+              <th class="px-4 py-2 text-right font-medium">Spend</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+          <tfoot>
+            <tr class="border-t border-slate-600">
+              <td class="px-4 py-2.5 text-sm font-semibold text-white">Total</td>
+              <td class="px-4 py-2.5 text-sm font-semibold text-slate-200 text-right">${t.po_count}</td>
+              <td class="px-4 py-2.5 text-sm font-semibold text-slate-200 text-right">${_num(t.units)}</td>
+              <td class="px-4 py-2.5 text-sm font-semibold text-white text-right">${_money(t.spend)}</td>
+            </tr>
+          </tfoot>
+        </table>
+        ${zeroHint}`;
     }
 
     // ── Trash / Recovery ──────────────────────────────────────────────────────
