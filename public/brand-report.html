@@ -171,14 +171,14 @@ function cvrOf(units, sessions) { return sessions ? units / sessions * 100 : nul
 function computeExtras(d) {
   const s = d.summary;
   const cvr = cvrOf(s.units, s.sessions);
-  // Buy box: session-weighted average across products (falls back to simple mean).
-  let wSum = 0, wTot = 0, simpleSum = 0, simpleN = 0;
+  // Brand Buy Box = simple average of per-product buy box, matching the brand
+  // cards / /api/metrics (server.js avgBuyBox) so the two views stay consistent.
+  let sum = 0, n = 0;
   for (const p of d.products) {
     if (p.buyBox == null) continue;
-    simpleSum += p.buyBox; simpleN++;
-    if (p.sessions) { wSum += p.buyBox * p.sessions; wTot += p.sessions; }
+    sum += p.buyBox; n++;
   }
-  const buyBox = wTot ? wSum / wTot : (simpleN ? simpleSum / simpleN : null);
+  const buyBox = n ? sum / n : null;
   return { cvr, buyBox };
 }
 
@@ -197,7 +197,7 @@ function headlineTile(key, s, sp, ex) {
     case 'units':    return tile('Units Sold', fmtN(s.units), pct(s.units, sp.units), 'Prior: ' + fmtN(sp.units));
     case 'sessions': return tile('Sessions', fmtN(s.sessions), null, null);
     case 'cvr':      return tile('Conversion (CVR)', fmtPct(ex.cvr), null, 'Units ÷ sessions');
-    case 'buyBox':   return tile('Buy Box %', fmtPct(ex.buyBox), null, 'Session-weighted avg');
+    case 'buyBox':   return tile('Buy Box %', fmtPct(ex.buyBox), null, 'Avg across products');
     default:         return '';
   }
 }
@@ -216,7 +216,7 @@ const SECTION_BUILDERS = {
       <div class="stat"><div class="stat-label">Sessions</div><div class="stat-value">${fmtN(s.sessions)}</div><div class="stat-sub">Buyer sessions</div></div>
       <div class="stat"><div class="stat-label">Page Views</div><div class="stat-value">${fmtN(s.pageViews)}</div><div class="stat-sub">Listing views</div></div>
       <div class="stat"><div class="stat-label">Conversion (CVR)</div><div class="stat-value">${fmtPct(ex.cvr)}</div><div class="stat-sub">Units ÷ sessions</div></div>
-      <div class="stat"><div class="stat-label">Buy Box %</div><div class="stat-value">${fmtPct(ex.buyBox)}</div><div class="stat-sub">Session-weighted</div></div>
+      <div class="stat"><div class="stat-label">Buy Box %</div><div class="stat-value">${fmtPct(ex.buyBox)}</div><div class="stat-sub">Avg across products</div></div>
     </div>`;
   },
   advertising() {

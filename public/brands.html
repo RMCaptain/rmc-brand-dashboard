@@ -367,6 +367,17 @@
         return;
       }
 
+      // Carry the currently selected period into the report link so the report
+      // matches what's shown on the cards (otherwise the report defaults to last 30d).
+      const rr = activePreset === 'custom'
+        ? (customFrom && customTo ? { from: customFrom, to: customTo } : null)
+        : activePreset === 'today'
+          ? { from: pstDateStr(), to: pstDateStr() }
+          : activePreset === 'yesterday'
+            ? (() => { const y = pstSubtractDays(pstDateStr(), 1); return { from: y, to: y }; })()
+            : getPresetRange(activePreset);
+      const reportQs = rr ? `&from=${rr.from}&to=${rr.to}` : '';
+
       document.getElementById('brandsGrid').innerHTML = brandsData.map(brand => {
         const m = presetBrandData[brand.id]?.summary;
         const buyBox = m?.buyBox;
@@ -409,7 +420,7 @@
               </div>`}
             </div>
             <div style="border-top:1px solid var(--border);padding:8px 16px;">
-              <a href="/brand-report.html?brand=${brand.id}" target="_blank" onclick="event.stopPropagation()"
+              <a href="/brand-report.html?brand=${brand.id}${reportQs}" target="_blank" onclick="event.stopPropagation()"
                  style="font-size:11px;font-weight:500;color:var(--brand);text-decoration:none;display:flex;align-items:center;gap:4px;">
                 ↗ Generate Report
               </a>

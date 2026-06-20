@@ -2763,26 +2763,50 @@ app.get('/api/report-data/:brandId', async (req, res) => {
     const brand = brands.find(b => b.id === brandId);
     if (!brand) return res.status(404).json({ error: `Brand '${brandId}' not found` });
 
-    // Query daily_metrics for both periods in parallel
-    const [{ data: currRows }, { data: prevRows }, { data: invRows }] = await Promise.all([
-      supabase.from('daily_metrics')
-        .select('asin,date,units,units_ca,units_us,revenue_cad,revenue_usd,sessions,page_views,buy_box_pct')
-        .gte('date', fromStr).lte('date', toStr),
-      supabase.from('daily_metrics')
-        .select('asin,date,units,units_ca,units_us,revenue_cad,revenue_usd')
-        .gte('date', compFromStr).lte('date', compToStr),
-      supabase.from('daily_metrics')
-        .select('asin,inventory_on_hand')
-        .lte('date', toStr)
-        .not('inventory_on_hand', 'is', null)
-        .order('date', { ascending: false }),
-    ]);
+    // Query daily_metrics for this brand's ASINs, paginated. CRITICAL: filter by
+    // ASIN and paginate past Supabase's 1000-row cap. An unfiltered/unpaginated
+    // query returns only the first 1000 of 10k+ rows (all brands, full window),
+    // silently truncating the report to ~10% of the data. See Learnings: 1000-row cap.
+    const reportAsins = brand.asins || [];
 
-    // Latest inventory per ASIN (first row per ASIN since ordered desc)
-    const invByAsin = {};
-    for (const r of (invRows || [])) {
-      if (!(r.asin in invByAsin)) invByAsin[r.asin] = r.inventory_on_hand;
+    async function fetchBrandDaily(select, fromS, toS) {
+      if (!reportAsins.length) return [];
+      const out = [];
+      for (let off = 0; ; off += 1000) {
+        const { data, error } = await supabase.from('daily_metrics').select(select)
+          .in('asin', reportAsins).gte('date', fromS).lte('date', toS)
+          .order('asin').order('date').range(off, off + 999);
+        if (error) throw error;
+        out.push(...data);
+        if (data.length < 1000) break;
+      }
+      return out;
     }
+
+    // Latest non-null inventory snapshot per ASIN (this brand only, paginated).
+    async function fetchLatestInventory(toS) {
+      if (!reportAsins.length) return {};
+      const out = [];
+      for (let off = 0; ; off += 1000) {
+        const { data, error } = await supabase.from('daily_metrics')
+          .select('asin,inventory_on_hand,date')
+          .in('asin', reportAsins).lte('date', toS)
+          .not('inventory_on_hand', 'is', null)
+          .order('date', { ascending: false }).range(off, off + 999);
+        if (error) throw error;
+        out.push(...data);
+        if (data.length < 1000) break;
+      }
+      const inv = {};
+      for (const r of out) if (!(r.asin in inv)) inv[r.asin] = r.inventory_on_hand;
+      return inv;
+    }
+
+    const [currRows, prevRows, invByAsin] = await Promise.all([
+      fetchBrandDaily('asin,date,units,units_ca,units_us,revenue_cad,revenue_usd,sessions,page_views,buy_box_pct', fromStr, toStr),
+      fetchBrandDaily('asin,date,units,units_ca,units_us,revenue_cad,revenue_usd', compFromStr, compToStr),
+      fetchLatestInventory(toStr),
+    ]);
 
     // Aggregate helpers
     function aggregateRows(rows) {
