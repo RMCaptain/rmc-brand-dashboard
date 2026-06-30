@@ -2941,6 +2941,119 @@ app.post('/api/sync/rebuild-presets', async (req, res) => {
   }
 });
 
+// ── Brand report config (per-brand section toggles) ───────────────────────────
+// Phase 1 — Stream B1. Lets each brand hide specific sections of the brand
+// report. Default = nothing hidden (every section visible). Section keys
+// are advisory — the renderer ignores ones it doesn't know about, so adding
+// a new section in code is safe without a migration.
+//
+// Schema (sql/brand-report-configs.sql):
+//   brand_id (PK), hidden_sections (jsonb array of strings), updated_at
+
+const REPORT_SECTION_KEYS = [
+  'executive_summary',    // AI-generated narrative
+  'headline_tiles',       // revenue/units/sessions/CVR/buy box
+  'sales_trend',          // 30-day daily chart vs comparison
+  'ytd_chart',            // current year vs prior year
+  'sales_by_group',       // product-group breakouts (v2 — needs grouping)
+  'top_sellers',          // per-product table with inventory chips
+  'ad_trend',             // ad sales vs organic chart
+  'ad_summary',           // TACOS / TROAS / NTB / ACOS / CTR / CPC
+  'inventory_status',     // days of cover, stockouts, inbound
+  'per_asin_sheet_link',  // auto-generated Google Sheet link
+];
+
+function defaultBrandReportConfig(brandId) {
+  return { brand_id: brandId, hidden_sections: [], updated_at: null };
+}
+
+// GET — return a brand's config, or defaults if no row.
+app.get('/api/brand-report-config/:brandId', async (req, res) => {
+  const { brandId } = req.params;
+  try {
+    const { data, error } = await supabase
+      .from('brand_report_configs')
+      .select('brand_id, hidden_sections, updated_at')
+      .eq('brand_id', brandId)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    res.json({
+      ...defaultBrandReportConfig(brandId),
+      ...(data || {}),
+      available_sections: REPORT_SECTION_KEYS,
+    });
+  } catch (err) {
+    console.error('[BrandReportConfig] GET error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT — upsert. Body: { hidden_sections: ['ytd_chart', 'ad_trend', ...] }
+// Unknown keys are tolerated (renderer ignores them); we just normalize
+// and persist whatever the caller sent.
+app.put('/api/brand-report-config/:brandId', async (req, res) => {
+  const { brandId } = req.params;
+  const body = req.body || {};
+  if (!Array.isArray(body.hidden_sections)) {
+    return res.status(400).json({ error: 'hidden_sections must be an array of strings' });
+  }
+  const hidden = [...new Set(body.hidden_sections.filter(s => typeof s === 'string'))];
+  try {
+    const { brands } = await loadBrands();
+    if (!brands.find(b => b.id === brandId)) {
+      return res.status(404).json({ error: `Brand '${brandId}' not found` });
+    }
+    const { data, error } = await supabase
+      .from('brand_report_configs')
+      .upsert(
+        { brand_id: brandId, hidden_sections: hidden, updated_at: new Date().toISOString() },
+        { onConflict: 'brand_id' }
+      )
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
+    res.json({ success: true, ...data, available_sections: REPORT_SECTION_KEYS });
+  } catch (err) {
+    console.error('[BrandReportConfig] PUT error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// One-shot: insert an empty config row for every brand that doesn't already
+// have one. Idempotent — re-running is safe. Useful after the initial
+// migration so every brand has a row even if nobody's toggled anything.
+app.post('/api/brand-report-config/seed-defaults', async (req, res) => {
+  try {
+    const { brands } = await loadBrands();
+    const realBrands = brands.filter(b => b.id && b.id !== 'unknown-brand');
+    if (!realBrands.length) return res.json({ seeded: 0, message: 'no brands to seed' });
+
+    const { data: existing, error: readErr } = await supabase
+      .from('brand_report_configs')
+      .select('brand_id');
+    if (readErr) throw new Error(readErr.message);
+
+    const have = new Set((existing || []).map(r => r.brand_id));
+    const missing = realBrands.filter(b => !have.has(b.id));
+    if (missing.length === 0) {
+      return res.json({ seeded: 0, message: 'all brands already have configs' });
+    }
+    const rows = missing.map(b => ({
+      brand_id: b.id,
+      hidden_sections: [],
+      updated_at: new Date().toISOString(),
+    }));
+    const { error: insertErr } = await supabase
+      .from('brand_report_configs')
+      .insert(rows);
+    if (insertErr) throw new Error(insertErr.message);
+    res.json({ seeded: rows.length, brand_ids: rows.map(r => r.brand_id) });
+  } catch (err) {
+    console.error('[BrandReportConfig] seed error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Brand report data — assembles current + comparison period, ads, inventory for a single brand
 app.get('/api/report-data/:brandId', async (req, res) => {
   const { brandId } = req.params;
