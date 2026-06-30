@@ -3054,6 +3054,79 @@ app.post('/api/brand-report-config/seed-defaults', async (req, res) => {
   }
 });
 
+// ── Brand report PDF export (Phase 2 slice 2.4) ──────────────────────────────
+// Server-side PDF render using Puppeteer (same pattern as the PO Builder PDF
+// path). Navigates headless Chrome to the brand-report page with ?print=1
+// (which hides nav + toolbar via CSS), waits for charts + summary to finish
+// rendering (window.reportReady flag), then returns the PDF buffer.
+app.get('/api/brand-report-pdf/:brandId', async (req, res) => {
+  const { brandId } = req.params;
+  const period = req.query.period || 'last30d';
+  const from   = req.query.from || '';
+  const to     = req.query.to   || '';
+
+  const puppeteer = require('puppeteer');
+  let browser;
+  try {
+    // Resolve brand name for the download filename. Don't 404 here — if the
+    // dataset endpoint can render, we should be able to PDF it too.
+    const { brands } = await loadBrands();
+    const brand = brands.find(b => b.id === brandId);
+    const brandName = brand?.name || brandId;
+
+    // Build the in-app URL Puppeteer will navigate to. We hit localhost
+    // (same Node process) so there's no network round-trip; auth bypassed.
+    const port = process.env.PORT || 3000;
+    const params = new URLSearchParams({ brand: brandId, period, print: '1' });
+    if (from) params.set('from', from);
+    if (to)   params.set('to',   to);
+    const url = `http://127.0.0.1:${port}/brand-report.html?${params}`;
+
+    browser = await puppeteer.launch({
+      headless: 'new',
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath(),
+    });
+    const page = await browser.newPage();
+
+    // If Basic Auth is on in this environment, authenticate so the page's
+    // internal API fetches don't 401. Skipped locally where auth is bypassed.
+    if (process.env.AUTH_USERNAME && process.env.AUTH_PASSWORD) {
+      await page.authenticate({ username: process.env.AUTH_USERNAME, password: process.env.AUTH_PASSWORD });
+    }
+
+    await page.setViewport({ width: 1100, height: 1600, deviceScaleFactor: 2 });
+    await page.goto(url, { waitUntil: 'networkidle0', timeout: 60000 });
+
+    // Wait until the report HTML JS signals it's done rendering charts +
+    // the executive summary. The brand-report page sets this after init().
+    await page.waitForFunction('window.reportReady === true', { timeout: 90000 });
+
+    // Tiny extra beat for chart paint animations to settle.
+    await new Promise(r => setTimeout(r, 400));
+
+    const pdfData = await page.pdf({
+      format: 'Letter',
+      printBackground: true,
+      margin: { top: '12mm', bottom: '12mm', left: '12mm', right: '12mm' },
+    });
+    await browser.close();
+    browser = null;
+
+    const dateStamp = new Date().toISOString().split('T')[0];
+    const safeName  = String(brandName).replace(/[^a-z0-9\-_]+/gi, '_');
+    const filename  = `RMC_${safeName}_${period}_${dateStamp}.pdf`;
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(Buffer.isBuffer(pdfData) ? pdfData : Buffer.from(pdfData));
+  } catch (err) {
+    console.error('[BrandReportPDF] error:', err.message);
+    if (browser) { try { await browser.close(); } catch {} }
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── AI executive summary (Phase 2 slice 2.3) ─────────────────────────────────
 // Generates a 2-3 paragraph narrative summary in Mike's voice using Claude.
 // Cached per (brand_id, period_from, period_to) in brand_report_summaries so
