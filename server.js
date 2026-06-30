@@ -3054,6 +3054,127 @@ app.post('/api/brand-report-config/seed-defaults', async (req, res) => {
   }
 });
 
+// ── Unified brand report dataset (Stream B2) ─────────────────────────────────
+// One endpoint, one response. Replaces /api/report-data + /api/report-ads for
+// new consumers (Phase 2 PDF, Phase 3 UI, Phase 4 internal agent, Phase 5
+// auto-generated reports). Reads per-brand hidden_sections from B1's config
+// table and exposes enabled_sections in the response so consumers can render
+// without per-section conditionals.
+//
+// Ads are no longer baked on-demand here — they come from daily_metrics
+// (which the ad-sync cron persists), so this endpoint returns in milliseconds
+// instead of the 1-5 min /api/report-ads bake.
+app.get('/api/brand-report-dataset/:brandId', async (req, res) => {
+  const { brandId } = req.params;
+  const msDay = 86400000;
+  const fmtISO  = d => d.toISOString().split('T')[0];
+  const fmtLabel = s => new Date(s + 'T12:00:00Z').toLocaleDateString('en-US',
+    { month: 'short', day: 'numeric', year: 'numeric' });
+
+  try {
+    // ── 1. Resolve brand
+    const { brands } = await loadBrands();
+    const brand = brands.find(b => b.id === brandId);
+    if (!brand) return res.status(404).json({ error: `Brand '${brandId}' not found` });
+
+    // ── 2. Resolve period: explicit from/to OR named preset (last7d/last30d/last90d)
+    const todayStr = fmtISO(new Date());
+    let toStr   = req.query.to;
+    let fromStr = req.query.from;
+    if (!toStr)   toStr   = todayStr;
+    if (!fromStr) {
+      const days = ({ last7d: 7, last14d: 14, last30d: 30, last90d: 90 })[req.query.period || 'last30d'] || 30;
+      fromStr = fmtISO(new Date(new Date(toStr) - (days - 1) * msDay));
+    }
+
+    const periodDays = Math.round((new Date(toStr) - new Date(fromStr)) / msDay) + 1;
+    const compToStr   = fmtISO(new Date(new Date(fromStr) - msDay));
+    const compFromStr = fmtISO(new Date(new Date(compToStr) - (periodDays - 1) * msDay));
+
+    // ── 3. Pull both periods from daily_metrics (uses the shared aggregator
+    //      so output matches /api/metrics + the preset_metrics rebuild).
+    const [currAll, prevAll] = await Promise.all([
+      buildBrandMetricsForRange(fromStr,    toStr),
+      buildBrandMetricsForRange(compFromStr, compToStr),
+    ]);
+
+    const curr = currAll.brands?.[brandId];
+    const prev = prevAll.brands?.[brandId];
+    if (!curr) {
+      return res.status(200).json({
+        brand: { id: brand.id, name: brand.name, marketplace: brand.marketplace || 'CA' },
+        period:     { from: fromStr,    to: toStr,    label: `${fmtLabel(fromStr)} – ${fmtLabel(toStr)}` },
+        comparison: { from: compFromStr, to: compToStr, label: `${fmtLabel(compFromStr)} – ${fmtLabel(compToStr)}` },
+        config: { hidden_sections: [], available_sections: REPORT_SECTION_KEYS, enabled_sections: REPORT_SECTION_KEYS },
+        summary: null, summaryPrev: null, products: [], dailySeries: [], dailySeriesPrev: [],
+        note: 'No daily_metrics rows for this brand in the requested window',
+        generatedAt: new Date().toISOString(),
+      });
+    }
+
+    // ── 4. Per-brand config (hidden_sections). Missing row → empty defaults.
+    const { data: cfgRow } = await supabase
+      .from('brand_report_configs')
+      .select('hidden_sections, updated_at')
+      .eq('brand_id', brandId)
+      .maybeSingle();
+    const hidden = Array.isArray(cfgRow?.hidden_sections) ? cfgRow.hidden_sections : [];
+    const hiddenSet = new Set(hidden);
+    const enabledSections = REPORT_SECTION_KEYS.filter(k => !hiddenSet.has(k));
+
+    // ── 5. Daily series for the chart sections — re-query daily_metrics so
+    //      we get per-day breakdown (buildBrandMetricsForRange aggregates).
+    const brandAsinSet = new Set(brand.asins || []);
+    async function fetchDailySeries(fromS, toS) {
+      if (!brandAsinSet.size) return [];
+      const out = [];
+      for (let off = 0; ; off += 1000) {
+        const { data, error } = await supabase.from('daily_metrics')
+          .select('asin,date,revenue_cad,revenue_usd,units')
+          .in('asin', [...brandAsinSet]).gte('date', fromS).lte('date', toS)
+          .order('date').range(off, off + 999);
+        if (error) throw new Error(error.message);
+        out.push(...data);
+        if (data.length < 1000) break;
+      }
+      const byDate = {};
+      for (const r of out) {
+        if (!byDate[r.date]) byDate[r.date] = { date: r.date, revCad: 0, revUsd: 0, units: 0 };
+        byDate[r.date].revCad += r.revenue_cad || 0;
+        byDate[r.date].revUsd += r.revenue_usd || 0;
+        byDate[r.date].units  += r.units       || 0;
+      }
+      return Object.values(byDate).sort((a, b) => a.date.localeCompare(b.date));
+    }
+    const [dailySeries, dailySeriesPrev] = await Promise.all([
+      fetchDailySeries(fromStr, toStr),
+      fetchDailySeries(compFromStr, compToStr),
+    ]);
+
+    // ── 6. Assemble response
+    res.json({
+      brand: { id: brand.id, name: brand.name, marketplace: brand.marketplace || 'CA' },
+      period:     { from: fromStr,    to: toStr,    label: `${fmtLabel(fromStr)} – ${fmtLabel(toStr)}` },
+      comparison: { from: compFromStr, to: compToStr, label: `${fmtLabel(compFromStr)} – ${fmtLabel(compToStr)}` },
+      config: {
+        hidden_sections:    hidden,
+        available_sections: REPORT_SECTION_KEYS,
+        enabled_sections:   enabledSections,
+        updated_at:         cfgRow?.updated_at || null,
+      },
+      summary:     curr.summary,
+      summaryPrev: prev?.summary || null,
+      products:    curr.skus,
+      dailySeries,
+      dailySeriesPrev,
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('[BrandReportDataset] error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Brand report data — assembles current + comparison period, ads, inventory for a single brand
 app.get('/api/report-data/:brandId', async (req, res) => {
   const { brandId } = req.params;
