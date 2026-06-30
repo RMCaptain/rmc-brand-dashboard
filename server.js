@@ -2499,18 +2499,14 @@ app.post('/api/backfill', async (req, res) => {
   });
 });
 
-// Custom date range — aggregates daily_metrics for any arbitrary date span
-app.get('/api/metrics', async (req, res) => {
-  const { from, to } = req.query;
-  if (!from || !to || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
-    return res.status(400).json({ error: 'from and to params required (YYYY-MM-DD)' });
-  }
-  if (from > to) return res.status(400).json({ error: 'from must be ≤ to' });
-
-  try {
-    const { brands } = await loadBrands();
-
-    const pm = await loadPresetMetrics();
+// Shared aggregation: builds per-brand summary + skus + financials from daily_metrics
+// for any date range. Used by /api/metrics (live request) AND by the preset rebuild
+// (which corrects the cached preset_metrics summaries that were drifting from
+// daily_metrics). The aggregation is the canonical "what does daily_metrics say"
+// computation — anything else that needs per-brand totals should call this.
+async function buildBrandMetricsForRange(from, to, presetKey = null) {
+  const { brands } = await loadBrands();
+  const pm = await loadPresetMetrics();
 
     // Paginate explicitly — Supabase caps responses at 1000 rows by default.
     // A 30-day window with ~400 rows/day = 12k rows; without pagination we'd
@@ -2704,7 +2700,7 @@ app.get('/api/metrics', async (req, res) => {
       topRefundUsd    += a.refund_amount_usd   || 0;
       topRefundCount  += a.refund_count        || 0;
     }
-    const passthrough = pm.presets?.[req.query.presetKey]?.financials || {};
+    const passthrough = pm.presets?.[presetKey]?.financials || {};
     const financials = {
       CAD: {
         adSpend:      Math.round(topSpendCad * 100) / 100,
@@ -2726,16 +2722,144 @@ app.get('/api/metrics', async (req, res) => {
     };
 
     const fmtD = d => new Date(d + 'T12:00:00Z').toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' });
-    res.json({
+    return {
       from, to,
       label: `${fmtD(from)} – ${fmtD(to)}`,
       startDate: from, endDate: to,
       brands: resultBrands,
       financials,
-    });
+    };
+}
+
+// Thin wrapper — keep the route stable while the aggregation is callable from sync code too.
+app.get('/api/metrics', async (req, res) => {
+  const { from, to } = req.query;
+  if (!from || !to || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+    return res.status(400).json({ error: 'from and to params required (YYYY-MM-DD)' });
+  }
+  if (from > to) return res.status(400).json({ error: 'from must be ≤ to' });
+  try {
+    const result = await buildBrandMetricsForRange(from, to, req.query.presetKey);
+    res.json(result);
   } catch (err) {
     console.error('[Metrics] Custom range error:', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Rebuild preset_metrics summaries from daily_metrics. Fixes drift between the
+// S&T-sourced preset cache (which silently fails for many brands → $0 on brand
+// cards) and the live daily_metrics totals (which the report uses). Per-brand
+// summary + sales/traffic SKU fields get overwritten; ad clicks/impressions/
+// orders (not yet in daily_metrics) and metadata (titles, image URLs) are
+// preserved from the existing cache.
+async function rebuildPresetSummariesFromDaily(tag = 'PresetRebuild') {
+  const { getPresetRanges } = require('./sync/amazon');
+  const ranges = getPresetRanges();
+
+  const existingPm = await loadPresetMetrics();
+  const updatedPresets = { ...(existingPm.presets || {}) };
+
+  for (const [presetKey, range] of Object.entries(ranges)) {
+    const from = range.startDate, to = range.endDate;
+    console.log(`[${tag}] Rebuilding ${presetKey} (${from} → ${to})...`);
+
+    const built = await buildBrandMetricsForRange(from, to, presetKey);
+    const existingPreset = existingPm.presets?.[presetKey] || { brands: {} };
+    const mergedBrands = {};
+
+    // Preserve ad fields (clicks/impressions/orders/cpc/ctr/adCvr) — those aren't
+    // in daily_metrics yet (see Build Log: "Extend daily + 15-min ad syncs to
+    // persist clicks, impressions, orders"). Until that ships, the Ads merge
+    // step in runFullSync is the only source of those values.
+    for (const [brandId, newBm] of Object.entries(built.brands || {})) {
+      const oldBm = existingPreset.brands?.[brandId] || {};
+      const oldSkuByAsin = Object.fromEntries((oldBm.skus || []).map(s => [s.asin, s]));
+
+      const mergedSkus = (newBm.skus || []).map(newSku => {
+        const oldSku = oldSkuByAsin[newSku.asin] || {};
+        return {
+          ...newSku,
+          // Preserve ad detail fields not stored in daily_metrics
+          adClicks:      oldSku.adClicks ?? null,
+          adImpressions: oldSku.adImpressions ?? null,
+          adOrders:      oldSku.adOrders ?? null,
+          cpc:           oldSku.cpc ?? null,
+          ctr:           oldSku.ctr ?? null,
+          adCvr:         oldSku.adCvr ?? null,
+          // ACOS/ROAS can be derived; prefer daily_metrics value if present, else old
+          acos:          newSku.acos ?? oldSku.acos ?? null,
+          roas:          oldSku.roas ?? null,
+          // Metadata: prefer existing title/image (set during SP-API listings sync)
+          title:         oldSku.title || newSku.title || '',
+          imageUrl:      oldSku.imageUrl || newSku.imageUrl || null,
+          // Listing status from existing (set by listings sync)
+          status:        oldSku.status || 'active',
+          sellerSku:     oldSku.sellerSku || '',
+          marketplace:   oldSku.marketplace || newSku.marketplace || 'CA',
+        };
+      });
+
+      // Merge brand adSummary: new spend/attr from daily_metrics + old clicks/impressions/etc
+      const oldAd = oldBm.summary?.adSummary || null;
+      const newAd = newBm.summary?.adSummary || null;
+      let mergedAd = null;
+      if (newAd) {
+        mergedAd = {
+          ...newAd,
+          clicks:      oldAd?.clicks      ?? null,
+          impressions: oldAd?.impressions ?? null,
+          orders:      oldAd?.orders      ?? null,
+          acos:        oldAd?.acos        ?? null,
+          roas:        oldAd?.roas        ?? null,
+          ctr:         oldAd?.ctr         ?? null,
+          cpc:         oldAd?.cpc         ?? null,
+          adCvr:       oldAd?.adCvr       ?? null,
+        };
+      } else if (oldAd) {
+        mergedAd = oldAd;
+      }
+
+      mergedBrands[brandId] = {
+        summary: {
+          ...newBm.summary,
+          adSummary: mergedAd,
+          // Preserve alerts (suppressedListings, lostBuyBox) — set by listings sync
+          alerts: oldBm.summary?.alerts || newBm.summary?.alerts || {},
+        },
+        skus: mergedSkus,
+      };
+    }
+
+    // Carry forward any brands present in the old preset that the new aggregation
+    // didn't produce (rare — usually means no daily_metrics rows for that brand).
+    for (const [brandId, oldBm] of Object.entries(existingPreset.brands || {})) {
+      if (!mergedBrands[brandId]) mergedBrands[brandId] = oldBm;
+    }
+
+    updatedPresets[presetKey] = {
+      ...existingPreset,
+      label:     range.label,
+      startDate: range.startDate,
+      endDate:   range.endDate,
+      brands:    mergedBrands,
+    };
+  }
+
+  await savePresetMetrics({ ...existingPm, presets: updatedPresets });
+  console.log(`[${tag}] Done — ${Object.keys(ranges).length} presets rebuilt from daily_metrics`);
+  return { rebuilt: Object.keys(ranges) };
+}
+
+// Manual trigger: rebuild preset summaries from daily_metrics without running a full sync.
+// Useful for verifying the fix without burning SP-API quota.
+app.post('/api/sync/rebuild-presets', async (req, res) => {
+  try {
+    const result = await rebuildPresetSummariesFromDaily('ManualRebuild');
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[ManualRebuild] error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -3601,6 +3725,16 @@ async function runFullSync(tag = 'Sync') {
 
     const mergedPresets = { ...(existing.presets || {}), ...presets };
     await savePresetMetrics({ lastSync, presets: mergedPresets });
+
+    // Overlay corrected per-brand summaries from daily_metrics. The S&T-sourced
+    // build above silently fails for many brands (e.g. brand card $0 bug); this
+    // rebuild aligns preset_metrics with the live daily_metrics source of truth.
+    try {
+      await rebuildPresetSummariesFromDaily(`${tag}-PresetRebuild`);
+    } catch (rebuildErr) {
+      console.warn(`[${tag}] Preset rebuild from daily_metrics failed (non-fatal):`, rebuildErr.message);
+    }
+
     syncState = { status: 'done', lastSync, error: null };
     console.log(`[${tag}] Done:`, lastSync);
 
