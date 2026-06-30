@@ -238,11 +238,21 @@ const SECTION_RENDERERS = {
 
   sales_trend: () => `<div class="chart-wrap"><canvas id="salesChart"></canvas></div>`,
 
-  ytd_chart: () => `
-    <div class="rpt-placeholder">
-      <strong>Coming soon</strong> — Current year vs prior year revenue chart
-      (Merchant Spring style). Needs YTD data extraction in a follow-up slice.
-    </div>`,
+  ytd_chart: (d) => {
+    const cy = d.ytdSeries     || [];
+    const py = d.ytdSeriesPrev || [];
+    const cyTotal = cy.reduce((s, x) => s + (x.revCad + x.revUsd), 0);
+    const pyTotal = py.reduce((s, x) => s + (x.revCad + x.revUsd), 0);
+    const delta = pyTotal > 0 ? Math.round((cyTotal - pyTotal) / pyTotal * 1000) / 10 : null;
+    return `
+      <div style="display:grid;grid-template-columns:1fr 200px;gap:24px;align-items:start;">
+        <div class="chart-wrap" style="height:240px"><canvas id="ytdChart"></canvas></div>
+        <div>
+          <div class="ad-stat" style="margin-bottom:10px"><div class="ad-stat-label">Current YTD</div><div class="ad-stat-value">${fmtC(cyTotal, '$')}</div><div class="ad-stat-sub">${cy.length} days</div></div>
+          <div class="ad-stat"><div class="ad-stat-label">Prior YTD</div><div class="ad-stat-value">${fmtC(pyTotal, '$')}</div><div class="ad-stat-sub">${delta != null ? (delta >= 0 ? '+' : '') + delta + '% vs prior' : '—'}</div></div>
+        </div>
+      </div>`;
+  },
 
   sales_by_group: () => `
     <div class="rpt-placeholder">
@@ -279,12 +289,12 @@ const SECTION_RENDERERS = {
     </table>`;
   },
 
-  ad_trend: () => `
-    <div class="rpt-placeholder">
-      <strong>Coming soon</strong> — Daily chart of ad sales vs organic sales with
-      ROAS overlay (Merchant Spring style). Needs per-day ad series surfacing in
-      the unified endpoint.
-    </div>`,
+  ad_trend: (d) => {
+    const days = d.dailySeries || [];
+    const hasAds = days.some(x => (x.spendCad + x.spendUsd) > 0);
+    if (!hasAds) return `<div class="rpt-placeholder">No advertising activity in this period.</div>`;
+    return `<div class="chart-wrap" style="height:260px"><canvas id="adTrendChart"></canvas></div>`;
+  },
 
   ad_summary: (d) => {
     const ad = d.summary?.adSummary;
@@ -317,17 +327,47 @@ const SECTION_RENDERERS = {
   },
 
   inventory_status: (d) => {
-    // Compute summary of inventory levels across products.
+    // Days of cover = on-hand ÷ daily velocity (units in period / period days).
+    // Period length from the resolved dates so we work for last7d/last30d/etc.
     const products = d.products || [];
+    const periodDays = Math.max(1, Math.round((new Date(d.period.to) - new Date(d.period.from)) / 86400000) + 1);
     let low = 0, warn = 0, good = 0, missing = 0;
+    const rows = [];
     for (const p of products) {
-      const s = p.inventory?.onHand;
-      if (s == null) { missing++; continue; }
-      if (s <= 0)        low++;
-      else if (s < 30)   low++;
-      else if (s < 100)  warn++;
-      else               good++;
+      const stock = p.inventory?.onHand;
+      if (stock == null) { missing++; continue; }
+      const velocity = (p.units || 0) / periodDays;  // units per day
+      const days = velocity > 0 ? Math.round(stock / velocity) : null;
+      if (stock <= 0)        low++;
+      else if (stock < 30)   low++;
+      else if (stock < 100)  warn++;
+      else                   good++;
+      rows.push({ asin: p.asin, title: p.title || p.asin, stock, velocity, days });
     }
+    // Lowest days-of-cover first (only with positive velocity, treat unknown as deprioritized).
+    rows.sort((a, b) => {
+      if (a.days == null && b.days == null) return 0;
+      if (a.days == null) return 1;
+      if (b.days == null) return -1;
+      return a.days - b.days;
+    });
+    const top = rows.slice(0, 10);
+
+    const tableRows = top.map(r => {
+      const titleShort = (r.title.length > 50 ? r.title.slice(0, 50) + '…' : r.title);
+      let cls = 'good';
+      if (r.days == null) cls = '';
+      else if (r.days < 14) cls = 'low';
+      else if (r.days < 30) cls = 'warn';
+      const daysLabel = r.days == null ? '— (no velocity)' : (r.days + ' days');
+      return `<tr>
+        <td><span class="product-title">${escapeHtml(titleShort)}</span><div class="product-asin">${escapeHtml(r.asin)}</div></td>
+        <td class="r">${fmtN(r.stock)}</td>
+        <td class="r">${r.velocity > 0 ? r.velocity.toFixed(1) + '/day' : '—'}</td>
+        <td class="r">${cls ? `<span class="stock-chip ${cls}">${daysLabel}</span>` : daysLabel}</td>
+      </tr>`;
+    }).join('');
+
     return `
       <div class="ad-grid">
         <div class="ad-stat"><div class="ad-stat-label">Healthy stock</div><div class="ad-stat-value" style="color:var(--pos)">${good}</div><div class="ad-stat-sub">100+ units on hand</div></div>
@@ -335,10 +375,12 @@ const SECTION_RENDERERS = {
         <div class="ad-stat"><div class="ad-stat-label">Low / out</div><div class="ad-stat-value" style="color:var(--neg)">${low}</div><div class="ad-stat-sub">Under 30 units</div></div>
         <div class="ad-stat"><div class="ad-stat-label">No data</div><div class="ad-stat-value" style="color:var(--text-3)">${missing}</div><div class="ad-stat-sub">Inventory not synced</div></div>
       </div>
-      <div class="rpt-placeholder" style="margin-top: 14px;">
-        <strong>Coming soon</strong> — Days of cover per ASIN, stockout days, inbound shipments.
-        Currently shows on-hand status only.
-      </div>`;
+      ${top.length ? `
+      <div class="ad-section-sub">Lowest days of cover</div>
+      <table class="rpt-table">
+        <thead><tr><th>Product</th><th class="r">On hand</th><th class="r">Velocity</th><th class="r">Days of cover</th></tr></thead>
+        <tbody>${tableRows}</tbody>
+      </table>` : ''}`;
   },
 
   per_asin_sheet_link: () => `
@@ -381,6 +423,8 @@ function updateUrl() {
 }
 
 let currentChart = null;
+let currentYtdChart = null;
+let currentAdChart  = null;
 async function render() {
   $('loading').style.display = 'flex';
   $('report').style.display = 'none';
@@ -409,8 +453,10 @@ async function render() {
         </div>`)
       .join('');
 
-    // Build chart after DOM exists.
+    // Build charts after DOM exists.
     if (enabled.includes('sales_trend')) buildChart(d.dailySeries, d.dailySeriesPrev);
+    if (enabled.includes('ytd_chart'))   buildYtdChart(d.ytdSeries, d.ytdSeriesPrev);
+    if (enabled.includes('ad_trend'))    buildAdTrendChart(d.dailySeries);
 
     $('loading').style.display = 'none';
     $('report').style.display  = 'block';
@@ -448,6 +494,90 @@ function buildChart(daily, dailyPrev) {
       scales: {
         x: { grid: { display: false }, ticks: { font: { size: 10 }, color: '#9AAABB', maxRotation: 0, autoSkip: true } },
         y: { grid: { color: '#F1F5F9' }, ticks: { font: { size: 10 }, color: '#9AAABB', callback: v => '$' + v.toLocaleString() }, beginAtZero: true },
+      },
+    },
+  });
+}
+
+// YTD cumulative chart — current YTD (solid) vs prior YTD (dashed), aligned
+// by day-of-year so seasonal patterns visually compare across years.
+function buildYtdChart(curr, prior) {
+  const el = document.getElementById('ytdChart');
+  if (!el) return;
+  if (currentYtdChart) currentYtdChart.destroy();
+
+  // Cumulative running total per series, indexed by day-of-year
+  function cumulative(rows) {
+    let acc = 0;
+    return (rows || []).map(r => { acc += (r.revCad + r.revUsd); return Math.round(acc * 100) / 100; });
+  }
+  // Label set: day-of-year for current series (so the X-axis stays in the current year's calendar)
+  const labels   = (curr  || []).map(r => r.date);
+  const currCum  = cumulative(curr);
+  const priorCum = cumulative(prior);
+
+  currentYtdChart = new Chart(el, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Current YTD', data: currCum,  borderColor: '#537D30', backgroundColor: 'rgba(83,125,48,0.10)', fill: true,  tension: 0.2, borderWidth: 2, pointRadius: 0 },
+        { label: 'Prior YTD',   data: priorCum, borderColor: '#9AAABB', backgroundColor: 'transparent',          fill: false, tension: 0.2, borderWidth: 2, pointRadius: 0, borderDash: [4, 4] },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'top', align: 'end', labels: { font: { size: 11 }, color: '#5A6A82', usePointStyle: true } },
+        tooltip: { mode: 'index', intersect: false, callbacks: { label: ctx => ctx.dataset.label + ': $' + Number(ctx.parsed.y).toLocaleString() } },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { font: { size: 10 }, color: '#9AAABB', maxRotation: 0, autoSkip: true, maxTicksLimit: 12 } },
+        y: { grid: { color: '#F1F5F9' }, ticks: { font: { size: 10 }, color: '#9AAABB', callback: v => '$' + Math.round(v).toLocaleString() }, beginAtZero: true },
+      },
+    },
+  });
+}
+
+// Ad-trend chart: ad sales (bars) + organic sales (bars) + ROAS line on a
+// secondary axis. Mirrors Merchant Spring's "Advertising performance trend".
+function buildAdTrendChart(daily) {
+  const el = document.getElementById('adTrendChart');
+  if (!el) return;
+  if (currentAdChart) currentAdChart.destroy();
+
+  const labels   = (daily || []).map(d => d.date);
+  const adSales  = (daily || []).map(d => Math.round((d.adSalesCad + d.adSalesUsd) * 100) / 100);
+  const totalRev = (daily || []).map(d => Math.round((d.revCad + d.revUsd) * 100) / 100);
+  // Organic = total - ad-attributed. Floored at 0 (rare: attributed > total
+  // can happen because of the 14-day lookback overlap).
+  const organic  = totalRev.map((tot, i) => Math.max(0, Math.round((tot - adSales[i]) * 100) / 100));
+  const roas     = (daily || []).map(d => {
+    const sp = (d.spendCad + d.spendUsd);
+    const sa = (d.adSalesCad + d.adSalesUsd);
+    return sp > 0 ? Math.round(sa / sp * 100) / 100 : null;
+  });
+
+  currentAdChart = new Chart(el, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Ad sales',      data: adSales, backgroundColor: '#537D30', stack: 'sales', borderWidth: 0, yAxisID: 'y' },
+        { label: 'Organic sales', data: organic, backgroundColor: '#CBD5E1', stack: 'sales', borderWidth: 0, yAxisID: 'y' },
+        { label: 'ROAS', data: roas, type: 'line', borderColor: '#1A2332', backgroundColor: 'transparent', borderWidth: 2, pointRadius: 0, tension: 0.3, yAxisID: 'y1' },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'top', align: 'end', labels: { font: { size: 11 }, color: '#5A6A82', usePointStyle: true } },
+        tooltip: { mode: 'index', intersect: false },
+      },
+      scales: {
+        x: { stacked: true, grid: { display: false }, ticks: { font: { size: 10 }, color: '#9AAABB', maxRotation: 0, autoSkip: true } },
+        y:  { stacked: true, grid: { color: '#F1F5F9' }, ticks: { font: { size: 10 }, color: '#9AAABB', callback: v => '$' + v.toLocaleString() }, beginAtZero: true, position: 'left' },
+        y1: { grid: { display: false }, ticks: { font: { size: 10 }, color: '#9AAABB', callback: v => v + 'x' }, beginAtZero: true, position: 'right' },
       },
     },
   });

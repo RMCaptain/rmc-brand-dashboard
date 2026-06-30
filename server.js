@@ -3124,13 +3124,15 @@ app.get('/api/brand-report-dataset/:brandId', async (req, res) => {
 
     // ── 5. Daily series for the chart sections — re-query daily_metrics so
     //      we get per-day breakdown (buildBrandMetricsForRange aggregates).
+    //      Pulls revenue + units (organic sales chart) AND ad spend/sales
+    //      (ad-trend chart with ROAS overlay).
     const brandAsinSet = new Set(brand.asins || []);
     async function fetchDailySeries(fromS, toS) {
       if (!brandAsinSet.size) return [];
       const out = [];
       for (let off = 0; ; off += 1000) {
         const { data, error } = await supabase.from('daily_metrics')
-          .select('asin,date,revenue_cad,revenue_usd,units')
+          .select('asin,date,revenue_cad,revenue_usd,units,spend_cad,spend_usd,attributed_sales_cad,attributed_sales_usd')
           .in('asin', [...brandAsinSet]).gte('date', fromS).lte('date', toS)
           .order('date').range(off, off + 999);
         if (error) throw new Error(error.message);
@@ -3139,16 +3141,52 @@ app.get('/api/brand-report-dataset/:brandId', async (req, res) => {
       }
       const byDate = {};
       for (const r of out) {
-        if (!byDate[r.date]) byDate[r.date] = { date: r.date, revCad: 0, revUsd: 0, units: 0 };
-        byDate[r.date].revCad += r.revenue_cad || 0;
-        byDate[r.date].revUsd += r.revenue_usd || 0;
-        byDate[r.date].units  += r.units       || 0;
+        if (!byDate[r.date]) byDate[r.date] = {
+          date: r.date, revCad: 0, revUsd: 0, units: 0,
+          spendCad: 0, spendUsd: 0, adSalesCad: 0, adSalesUsd: 0,
+        };
+        byDate[r.date].revCad     += r.revenue_cad          || 0;
+        byDate[r.date].revUsd     += r.revenue_usd          || 0;
+        byDate[r.date].units      += r.units                || 0;
+        byDate[r.date].spendCad   += r.spend_cad            || 0;
+        byDate[r.date].spendUsd   += r.spend_usd            || 0;
+        byDate[r.date].adSalesCad += r.attributed_sales_cad || 0;
+        byDate[r.date].adSalesUsd += r.attributed_sales_usd || 0;
       }
-      return Object.values(byDate).sort((a, b) => a.date.localeCompare(b.date));
+      // Round monetary values so the client doesn't show .000001 artifacts.
+      return Object.values(byDate)
+        .map(d => ({
+          ...d,
+          revCad: Math.round(d.revCad * 100) / 100,
+          revUsd: Math.round(d.revUsd * 100) / 100,
+          spendCad: Math.round(d.spendCad * 100) / 100,
+          spendUsd: Math.round(d.spendUsd * 100) / 100,
+          adSalesCad: Math.round(d.adSalesCad * 100) / 100,
+          adSalesUsd: Math.round(d.adSalesUsd * 100) / 100,
+        }))
+        .sort((a, b) => a.date.localeCompare(b.date));
     }
-    const [dailySeries, dailySeriesPrev] = await Promise.all([
-      fetchDailySeries(fromStr, toStr),
+
+    // YTD series — only fetch if the ytd_chart section is enabled (saves a
+    // year-of-rows query for brands that have it hidden).
+    async function fetchYtdSeries() {
+      if (!brandAsinSet.size) return { current: [], prior: [] };
+      const today = new Date(toStr + 'T12:00:00Z');
+      const yearStartCurr  = fmtISO(new Date(Date.UTC(today.getUTCFullYear(),     0, 1)));
+      const yearStartPrior = fmtISO(new Date(Date.UTC(today.getUTCFullYear() - 1, 0, 1)));
+      const yearEndPrior   = fmtISO(new Date(Date.UTC(today.getUTCFullYear() - 1, today.getUTCMonth(), today.getUTCDate())));
+      const [curr, prior] = await Promise.all([
+        fetchDailySeries(yearStartCurr,  toStr),
+        fetchDailySeries(yearStartPrior, yearEndPrior),
+      ]);
+      return { current: curr, prior };
+    }
+
+    const wantYtd = !hiddenSet.has('ytd_chart');
+    const [dailySeries, dailySeriesPrev, ytd] = await Promise.all([
+      fetchDailySeries(fromStr,    toStr),
       fetchDailySeries(compFromStr, compToStr),
+      wantYtd ? fetchYtdSeries() : Promise.resolve({ current: [], prior: [] }),
     ]);
 
     // ── 6. Assemble response
@@ -3167,6 +3205,8 @@ app.get('/api/brand-report-dataset/:brandId', async (req, res) => {
       products:    curr.skus,
       dailySeries,
       dailySeriesPrev,
+      ytdSeries:     ytd.current,
+      ytdSeriesPrev: ytd.prior,
       generatedAt: new Date().toISOString(),
     });
   } catch (err) {
