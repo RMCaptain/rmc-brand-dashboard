@@ -3054,6 +3054,238 @@ app.post('/api/brand-report-config/seed-defaults', async (req, res) => {
   }
 });
 
+// ── AI executive summary (Phase 2 slice 2.3) ─────────────────────────────────
+// Generates a 2-3 paragraph narrative summary in Mike's voice using Claude.
+// Cached per (brand_id, period_from, period_to) in brand_report_summaries so
+// repeated views don't burn API tokens. When the table is missing, the code
+// degrades to "regenerate every call" — so the migration is non-blocking.
+
+const ANTHROPIC_MODEL = 'claude-sonnet-4-6';
+
+async function trySelectSummary(brandId, fromS, toS) {
+  try {
+    const { data, error } = await supabase
+      .from('brand_report_summaries')
+      .select('summary_text, edited, generated_at, updated_at')
+      .eq('brand_id', brandId).eq('period_from', fromS).eq('period_to', toS)
+      .maybeSingle();
+    if (error) {
+      // Missing table → undefined column → silently return null (caller will
+      // regenerate). Real errors still bubble up.
+      if (String(error.message).match(/relation .* does not exist|brand_report_summaries/i)) return null;
+      throw new Error(error.message);
+    }
+    return data;
+  } catch (e) {
+    console.warn('[Summary] cache read skipped:', e.message);
+    return null;
+  }
+}
+
+async function trySaveSummary(row) {
+  try {
+    const { error } = await supabase
+      .from('brand_report_summaries')
+      .upsert(row, { onConflict: 'brand_id,period_from,period_to' });
+    if (error && !String(error.message).match(/relation .* does not exist/i)) throw new Error(error.message);
+  } catch (e) {
+    console.warn('[Summary] cache write skipped:', e.message);
+  }
+}
+
+function buildSummaryPrompt(dataset) {
+  const s   = dataset.summary || {};
+  const sp  = dataset.summaryPrev || {};
+  const ad  = s.adSummary || {};
+  const products = (dataset.products || []).filter(p => (p.revenueCad + p.revenueUsd) > 0);
+
+  // Top product by combined revenue.
+  const top = [...products].sort((a, b) => (b.revenueCad + b.revenueUsd) - (a.revenueCad + a.revenueUsd))[0];
+
+  // Best mover by unit growth vs prior period (require both non-zero to avoid div/0).
+  const movers = products
+    .filter(p => p.prev?.units > 0 && p.units > 0 && p.units !== p.prev.units)
+    .map(p => ({ p, growth: (p.units - p.prev.units) / p.prev.units }))
+    .sort((a, b) => b.growth - a.growth);
+  const mover = movers[0]?.p;
+  const moverGrowth = movers[0] ? Math.round(movers[0].growth * 1000) / 10 : null;
+
+  // Period deltas
+  const pct = (curr, prev) => (!prev || prev === 0) ? null : Math.round((curr - prev) / prev * 1000) / 10;
+  const totalRev = (s.revenueCad || 0) + (s.revenueUsd || 0);
+  const totalPrev = (sp.revenueCad || 0) + (sp.revenueUsd || 0);
+  const revGrowth   = pct(totalRev, totalPrev);
+  const unitsGrowth = pct(s.units,  sp.units);
+  const cvr = s.sessions ? Math.round(s.units / s.sessions * 1000) / 10 : null;
+
+  const facts = [
+    `Brand: ${dataset.brand.name}`,
+    `Period: ${dataset.period.label}`,
+    `Comparison period: ${dataset.comparison.label}`,
+    ``,
+    `Revenue: $${Math.round(s.revenueCad || 0).toLocaleString()} CAD${s.revenueUsd ? ` and $${Math.round(s.revenueUsd).toLocaleString()} USD` : ''} (${revGrowth != null ? (revGrowth >= 0 ? '+' : '') + revGrowth + '%' : 'no prior comparison'} vs prior period)`,
+    `Units sold: ${(s.units || 0).toLocaleString()} (${unitsGrowth != null ? (unitsGrowth >= 0 ? '+' : '') + unitsGrowth + '%' : 'no prior comparison'})`,
+    `Sessions: ${(s.sessions || 0).toLocaleString()}, conversion rate ${cvr != null ? cvr + '%' : 'n/a'}`,
+    `Buy Box %: ${s.buyBox != null ? s.buyBox.toFixed(1) + '%' : 'n/a'}`,
+  ];
+
+  if (ad.spendCad != null || ad.spendUsd != null) {
+    const spendTotal = (ad.spendCad || 0) + (ad.spendUsd || 0);
+    facts.push(``);
+    facts.push(`Ad spend: $${Math.round(spendTotal).toLocaleString()}, TACOS ${ad.tacos != null ? ad.tacos + '%' : 'n/a'}, ACOS ${ad.acos != null ? ad.acos + '%' : 'n/a'}, ROAS ${ad.roas != null ? ad.roas.toFixed(2) + 'x' : 'n/a'}`);
+    if (ad.ntbSalesPct != null) {
+      facts.push(`New-to-Brand: ${ad.ntbSalesPct}% of ad sales (${(ad.ntbOrders || 0).toLocaleString()} orders, $${Math.round(((ad.ntbSalesCad || 0) + (ad.ntbSalesUsd || 0))).toLocaleString()})`);
+    }
+  }
+
+  if (top) {
+    facts.push(``);
+    const topRev = (top.revenueCad || 0) + (top.revenueUsd || 0);
+    facts.push(`Top product: ${top.title || top.asin} — $${Math.round(topRev).toLocaleString()} from ${(top.units || 0).toLocaleString()} units, CVR ${top.cvr != null ? top.cvr + '%' : 'n/a'}, Buy Box ${top.buyBox != null ? top.buyBox + '%' : 'n/a'}`);
+  }
+  if (mover && mover !== top && moverGrowth != null) {
+    facts.push(`Notable mover: ${mover.title || mover.asin} — ${moverGrowth >= 0 ? '+' : ''}${moverGrowth}% unit growth vs prior period (${mover.prev.units} → ${mover.units} units)`);
+  }
+
+  // Inventory issues worth flagging
+  const lowStock = (dataset.products || []).filter(p => p.inventory?.onHand != null && p.inventory.onHand < 30 && p.units > 0);
+  if (lowStock.length) {
+    facts.push(``);
+    facts.push(`Inventory note: ${lowStock.length} active SKU${lowStock.length === 1 ? '' : 's'} currently below 30 units on hand (low/out): ${lowStock.slice(0, 3).map(p => (p.title || p.asin).slice(0, 40)).join('; ')}${lowStock.length > 3 ? '…' : ''}`);
+  }
+
+  return `You are writing the executive summary section of a monthly Amazon performance report. The report is sent by Rocky Mountain Co. (RMC) — an Amazon accelerator that buys inventory wholesale and resells on Amazon — to a brand they manage.
+
+VOICE: Professional, technical, approachable. Mike Sieben's voice: direct, concise, NO hype, NO corporate fluff, NO emojis, NO marketing language like "exciting" / "amazing" / "incredible". Give context and drivers, not just numbers. Trust the reader knows e-commerce. Write like a smart analyst briefing a peer.
+
+STRUCTURE: 2-3 short paragraphs. NO headings. NO bullet lists. NO "Here is the summary:" preamble. Just the paragraphs. The first paragraph leads with the headline numbers and what drove them. The second covers product-level callouts (top product, emerging mover, inventory issues). The third covers advertising performance and a brief forward outlook (one sentence — what's the next signal to watch).
+
+DO NOT speculate about events you don't know about (Prime Day dates, holiday calendars, etc). Stick to the data provided.
+
+DATA:
+${facts.join('\n')}
+
+Write the summary now.`;
+}
+
+async function callClaudeForSummary(prompt) {
+  if (!process.env.ANTHROPIC_API_KEY) {
+    throw new Error('ANTHROPIC_API_KEY is not set — add it to Render env vars to enable AI summaries');
+  }
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'content-type':      'application/json',
+      'x-api-key':         process.env.ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model:      ANTHROPIC_MODEL,
+      max_tokens: 1024,
+      messages:   [{ role: 'user', content: prompt }],
+    }),
+  });
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(`Anthropic API ${res.status}: ${errBody.slice(0, 400)}`);
+  }
+  const body = await res.json();
+  const text = (body.content || []).filter(c => c.type === 'text').map(c => c.text).join('\n').trim();
+  if (!text) throw new Error('Anthropic returned no text content');
+  return text;
+}
+
+// Resolve from/to from explicit query params OR a named preset, matching the
+// dataset endpoint's resolution so cache lookups stay aligned.
+function resolveSummaryRange(req) {
+  const msDay = 86400000;
+  const fmtISO = d => d.toISOString().split('T')[0];
+  const todayStr = fmtISO(new Date());
+  let toStr   = req.query.to;
+  let fromStr = req.query.from;
+  if (!toStr) toStr = todayStr;
+  if (!fromStr) {
+    const days = ({ last7d: 7, last14d: 14, last30d: 30, last90d: 90 })[req.query.period || 'last30d'] || 30;
+    fromStr = fmtISO(new Date(new Date(toStr) - (days - 1) * msDay));
+  }
+  return { from: fromStr, to: toStr };
+}
+
+// GET — returns cached summary or null if none exists yet.
+app.get('/api/brand-report-summary/:brandId', async (req, res) => {
+  const { brandId } = req.params;
+  const { from, to } = resolveSummaryRange(req);
+  try {
+    const row = await trySelectSummary(brandId, from, to);
+    res.json({ brand_id: brandId, period_from: from, period_to: to, ...(row || { summary_text: null, edited: false }) });
+  } catch (err) {
+    console.error('[Summary] GET error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST — generates a fresh summary via Claude. Pass ?force=true to regenerate
+// over a previously-saved one (caution: clobbers edited content).
+app.post('/api/brand-report-summary/:brandId', async (req, res) => {
+  const { brandId } = req.params;
+  const { from, to } = resolveSummaryRange(req);
+  const force = req.query.force === 'true';
+
+  try {
+    // Respect edited cache unless force=true
+    if (!force) {
+      const cached = await trySelectSummary(brandId, from, to);
+      if (cached?.edited && cached.summary_text) {
+        return res.json({ brand_id: brandId, period_from: from, period_to: to, ...cached, from_cache: true });
+      }
+    }
+
+    // Pull the dataset (reuse the same internal logic). We hit the local
+    // endpoint via fetch — simpler than refactoring the route handler into
+    // a callable, and the localhost roundtrip is sub-millisecond.
+    const port = process.env.PORT || 3000;
+    const dsRes = await fetch(`http://localhost:${port}/api/brand-report-dataset/${encodeURIComponent(brandId)}?from=${from}&to=${to}`);
+    if (!dsRes.ok) throw new Error(`Dataset fetch failed: ${dsRes.status}`);
+    const dataset = await dsRes.json();
+    if (dataset.error) throw new Error(dataset.error);
+
+    const prompt = buildSummaryPrompt(dataset);
+    const text   = await callClaudeForSummary(prompt);
+    const now    = new Date().toISOString();
+
+    await trySaveSummary({
+      brand_id: brandId, period_from: from, period_to: to,
+      summary_text: text, edited: false,
+      generated_at: now, updated_at: now,
+    });
+
+    res.json({ brand_id: brandId, period_from: from, period_to: to, summary_text: text, edited: false, generated_at: now, updated_at: now });
+  } catch (err) {
+    console.error('[Summary] POST error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT — save an edited summary. Marks edited=true so future POSTs without
+// force=true won't clobber it.
+app.put('/api/brand-report-summary/:brandId', async (req, res) => {
+  const { brandId } = req.params;
+  const { from, to } = resolveSummaryRange(req);
+  const text = (req.body || {}).summary_text;
+  if (typeof text !== 'string') return res.status(400).json({ error: 'summary_text (string) required in body' });
+  try {
+    const now = new Date().toISOString();
+    await trySaveSummary({
+      brand_id: brandId, period_from: from, period_to: to,
+      summary_text: text, edited: true, updated_at: now,
+    });
+    res.json({ brand_id: brandId, period_from: from, period_to: to, summary_text: text, edited: true, updated_at: now });
+  } catch (err) {
+    console.error('[Summary] PUT error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Unified brand report dataset (Stream B2) ─────────────────────────────────
 // One endpoint, one response. Replaces /api/report-data + /api/report-ads for
 // new consumers (Phase 2 PDF, Phase 3 UI, Phase 4 internal agent, Phase 5

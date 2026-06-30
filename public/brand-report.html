@@ -62,6 +62,29 @@
     .rpt-placeholder { padding: 18px 0; color: var(--text-3); font-size: 12px; }
     .rpt-placeholder strong { color: var(--text-2); font-weight: 600; }
 
+    /* Executive summary editor */
+    .exec-status { font-size: 12px; color: var(--text-3); margin-bottom: 10px; }
+    .exec-status.error { color: var(--neg); }
+    .exec-textarea {
+      width: 100%; min-height: 200px; padding: 14px 16px; font-family: 'Inter', sans-serif;
+      font-size: 13px; line-height: 1.6; color: var(--text); background: var(--bg);
+      border: 1px solid var(--border); border-radius: 10px; resize: vertical;
+    }
+    .exec-textarea:focus { outline: none; border-color: var(--green); background: #fff; }
+    .exec-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; gap: 12px; }
+    .exec-meta { font-size: 11px; color: var(--text-3); }
+    .exec-buttons { display: flex; gap: 8px; }
+    .exec-btn, .exec-btn-secondary {
+      font-family: inherit; font-size: 12px; font-weight: 600; padding: 7px 14px;
+      border-radius: 8px; cursor: pointer; transition: opacity 0.15s, background 0.15s;
+    }
+    .exec-btn { background: var(--green); color: #fff; border: 0; }
+    .exec-btn:hover:not(:disabled) { background: #466A28; }
+    .exec-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .exec-btn-secondary { background: #fff; color: var(--text-2); border: 1px solid var(--border); }
+    .exec-btn-secondary:hover:not(:disabled) { background: var(--bg); color: var(--text); }
+    .exec-btn-secondary:disabled { opacity: 0.4; cursor: not-allowed; }
+
     /* Headline tiles */
     .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
     .tile { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
@@ -211,10 +234,16 @@ const SECTION_TITLES = {
 
 const SECTION_RENDERERS = {
   executive_summary: () => `
-    <div class="rpt-placeholder">
-      <strong>Coming soon</strong> — AI-generated narrative covering headline numbers,
-      MoM comparison, top product callouts, advertising commentary, and forward outlook.
-      Editable before saving.
+    <div id="execSummaryWrap">
+      <div id="execSummaryStatus" class="exec-status">Loading summary…</div>
+      <textarea id="execSummaryText" class="exec-textarea" placeholder="Click Generate to draft a summary with AI, then edit as needed." spellcheck="true"></textarea>
+      <div class="exec-actions">
+        <span id="execSummaryMeta" class="exec-meta"></span>
+        <div class="exec-buttons">
+          <button id="execRegenBtn" class="exec-btn-secondary" type="button">Regenerate</button>
+          <button id="execSaveBtn"  class="exec-btn"          type="button" disabled>Save</button>
+        </div>
+      </div>
     </div>`,
 
   headline_tiles: (d) => {
@@ -458,6 +487,9 @@ async function render() {
     if (enabled.includes('ytd_chart'))   buildYtdChart(d.ytdSeries, d.ytdSeriesPrev);
     if (enabled.includes('ad_trend'))    buildAdTrendChart(d.dailySeries);
 
+    // Initialize executive summary section if visible.
+    if (enabled.includes('executive_summary')) initExecSummary(d.brand.id, d.period.from, d.period.to);
+
     $('loading').style.display = 'none';
     $('report').style.display  = 'block';
   } catch (err) {
@@ -581,6 +613,120 @@ function buildAdTrendChart(daily) {
       },
     },
   });
+}
+
+// ── Executive summary controller ──────────────────────────────────────────────
+let execState = { brandId: null, from: null, to: null, dirty: false, edited: false };
+
+function setExecStatus(msg, isError = false) {
+  const el = document.getElementById('execSummaryStatus');
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.toggle('error', !!isError);
+}
+function setExecMeta(meta) {
+  const el = document.getElementById('execSummaryMeta');
+  if (el) el.textContent = meta || '';
+}
+
+async function initExecSummary(brandId, from, to) {
+  execState = { brandId, from, to, dirty: false, edited: false };
+
+  const textarea = document.getElementById('execSummaryText');
+  const regenBtn = document.getElementById('execRegenBtn');
+  const saveBtn  = document.getElementById('execSaveBtn');
+  if (!textarea || !regenBtn || !saveBtn) return;
+
+  // Reset UI
+  textarea.value = '';
+  saveBtn.disabled = true;
+  regenBtn.disabled = false;
+  setExecMeta('');
+
+  // Listeners (attach once — reset rebinds because section innerHTML is rebuilt each render)
+  textarea.oninput = () => {
+    execState.dirty = true;
+    saveBtn.disabled = false;
+  };
+  saveBtn.onclick  = () => saveExecSummary();
+  regenBtn.onclick = () => regenerateExecSummary();
+
+  // Try to load cached summary first
+  try {
+    const res = await fetch(`/api/brand-report-summary/${encodeURIComponent(brandId)}?from=${from}&to=${to}`, { credentials: 'include' });
+    const data = await res.json();
+    if (data.summary_text) {
+      textarea.value = data.summary_text;
+      execState.edited = !!data.edited;
+      const stamp = new Date(data.updated_at || data.generated_at).toLocaleString();
+      setExecStatus('');
+      setExecMeta(`${data.edited ? 'Edited' : 'AI-drafted'} · last updated ${stamp}`);
+      return;
+    }
+    // No cached summary — auto-generate
+    await regenerateExecSummary();
+  } catch (err) {
+    setExecStatus('Failed to load summary — ' + err.message, true);
+  }
+}
+
+async function regenerateExecSummary() {
+  const textarea = document.getElementById('execSummaryText');
+  const regenBtn = document.getElementById('execRegenBtn');
+  const saveBtn  = document.getElementById('execSaveBtn');
+  if (!textarea) return;
+
+  if (execState.edited && !confirm('This summary has been edited. Regenerating will replace your edits. Continue?')) return;
+
+  regenBtn.disabled = true;
+  saveBtn.disabled  = true;
+  setExecStatus('Generating with Claude…');
+  setExecMeta('');
+
+  try {
+    const url = `/api/brand-report-summary/${encodeURIComponent(execState.brandId)}?from=${execState.from}&to=${execState.to}${execState.edited ? '&force=true' : ''}`;
+    const res = await fetch(url, { method: 'POST', credentials: 'include' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+    textarea.value     = data.summary_text || '';
+    execState.dirty    = false;
+    execState.edited   = false;
+    const stamp = new Date(data.generated_at || data.updated_at).toLocaleString();
+    setExecStatus('');
+    setExecMeta(`AI-drafted · generated ${stamp}`);
+  } catch (err) {
+    setExecStatus('Generation failed — ' + err.message, true);
+  } finally {
+    regenBtn.disabled = false;
+  }
+}
+
+async function saveExecSummary() {
+  const textarea = document.getElementById('execSummaryText');
+  const saveBtn  = document.getElementById('execSaveBtn');
+  if (!textarea) return;
+
+  saveBtn.disabled = true;
+  setExecStatus('Saving…');
+  try {
+    const res = await fetch(`/api/brand-report-summary/${encodeURIComponent(execState.brandId)}?from=${execState.from}&to=${execState.to}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ summary_text: textarea.value }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+    execState.dirty  = false;
+    execState.edited = true;
+    setExecStatus('');
+    setExecMeta(`Edited · saved ${new Date(data.updated_at).toLocaleString()}`);
+  } catch (err) {
+    setExecStatus('Save failed — ' + err.message, true);
+    saveBtn.disabled = false;
+  }
 }
 
 init();
