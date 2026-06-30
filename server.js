@@ -3117,12 +3117,71 @@ app.get('/api/brand-report-pdf/:brandId', async (req, res) => {
     const safeName  = String(brandName).replace(/[^a-z0-9\-_]+/gi, '_');
     const filename  = `RMC_${safeName}_${period}_${dateStamp}.pdf`;
 
+    // Record an archive entry. Best-effort — failure (e.g. missing table)
+    // must not block the PDF download.
+    try {
+      // Pull the period range Puppeteer just rendered via the page URL params.
+      // Resolve the same way the dataset endpoint does so the archive's
+      // dates exactly match what's in the PDF.
+      const { from: archiveFrom, to: archiveTo } = resolveSummaryRange(req);
+      let summarySnapshot = null;
+      try {
+        const cached = await trySelectSummary(brandId, archiveFrom, archiveTo);
+        summarySnapshot = cached?.summary_text || null;
+      } catch {}
+
+      const archiveRow = {
+        brand_id:              brandId,
+        period_from:           archiveFrom,
+        period_to:             archiveTo,
+        period_label:          period,
+        summary_text_snapshot: summarySnapshot,
+        generated_by:          req.headers['x-rmc-actor'] || 'system',
+        generated_at:          new Date().toISOString(),
+      };
+      const { error: archiveErr } = await supabase
+        .from('brand_report_archives')
+        .insert(archiveRow);
+      if (archiveErr && !String(archiveErr.message).match(/relation .* does not exist/i)) {
+        console.warn('[BrandReportPDF] archive insert error:', archiveErr.message);
+      }
+    } catch (e) {
+      console.warn('[BrandReportPDF] archive logging skipped:', e.message);
+    }
+
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(Buffer.isBuffer(pdfData) ? pdfData : Buffer.from(pdfData));
   } catch (err) {
     console.error('[BrandReportPDF] error:', err.message);
     if (browser) { try { await browser.close(); } catch {} }
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Report history archives (Phase 2 slice 2.5) ──────────────────────────────
+// Lists past PDF generations for a brand. The archive row is logged each
+// time the PDF endpoint runs (see GET /api/brand-report-pdf above).
+app.get('/api/brand-report-archives/:brandId', async (req, res) => {
+  const { brandId } = req.params;
+  const limit = Math.min(parseInt(req.query.limit || '50', 10), 200);
+  try {
+    const { data, error } = await supabase
+      .from('brand_report_archives')
+      .select('id, brand_id, period_from, period_to, period_label, summary_text_snapshot, generated_by, generated_at')
+      .eq('brand_id', brandId)
+      .order('generated_at', { ascending: false })
+      .limit(limit);
+    if (error) {
+      // Missing table → return empty list rather than 500ing the UI.
+      if (String(error.message).match(/relation .* does not exist|brand_report_archives/i)) {
+        return res.json({ brand_id: brandId, archives: [], note: 'archive table not created yet — run sql/brand-report-archives.sql' });
+      }
+      throw new Error(error.message);
+    }
+    res.json({ brand_id: brandId, archives: data || [] });
+  } catch (err) {
+    console.error('[BrandReportArchives] GET error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
