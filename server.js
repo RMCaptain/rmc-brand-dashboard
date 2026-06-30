@@ -2414,9 +2414,11 @@ app.post('/api/asins/images/migrate', async (req, res) => {
 });
 
 // Daily ad-spend sync — pulls Amazon Ads with timeUnit:DAILY for a window,
-// then upserts spend_cad / spend_usd / attributed_sales_* per (asin, date)
-// into daily_metrics. Only writes the four ad-spend columns; sales/refund
-// columns are preserved via Supabase's column-level upsert.
+// then upserts spend_cad / spend_usd / attributed_sales_* / ad_clicks /
+// ad_impressions / ad_orders per (asin, date) into daily_metrics. Sales/
+// refund columns are preserved via Supabase's column-level upsert.
+// Persisting clicks/impressions/orders (added 2026-06-30) means reports can
+// read them instantly instead of triggering a fresh 1-5 min Ads API bake.
 async function syncDailyAdSpend({ windowDays = 30, includeToday = true } = {}) {
   const { pullAdSpendDaily } = require('./sync/ads');
   const today = pstDateStr();
@@ -2437,13 +2439,19 @@ async function syncDailyAdSpend({ windowDays = 30, includeToday = true } = {}) {
       spend_usd:            Math.round((d.spendUsd || 0) * 100) / 100,
       attributed_sales_cad: Math.round((d.salesCad || 0) * 100) / 100,
       attributed_sales_usd: Math.round((d.salesUsd || 0) * 100) / 100,
-    })).filter(r => r.spend_cad > 0 || r.spend_usd > 0);
+      ad_clicks:      d.clicks      || 0,
+      ad_impressions: d.impressions || 0,
+      ad_orders:      d.orders      || 0,
+    })).filter(r =>
+      r.spend_cad > 0 || r.spend_usd > 0 ||
+      r.ad_clicks > 0 || r.ad_impressions > 0 || r.ad_orders > 0
+    );
     if (rows.length === 0) continue;
     const { error } = await supabase.from('daily_metrics').upsert(rows, { onConflict: 'asin,date' });
     if (error) console.warn(`[AdsDaily] ${date} upsert error:`, error.message);
     else { rowCount += rows.length; }
   }
-  console.log(`[AdsDaily] Wrote ad spend on ${rowCount} (asin,date) rows`);
+  console.log(`[AdsDaily] Wrote ad spend + engagement on ${rowCount} (asin,date) rows`);
   return { rowCount, datesTouched: Object.keys(merged).length };
 }
 
@@ -2542,6 +2550,7 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
           bb_sum: 0, bb_count: 0,
           spend_cad: 0, spend_usd: 0,
           attr_sales_cad: 0, attr_sales_usd: 0,
+          ad_clicks: 0, ad_impressions: 0, ad_orders: 0,
           inv_onhand: null, inv_inbound: null,
         };
       }
@@ -2555,6 +2564,9 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
       a.spend_usd      += row.spend_usd             || 0;
       a.attr_sales_cad += row.attributed_sales_cad  || 0;
       a.attr_sales_usd += row.attributed_sales_usd  || 0;
+      a.ad_clicks      += row.ad_clicks             || 0;
+      a.ad_impressions += row.ad_impressions        || 0;
+      a.ad_orders      += row.ad_orders             || 0;
       a.refunded_units     = (a.refunded_units     || 0) + (row.refunded_units    || 0);
       a.refund_amount_cad  = (a.refund_amount_cad  || 0) + (row.refund_amount_cad || 0);
       a.refund_amount_usd  = (a.refund_amount_usd  || 0) + (row.refund_amount_usd || 0);
@@ -2578,6 +2590,9 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
     function buildSku(asin, brandId, a, title) {
       const spendTotal = (a.spend_cad || 0) + (a.spend_usd || 0);
       const attrTotal  = (a.attr_sales_cad || 0) + (a.attr_sales_usd || 0);
+      const clicks     = a.ad_clicks      || 0;
+      const impressions= a.ad_impressions || 0;
+      const adOrders   = a.ad_orders      || 0;
       return {
         asin,
         title,
@@ -2594,7 +2609,14 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
         spendUsd:           Math.round((a.spend_usd || 0) * 100) / 100,
         attributedSalesCad: Math.round((a.attr_sales_cad || 0) * 100) / 100,
         attributedSalesUsd: Math.round((a.attr_sales_usd || 0) * 100) / 100,
+        adClicks:      clicks      || null,
+        adImpressions: impressions || null,
+        adOrders:      adOrders    || null,
         acos: (spendTotal > 0 && attrTotal > 0) ? Math.round(spendTotal / attrTotal * 10000) / 100 : null,
+        roas: spendTotal > 0 ? Math.round(attrTotal / spendTotal * 100) / 100 : null,
+        ctr:  impressions > 0 ? Math.round(clicks / impressions * 100000) / 1000 : null,
+        cpc:  clicks > 0      ? Math.round(spendTotal / clicks * 10000) / 10000 : null,
+        adCvr: clicks > 0     ? Math.round(adOrders / clicks * 10000) / 100 : null,
         inventory: a.inv_onhand != null ? { onHand: a.inv_onhand, inbound: a.inv_inbound || 0 } : null,
         marketplaces: [...((a.units_ca||0) > 0 ? ['CA'] : []), ...((a.units_us||0) > 0 ? ['US'] : [])],
         imageUrl: imagesByAsin[asin] || null,
@@ -2607,6 +2629,7 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
     for (const brand of brands) {
       let bUnits=0, bUnitsCa=0, bUnitsUs=0, bRevCad=0, bRevUsd=0, bSessions=0, bPageViews=0;
       let bSpendCad=0, bSpendUsd=0, bAttrCad=0, bAttrUsd=0;
+      let bAdClicks=0, bAdImpressions=0, bAdOrders=0;
       let bRefundedUnits=0, bRefundCad=0, bRefundUsd=0, bRefundCount=0;
       const buyBoxSamples = [];
       const skus = [];
@@ -2624,6 +2647,9 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
         bSessions += a.sessions; bPageViews += a.page_views;
         bSpendCad += a.spend_cad; bSpendUsd += a.spend_usd;
         bAttrCad += a.attr_sales_cad; bAttrUsd += a.attr_sales_usd;
+        bAdClicks      += a.ad_clicks      || 0;
+        bAdImpressions += a.ad_impressions || 0;
+        bAdOrders      += a.ad_orders      || 0;
         bRefundedUnits += a.refunded_units    || 0;
         bRefundCad     += a.refund_amount_cad || 0;
         bRefundUsd     += a.refund_amount_usd || 0;
@@ -2652,11 +2678,19 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
           refundAmountCad: Math.round(bRefundCad * 100) / 100,
           refundAmountUsd: Math.round(bRefundUsd * 100) / 100,
           refundCount:    bRefundCount,
-          adSummary:  (bSpendCad + bSpendUsd) > 0 ? {
+          adSummary:  (bSpendCad + bSpendUsd) > 0 || bAdClicks > 0 || bAdImpressions > 0 ? {
             spendCad:           Math.round(bSpendCad * 100) / 100,
             spendUsd:           Math.round(bSpendUsd * 100) / 100,
             attributedSalesCad: Math.round(bAttrCad * 100) / 100,
             attributedSalesUsd: Math.round(bAttrUsd * 100) / 100,
+            clicks:      bAdClicks,
+            impressions: bAdImpressions,
+            orders:      bAdOrders,
+            acos:  (bAttrCad + bAttrUsd) > 0 ? Math.round((bSpendCad + bSpendUsd) / (bAttrCad + bAttrUsd) * 10000) / 100 : null,
+            roas:  (bSpendCad + bSpendUsd) > 0 ? Math.round((bAttrCad + bAttrUsd) / (bSpendCad + bSpendUsd) * 100) / 100 : null,
+            ctr:   bAdImpressions > 0 ? Math.round(bAdClicks / bAdImpressions * 100000) / 1000 : null,
+            cpc:   bAdClicks > 0      ? Math.round((bSpendCad + bSpendUsd) / bAdClicks * 10000) / 10000 : null,
+            adCvr: bAdClicks > 0      ? Math.round(bAdOrders / bAdClicks * 10000) / 100 : null,
           } : null,
           alerts: stSummary.alerts || {},
         },
@@ -2780,16 +2814,17 @@ async function rebuildPresetSummariesFromDaily(tag = 'PresetRebuild') {
         const oldSku = oldSkuByAsin[newSku.asin] || {};
         return {
           ...newSku,
-          // Preserve ad detail fields not stored in daily_metrics
-          adClicks:      oldSku.adClicks ?? null,
-          adImpressions: oldSku.adImpressions ?? null,
-          adOrders:      oldSku.adOrders ?? null,
-          cpc:           oldSku.cpc ?? null,
-          ctr:           oldSku.ctr ?? null,
-          adCvr:         oldSku.adCvr ?? null,
-          // ACOS/ROAS can be derived; prefer daily_metrics value if present, else old
-          acos:          newSku.acos ?? oldSku.acos ?? null,
-          roas:          oldSku.roas ?? null,
+          // Prefer daily_metrics-sourced ad fields (now persisted as of
+          // 2026-06-30 migration); fall back to cached values only when
+          // daily_metrics has no data for that ASIN.
+          adClicks:      newSku.adClicks      ?? oldSku.adClicks      ?? null,
+          adImpressions: newSku.adImpressions ?? oldSku.adImpressions ?? null,
+          adOrders:      newSku.adOrders      ?? oldSku.adOrders      ?? null,
+          cpc:           newSku.cpc           ?? oldSku.cpc           ?? null,
+          ctr:           newSku.ctr           ?? oldSku.ctr           ?? null,
+          adCvr:         newSku.adCvr         ?? oldSku.adCvr         ?? null,
+          acos:          newSku.acos          ?? oldSku.acos          ?? null,
+          roas:          newSku.roas          ?? oldSku.roas          ?? null,
           // Metadata: prefer existing title/image (set during SP-API listings sync)
           title:         oldSku.title || newSku.title || '',
           imageUrl:      oldSku.imageUrl || newSku.imageUrl || null,
@@ -2800,21 +2835,23 @@ async function rebuildPresetSummariesFromDaily(tag = 'PresetRebuild') {
         };
       });
 
-      // Merge brand adSummary: new spend/attr from daily_metrics + old clicks/impressions/etc
+      // Merge brand adSummary: prefer daily_metrics-sourced values (now
+      // including clicks/impressions/orders), fall back to old cache only
+      // when daily_metrics has nothing for that brand.
       const oldAd = oldBm.summary?.adSummary || null;
       const newAd = newBm.summary?.adSummary || null;
       let mergedAd = null;
       if (newAd) {
         mergedAd = {
           ...newAd,
-          clicks:      oldAd?.clicks      ?? null,
-          impressions: oldAd?.impressions ?? null,
-          orders:      oldAd?.orders      ?? null,
-          acos:        oldAd?.acos        ?? null,
-          roas:        oldAd?.roas        ?? null,
-          ctr:         oldAd?.ctr         ?? null,
-          cpc:         oldAd?.cpc         ?? null,
-          adCvr:       oldAd?.adCvr       ?? null,
+          clicks:      newAd.clicks      ?? oldAd?.clicks      ?? null,
+          impressions: newAd.impressions ?? oldAd?.impressions ?? null,
+          orders:      newAd.orders      ?? oldAd?.orders      ?? null,
+          acos:        newAd.acos        ?? oldAd?.acos        ?? null,
+          roas:        newAd.roas        ?? oldAd?.roas        ?? null,
+          ctr:         newAd.ctr         ?? oldAd?.ctr         ?? null,
+          cpc:         newAd.cpc         ?? oldAd?.cpc         ?? null,
+          adCvr:       newAd.adCvr       ?? oldAd?.adCvr       ?? null,
         };
       } else if (oldAd) {
         mergedAd = oldAd;
