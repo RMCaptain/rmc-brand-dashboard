@@ -71,7 +71,11 @@ async function createAdReport(profileId, token, startDate, endDate) {
     configuration: {
       adProduct:    'SPONSORED_PRODUCTS',
       groupBy:      ['advertiser'],
-      columns:      ['advertisedAsin', 'cost', 'sales14d', 'clicks', 'impressions', 'purchases14d'],
+      columns:      [
+        'advertisedAsin', 'cost', 'sales14d', 'clicks', 'impressions', 'purchases14d',
+        // NTB (New-To-Brand) — share of ad-attributed sales from new customers.
+        'newToBrandSales14d', 'newToBrandPurchases14d', 'newToBrandUnitsSold14d',
+      ],
       reportTypeId: 'spAdvertisedProduct',
       timeUnit:     'SUMMARY',
       format:       'GZIP_JSON',
@@ -128,22 +132,30 @@ async function downloadAdReport(url) {
 // ── Parse ─────────────────────────────────────────────────────────────────────
 
 function parseAdReport(rows) {
-  // rows: [{ advertisedAsin, cost, attributedSales14d, clicks, impressions, purchases14d }]
+  // rows: [{ advertisedAsin, cost, sales14d, clicks, impressions, purchases14d,
+  //          newToBrandSales14d, newToBrandPurchases14d, newToBrandUnitsSold14d }]
   const result = {};
   for (const row of (rows || [])) {
     const asin = row.advertisedAsin;
     if (!asin) continue;
-    if (!result[asin]) result[asin] = { spend: 0, attributedSales: 0, clicks: 0, impressions: 0, orders: 0 };
+    if (!result[asin]) result[asin] = {
+      spend: 0, attributedSales: 0, clicks: 0, impressions: 0, orders: 0,
+      ntbSales: 0, ntbOrders: 0, ntbUnits: 0,
+    };
     result[asin].spend          += Number(row.cost             || 0);
     result[asin].attributedSales += Number(row.sales14d || 0);
     result[asin].clicks         += Number(row.clicks           || 0);
     result[asin].impressions    += Number(row.impressions      || 0);
     result[asin].orders         += Number(row.purchases14d     || 0);
+    result[asin].ntbSales       += Number(row.newToBrandSales14d      || 0);
+    result[asin].ntbOrders      += Number(row.newToBrandPurchases14d  || 0);
+    result[asin].ntbUnits       += Number(row.newToBrandUnitsSold14d  || 0);
   }
   // Compute derived metrics per ASIN
   for (const d of Object.values(result)) {
     d.spend           = Math.round(d.spend * 100) / 100;
     d.attributedSales = Math.round(d.attributedSales * 100) / 100;
+    d.ntbSales        = Math.round(d.ntbSales * 100) / 100;
     // ACOS: ad spend / attributed sales
     d.acos   = d.attributedSales > 0 ? Math.round(d.spend / d.attributedSales * 10000) / 100 : null;
     // ROAS: attributed sales / ad spend (return per dollar spent)
@@ -154,6 +166,9 @@ function parseAdReport(rows) {
     d.ctr    = d.impressions > 0 ? Math.round(d.clicks / d.impressions * 100000) / 1000 : null;
     // Ad CVR: orders per click (%)
     d.adCvr  = d.clicks > 0 ? Math.round(d.orders / d.clicks * 10000) / 100 : null;
+    // NTB % of ad-attributed sales
+    d.ntbSalesPct = d.attributedSales > 0 ? Math.round(d.ntbSales / d.attributedSales * 10000) / 100 : null;
+    d.ntbUnitsPct = d.orders > 0 ? Math.round(d.ntbOrders / d.orders * 10000) / 100 : null;
   }
   return result;
 }
@@ -209,7 +224,10 @@ async function createDailyAdReport(profileId, token, startDate, endDate) {
     configuration: {
       adProduct:    'SPONSORED_PRODUCTS',
       groupBy:      ['advertiser'],
-      columns:      ['date', 'advertisedAsin', 'cost', 'sales14d', 'clicks', 'impressions', 'purchases14d'],
+      columns:      [
+        'date', 'advertisedAsin', 'cost', 'sales14d', 'clicks', 'impressions', 'purchases14d',
+        'newToBrandSales14d', 'newToBrandPurchases14d', 'newToBrandUnitsSold14d',
+      ],
       reportTypeId: 'spAdvertisedProduct',
       timeUnit:     'DAILY',
       format:       'GZIP_JSON',
@@ -224,7 +242,8 @@ async function createDailyAdReport(profileId, token, startDate, endDate) {
   throw new Error(`Ads daily report create failed (${res.status}): ${JSON.stringify(res.body)}`);
 }
 
-// Returns { [date]: { [asin]: { spend, sales, clicks, impressions, orders } } }
+// Returns { [date]: { [asin]: { spend, sales, clicks, impressions, orders,
+//                                ntbSales, ntbOrders, ntbUnits } } }
 function parseDailyAdReport(rows) {
   const byDate = {};
   for (const row of (rows || [])) {
@@ -232,13 +251,19 @@ function parseDailyAdReport(rows) {
     const asin = row.advertisedAsin;
     if (!date || !asin) continue;
     if (!byDate[date])           byDate[date]           = {};
-    if (!byDate[date][asin])     byDate[date][asin]     = { spend: 0, sales: 0, clicks: 0, impressions: 0, orders: 0 };
+    if (!byDate[date][asin])     byDate[date][asin]     = {
+      spend: 0, sales: 0, clicks: 0, impressions: 0, orders: 0,
+      ntbSales: 0, ntbOrders: 0, ntbUnits: 0,
+    };
     const e = byDate[date][asin];
-    e.spend       += Number(row.cost         || 0);
-    e.sales       += Number(row.sales14d     || 0);
-    e.clicks      += Number(row.clicks       || 0);
-    e.impressions += Number(row.impressions  || 0);
-    e.orders      += Number(row.purchases14d || 0);
+    e.spend       += Number(row.cost                    || 0);
+    e.sales       += Number(row.sales14d                || 0);
+    e.clicks      += Number(row.clicks                  || 0);
+    e.impressions += Number(row.impressions             || 0);
+    e.orders      += Number(row.purchases14d            || 0);
+    e.ntbSales    += Number(row.newToBrandSales14d      || 0);
+    e.ntbOrders   += Number(row.newToBrandPurchases14d  || 0);
+    e.ntbUnits    += Number(row.newToBrandUnitsSold14d  || 0);
   }
   return byDate;
 }
@@ -263,27 +288,40 @@ async function pullAdSpendDaily(startDate, endDate) {
   const usDaily = parseDailyAdReport(usRows);
 
   // Merge into { [date]: { [asin]: { spendCad, spendUsd, salesCad, salesUsd, ... } } }
+  // NTB sales are currency-split (NTB happens within a marketplace); orders/units
+  // are summed across both (a customer is NTB to the brand, not the marketplace).
   const merged = {};
+  const newEntry = () => ({
+    spendCad: 0, spendUsd: 0, salesCad: 0, salesUsd: 0,
+    clicks: 0, impressions: 0, orders: 0,
+    ntbSalesCad: 0, ntbSalesUsd: 0, ntbOrders: 0, ntbUnits: 0,
+  });
   for (const [date, asins] of Object.entries(caDaily)) {
     if (!merged[date]) merged[date] = {};
     for (const [asin, d] of Object.entries(asins)) {
-      if (!merged[date][asin]) merged[date][asin] = { spendCad:0, spendUsd:0, salesCad:0, salesUsd:0, clicks:0, impressions:0, orders:0 };
+      if (!merged[date][asin]) merged[date][asin] = newEntry();
       merged[date][asin].spendCad    += d.spend;
       merged[date][asin].salesCad    += d.sales;
       merged[date][asin].clicks      += d.clicks;
       merged[date][asin].impressions += d.impressions;
       merged[date][asin].orders      += d.orders;
+      merged[date][asin].ntbSalesCad += d.ntbSales  || 0;
+      merged[date][asin].ntbOrders   += d.ntbOrders || 0;
+      merged[date][asin].ntbUnits    += d.ntbUnits  || 0;
     }
   }
   for (const [date, asins] of Object.entries(usDaily)) {
     if (!merged[date]) merged[date] = {};
     for (const [asin, d] of Object.entries(asins)) {
-      if (!merged[date][asin]) merged[date][asin] = { spendCad:0, spendUsd:0, salesCad:0, salesUsd:0, clicks:0, impressions:0, orders:0 };
+      if (!merged[date][asin]) merged[date][asin] = newEntry();
       merged[date][asin].spendUsd    += d.spend;
       merged[date][asin].salesUsd    += d.sales;
       merged[date][asin].clicks      += d.clicks;
       merged[date][asin].impressions += d.impressions;
       merged[date][asin].orders      += d.orders;
+      merged[date][asin].ntbSalesUsd += d.ntbSales  || 0;
+      merged[date][asin].ntbOrders   += d.ntbOrders || 0;
+      merged[date][asin].ntbUnits    += d.ntbUnits  || 0;
     }
   }
   let totDates = Object.keys(merged).length;
@@ -308,8 +346,13 @@ function mergeAdData(caData, usData) {
     const clicks      = (ca.clicks      || 0) + (us.clicks      || 0);
     const impressions = (ca.impressions || 0) + (us.impressions || 0);
     const orders      = (ca.orders      || 0) + (us.orders      || 0);
+    const ntbSalesCad = ca.ntbSales  || 0;
+    const ntbSalesUsd = us.ntbSales  || 0;
+    const ntbOrders   = (ca.ntbOrders || 0) + (us.ntbOrders || 0);
+    const ntbUnits    = (ca.ntbUnits  || 0) + (us.ntbUnits  || 0);
     const totalSales  = salesCad + salesUsd;
     const totalSpend  = spendCad + spendUsd;
+    const totalNtbSales = ntbSalesCad + ntbSalesUsd;
     result[asin] = {
       spendCad,
       spendUsd,
@@ -318,12 +361,16 @@ function mergeAdData(caData, usData) {
       clicks,
       impressions,
       orders,
+      ntbSalesCad, ntbSalesUsd, ntbOrders, ntbUnits,
       // Combined metrics across CA + US
       acos:   totalSales > 0 ? Math.round(totalSpend / totalSales * 10000) / 100 : null,
       roas:   totalSpend > 0 ? Math.round(totalSales / totalSpend * 100) / 100 : null,
       cpc:    clicks > 0     ? Math.round(totalSpend / clicks * 10000) / 10000 : null,
       ctr:    impressions > 0 ? Math.round(clicks / impressions * 100000) / 1000 : null,
       adCvr:  clicks > 0     ? Math.round(orders / clicks * 10000) / 100 : null,
+      // NTB share of ad-attributed sales (and orders)
+      ntbSalesPct: totalSales > 0 ? Math.round(totalNtbSales / totalSales * 10000) / 100 : null,
+      ntbOrdersPct: orders > 0   ? Math.round(ntbOrders / orders * 10000) / 100         : null,
     };
   }
 

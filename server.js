@@ -2442,6 +2442,10 @@ async function syncDailyAdSpend({ windowDays = 30, includeToday = true } = {}) {
       ad_clicks:      d.clicks      || 0,
       ad_impressions: d.impressions || 0,
       ad_orders:      d.orders      || 0,
+      ntb_sales_cad:  Math.round((d.ntbSalesCad || 0) * 100) / 100,
+      ntb_sales_usd:  Math.round((d.ntbSalesUsd || 0) * 100) / 100,
+      ntb_orders:     d.ntbOrders   || 0,
+      ntb_units:      d.ntbUnits    || 0,
     })).filter(r =>
       r.spend_cad > 0 || r.spend_usd > 0 ||
       r.ad_clicks > 0 || r.ad_impressions > 0 || r.ad_orders > 0
@@ -2551,6 +2555,7 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
           spend_cad: 0, spend_usd: 0,
           attr_sales_cad: 0, attr_sales_usd: 0,
           ad_clicks: 0, ad_impressions: 0, ad_orders: 0,
+          ntb_sales_cad: 0, ntb_sales_usd: 0, ntb_orders: 0, ntb_units: 0,
           inv_onhand: null, inv_inbound: null,
         };
       }
@@ -2567,6 +2572,10 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
       a.ad_clicks      += row.ad_clicks             || 0;
       a.ad_impressions += row.ad_impressions        || 0;
       a.ad_orders      += row.ad_orders             || 0;
+      a.ntb_sales_cad  += row.ntb_sales_cad         || 0;
+      a.ntb_sales_usd  += row.ntb_sales_usd         || 0;
+      a.ntb_orders     += row.ntb_orders            || 0;
+      a.ntb_units      += row.ntb_units             || 0;
       a.refunded_units     = (a.refunded_units     || 0) + (row.refunded_units    || 0);
       a.refund_amount_cad  = (a.refund_amount_cad  || 0) + (row.refund_amount_cad || 0);
       a.refund_amount_usd  = (a.refund_amount_usd  || 0) + (row.refund_amount_usd || 0);
@@ -2593,6 +2602,9 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
       const clicks     = a.ad_clicks      || 0;
       const impressions= a.ad_impressions || 0;
       const adOrders   = a.ad_orders      || 0;
+      const ntbSalesTotal = (a.ntb_sales_cad || 0) + (a.ntb_sales_usd || 0);
+      const ntbOrders     = a.ntb_orders || 0;
+      const ntbUnits      = a.ntb_units  || 0;
       return {
         asin,
         title,
@@ -2612,6 +2624,12 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
         adClicks:      clicks      || null,
         adImpressions: impressions || null,
         adOrders:      adOrders    || null,
+        ntbSalesCad:   Math.round((a.ntb_sales_cad || 0) * 100) / 100,
+        ntbSalesUsd:   Math.round((a.ntb_sales_usd || 0) * 100) / 100,
+        ntbOrders:     ntbOrders   || null,
+        ntbUnits:      ntbUnits    || null,
+        ntbSalesPct:   attrTotal > 0   ? Math.round(ntbSalesTotal / attrTotal * 10000) / 100 : null,
+        ntbOrdersPct:  adOrders > 0    ? Math.round(ntbOrders / adOrders * 10000) / 100 : null,
         acos: (spendTotal > 0 && attrTotal > 0) ? Math.round(spendTotal / attrTotal * 10000) / 100 : null,
         roas: spendTotal > 0 ? Math.round(attrTotal / spendTotal * 100) / 100 : null,
         ctr:  impressions > 0 ? Math.round(clicks / impressions * 100000) / 1000 : null,
@@ -2630,6 +2648,7 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
       let bUnits=0, bUnitsCa=0, bUnitsUs=0, bRevCad=0, bRevUsd=0, bSessions=0, bPageViews=0;
       let bSpendCad=0, bSpendUsd=0, bAttrCad=0, bAttrUsd=0;
       let bAdClicks=0, bAdImpressions=0, bAdOrders=0;
+      let bNtbSalesCad=0, bNtbSalesUsd=0, bNtbOrders=0, bNtbUnits=0;
       let bRefundedUnits=0, bRefundCad=0, bRefundUsd=0, bRefundCount=0;
       const buyBoxSamples = [];
       const skus = [];
@@ -2650,6 +2669,10 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
         bAdClicks      += a.ad_clicks      || 0;
         bAdImpressions += a.ad_impressions || 0;
         bAdOrders      += a.ad_orders      || 0;
+        bNtbSalesCad   += a.ntb_sales_cad  || 0;
+        bNtbSalesUsd   += a.ntb_sales_usd  || 0;
+        bNtbOrders     += a.ntb_orders     || 0;
+        bNtbUnits      += a.ntb_units      || 0;
         bRefundedUnits += a.refunded_units    || 0;
         bRefundCad     += a.refund_amount_cad || 0;
         bRefundUsd     += a.refund_amount_usd || 0;
@@ -2678,20 +2701,38 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
           refundAmountCad: Math.round(bRefundCad * 100) / 100,
           refundAmountUsd: Math.round(bRefundUsd * 100) / 100,
           refundCount:    bRefundCount,
-          adSummary:  (bSpendCad + bSpendUsd) > 0 || bAdClicks > 0 || bAdImpressions > 0 ? {
-            spendCad:           Math.round(bSpendCad * 100) / 100,
-            spendUsd:           Math.round(bSpendUsd * 100) / 100,
-            attributedSalesCad: Math.round(bAttrCad * 100) / 100,
-            attributedSalesUsd: Math.round(bAttrUsd * 100) / 100,
-            clicks:      bAdClicks,
-            impressions: bAdImpressions,
-            orders:      bAdOrders,
-            acos:  (bAttrCad + bAttrUsd) > 0 ? Math.round((bSpendCad + bSpendUsd) / (bAttrCad + bAttrUsd) * 10000) / 100 : null,
-            roas:  (bSpendCad + bSpendUsd) > 0 ? Math.round((bAttrCad + bAttrUsd) / (bSpendCad + bSpendUsd) * 100) / 100 : null,
-            ctr:   bAdImpressions > 0 ? Math.round(bAdClicks / bAdImpressions * 100000) / 1000 : null,
-            cpc:   bAdClicks > 0      ? Math.round((bSpendCad + bSpendUsd) / bAdClicks * 10000) / 10000 : null,
-            adCvr: bAdClicks > 0      ? Math.round(bAdOrders / bAdClicks * 10000) / 100 : null,
-          } : null,
+          adSummary:  (bSpendCad + bSpendUsd) > 0 || bAdClicks > 0 || bAdImpressions > 0 ? (() => {
+            const totalSpend = bSpendCad + bSpendUsd;
+            const totalAttr  = bAttrCad + bAttrUsd;
+            const totalNtb   = bNtbSalesCad + bNtbSalesUsd;
+            const totalRev   = bRevCad + bRevUsd;
+            return {
+              spendCad:           Math.round(bSpendCad * 100) / 100,
+              spendUsd:           Math.round(bSpendUsd * 100) / 100,
+              attributedSalesCad: Math.round(bAttrCad * 100) / 100,
+              attributedSalesUsd: Math.round(bAttrUsd * 100) / 100,
+              clicks:      bAdClicks,
+              impressions: bAdImpressions,
+              orders:      bAdOrders,
+              // NTB (New-To-Brand)
+              ntbSalesCad:  Math.round(bNtbSalesCad * 100) / 100,
+              ntbSalesUsd:  Math.round(bNtbSalesUsd * 100) / 100,
+              ntbOrders:    bNtbOrders,
+              ntbUnits:     bNtbUnits,
+              ntbSalesPct:  totalAttr > 0 ? Math.round(totalNtb / totalAttr * 10000) / 100 : null,
+              ntbOrdersPct: bAdOrders > 0 ? Math.round(bNtbOrders / bAdOrders * 10000) / 100 : null,
+              acos:  totalAttr > 0  ? Math.round(totalSpend / totalAttr * 10000) / 100 : null,
+              roas:  totalSpend > 0 ? Math.round(totalAttr / totalSpend * 100) / 100 : null,
+              // TACOS / TROAS: ad spend vs TOTAL sales (organic + ad-attributed).
+              // Merchant Spring exposes these — they tell you ad cost as a share of
+              // your whole business, not just the ad-driven slice.
+              tacos: totalRev > 0   ? Math.round(totalSpend / totalRev * 10000) / 100 : null,
+              troas: totalSpend > 0 ? Math.round(totalRev / totalSpend * 100) / 100 : null,
+              ctr:   bAdImpressions > 0 ? Math.round(bAdClicks / bAdImpressions * 100000) / 1000 : null,
+              cpc:   bAdClicks > 0      ? Math.round(totalSpend / bAdClicks * 10000) / 10000 : null,
+              adCvr: bAdClicks > 0      ? Math.round(bAdOrders / bAdClicks * 10000) / 100 : null,
+            };
+          })() : null,
           alerts: stSummary.alerts || {},
         },
         skus,
