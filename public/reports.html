@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RMC — Reporting</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/style.css" />
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen">
+
+  <!-- Nav -->
+  <nav class="rmc-nav">
+    <div class="max-w-screen-2xl mx-auto px-8 py-5 flex items-center justify-between">
+      <div class="flex items-center gap-6">
+        <a href="/" class="nav-logo">
+          <img src="/rmc-logo.png" alt="RMC" />
+        </a>
+        <div class="flex gap-1">
+          <a href="/" class="nav-link">Dashboard</a>
+          <a href="/brands.html" class="nav-link">Brands</a>
+          <a href="/products.html" class="nav-link">Products</a>
+          <a href="/po.html" class="nav-link">PO Builder</a>
+          <a href="/reports.html" class="nav-link active">Reporting</a>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <main class="max-w-screen-2xl mx-auto px-8 py-8">
+    <header class="flex items-end justify-between mb-6">
+      <div>
+        <h1 class="text-2xl font-bold" style="color:var(--text)">Reporting</h1>
+        <p class="text-sm mt-1" style="color:var(--text-2)">
+          Pick a brand and period to view its report. Reports update live from the latest sync.
+        </p>
+      </div>
+      <div class="flex items-center gap-2">
+        <label class="text-xs uppercase tracking-wider" style="color:var(--text-3)">Period</label>
+        <select id="periodSelect" class="rmc-input" style="min-width: 160px;">
+          <option value="last7d">Last 7 Days</option>
+          <option value="last30d" selected>Last 30 Days</option>
+          <option value="mtd">Month to Date</option>
+          <option value="lastMonth">Last Month</option>
+        </select>
+      </div>
+    </header>
+
+    <div id="lastSync" class="text-xs mb-4" style="color:var(--text-3)"></div>
+
+    <div id="brandGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+
+    <div id="emptyState" class="hidden text-center py-16" style="color:var(--text-3)">
+      <p class="text-sm">No brands found.</p>
+    </div>
+
+    <div id="loadingState" class="text-center py-16" style="color:var(--text-3)">
+      <p class="text-sm">Loading brands…</p>
+    </div>
+  </main>
+
+  <script>
+    const $ = id => document.getElementById(id);
+    const periodSelect = $('periodSelect');
+    const grid         = $('brandGrid');
+    const loading      = $('loadingState');
+    const empty        = $('emptyState');
+
+    // Format helpers
+    const fmtN = v => v == null ? '—' : Number(v).toLocaleString('en-US');
+    const fmtC = (v, sym = 'CA$') => v == null ? '—' : sym + Math.round(v).toLocaleString('en-US');
+    const fmtP = v => v == null || isNaN(v) ? '—' : (Math.round(v * 10) / 10) + '%';
+    const cvr  = (units, sessions) => sessions ? units / sessions * 100 : null;
+
+    async function loadBrands(preset) {
+      loading.classList.remove('hidden');
+      grid.innerHTML = '';
+      empty.classList.add('hidden');
+
+      try {
+        const res = await fetch(`/api/brands?preset=${preset}`, { credentials: 'include' });
+        const data = await res.json();
+        const brands = (data.brands || []).filter(b => b.id !== 'unknown-brand');
+
+        // Sort by revenue desc (CAD + USD combined)
+        brands.sort((a, b) => {
+          const ar = (a.metrics?.summary?.revenueCad || 0) + (a.metrics?.summary?.revenueUsd || 0);
+          const br = (b.metrics?.summary?.revenueCad || 0) + (b.metrics?.summary?.revenueUsd || 0);
+          return br - ar;
+        });
+
+        if (!brands.length) {
+          empty.classList.remove('hidden');
+        } else {
+          renderGrid(brands, preset);
+        }
+
+        if (data.lastSync) {
+          $('lastSync').textContent = `Last sync: ${new Date(data.lastSync).toLocaleString()}`;
+        }
+      } catch (err) {
+        empty.classList.remove('hidden');
+        empty.innerHTML = `<p class="text-sm text-red-500">Failed to load brands: ${err.message}</p>`;
+      } finally {
+        loading.classList.add('hidden');
+      }
+    }
+
+    function renderGrid(brands, preset) {
+      grid.innerHTML = brands.map(b => {
+        const s = b.metrics?.summary || {};
+        const color = b.color || '#537D30';
+        const conv = cvr(s.units, s.sessions);
+        const href = `/brand-report.html?brand=${encodeURIComponent(b.id)}&period=${preset}`;
+        return `
+          <a href="${href}" class="brand-tile" style="border-top:3px solid ${color}">
+            <div class="brand-tile-head">
+              <div class="brand-tile-name">${escapeHtml(b.name)}</div>
+              <div class="brand-tile-arrow">→</div>
+            </div>
+            <div class="brand-tile-stats">
+              <div class="bt-stat"><div class="bt-stat-label">Revenue CAD</div><div class="bt-stat-value">${fmtC(s.revenueCad)}</div></div>
+              <div class="bt-stat"><div class="bt-stat-label">Revenue USD</div><div class="bt-stat-value">${fmtC(s.revenueUsd, 'US$')}</div></div>
+              <div class="bt-stat"><div class="bt-stat-label">Units</div><div class="bt-stat-value">${fmtN(s.units)}</div></div>
+              <div class="bt-stat"><div class="bt-stat-label">Sessions</div><div class="bt-stat-value">${fmtN(s.sessions)}</div></div>
+              <div class="bt-stat"><div class="bt-stat-label">CVR</div><div class="bt-stat-value">${fmtP(conv)}</div></div>
+              <div class="bt-stat"><div class="bt-stat-label">Buy Box</div><div class="bt-stat-value">${fmtP(s.buyBox)}</div></div>
+            </div>
+          </a>
+        `;
+      }).join('');
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+    }
+
+    periodSelect.addEventListener('change', () => loadBrands(periodSelect.value));
+    loadBrands(periodSelect.value);
+  </script>
+
+  <style>
+    .rmc-input {
+      background: #fff; border: 1px solid var(--border, #E2E8F0); border-radius: 8px;
+      padding: 8px 12px; font-size: 13px; color: var(--text, #1A2332); font-family: 'Inter', sans-serif;
+    }
+    .brand-tile {
+      display: block; background: #fff; border: 1px solid var(--border, #E2E8F0); border-radius: 12px;
+      padding: 18px 20px; text-decoration: none; color: inherit; transition: all 0.15s ease;
+    }
+    .brand-tile:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.06); transform: translateY(-1px); border-color: #CBD5E1; }
+    .brand-tile-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+    .brand-tile-name { font-size: 15px; font-weight: 600; color: var(--text, #1A2332); }
+    .brand-tile-arrow { font-size: 18px; color: var(--text-3, #9AAABB); }
+    .brand-tile:hover .brand-tile-arrow { color: var(--green, #537D30); }
+    .brand-tile-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px 16px; }
+    .bt-stat-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-3, #9AAABB); margin-bottom: 2px; }
+    .bt-stat-value { font-size: 14px; font-weight: 600; color: var(--text, #1A2332); }
+  </style>
+</body>
+</html>

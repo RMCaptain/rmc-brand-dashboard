@@ -6,407 +6,455 @@
   <title>RMC Brand Report</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/style.css" />
+  <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
     :root {
       --green: #537D30; --green-lt: #EBF1E4; --navy: #1A2332;
       --text: #1A2332; --text-2: #5A6A82; --text-3: #9AAABB;
       --border: #E2E8F0; --bg: #F8FAFC; --pos: #16A34A; --neg: #DC2626;
+      --amber: #F59E0B; --amber-bg: #FEF3C7; --red-bg: #FEE2E2;
+    }
+    body { font-family: 'Inter', sans-serif; font-size: 13px; color: var(--text); background: #F8FAFC; line-height: 1.5; }
+
+    /* Report toolbar — sits below dashboard nav */
+    .rpt-toolbar {
+      background: #fff; border-bottom: 1px solid var(--border);
+      padding: 16px 32px; display: flex; align-items: center; gap: 16px;
+      position: sticky; top: 0; z-index: 10;
+    }
+    .rpt-toolbar label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-3); }
+    .rpt-toolbar select {
+      background: #fff; border: 1px solid var(--border); border-radius: 8px;
+      padding: 6px 10px; font-size: 13px; color: var(--text); font-family: inherit;
+    }
+    .rpt-toolbar .spacer { flex: 1; }
+    .rpt-toolbar .btn {
+      background: var(--green); color: #fff; border: 0; border-radius: 8px;
+      padding: 8px 14px; font-size: 12px; font-weight: 600; cursor: pointer;
+      font-family: inherit; opacity: 0.5; pointer-events: none;
     }
 
-    body { font-family: 'Inter', sans-serif; font-size: 13px; color: var(--text); background: #fff; line-height: 1.5; }
-
-    #loading {
-      display: flex; flex-direction: column; align-items: center; justify-content: center;
-      min-height: 100vh; gap: 16px; color: var(--text-2);
-    }
-    .spinner {
-      width: 36px; height: 36px; border: 3px solid var(--border); border-top-color: var(--green);
-      border-radius: 50%; animation: spin 0.8s linear infinite;
-    }
+    #loading { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 60vh; gap: 16px; color: var(--text-2); }
+    .spinner { width: 36px; height: 36px; border: 3px solid var(--border); border-top-color: var(--green); border-radius: 50%; animation: spin 0.8s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    #report { display: none; max-width: 960px; margin: 0 auto; padding: 0 24px 48px; }
+    #report { display: none; max-width: 1040px; margin: 0 auto; padding: 24px 24px 64px; }
 
-    /* Header */
+    /* Report header (the polished document banner) */
     .rpt-header {
-      background: var(--navy); color: #fff; padding: 28px 32px; margin: 0 -24px 32px;
+      background: var(--navy); color: #fff; padding: 28px 32px; border-radius: 12px; margin-bottom: 24px;
       display: flex; align-items: flex-start; justify-content: space-between; gap: 24px;
     }
     .rpt-header-left h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
     .rpt-header-left p  { font-size: 12px; color: rgba(255,255,255,0.55); }
     .rpt-header-meta { text-align: right; font-size: 12px; color: rgba(255,255,255,0.55); line-height: 1.8; }
     .rpt-header-meta strong { color: rgba(255,255,255,0.85); font-weight: 500; }
-    .rmc-brand {
-      display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700;
-      letter-spacing: 0.04em; color: var(--green); text-transform: uppercase; margin-bottom: 12px;
-    }
+    .rmc-brand { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; letter-spacing: 0.04em; color: var(--green-lt); text-transform: uppercase; margin-bottom: 12px; }
     .rmc-brand span { color: rgba(255,255,255,0.7); font-weight: 400; letter-spacing: 0; text-transform: none; }
 
     /* Section */
-    .rpt-section { margin-bottom: 36px; }
-    .rpt-section-title {
-      font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em;
-      color: var(--text-3); border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 16px;
-    }
+    .rpt-section { margin-bottom: 28px; background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 20px 24px; }
+    .rpt-section-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-3); border-bottom: 1px solid var(--border); padding-bottom: 10px; margin-bottom: 16px; }
 
-    /* Tiles */
+    /* Placeholder section (coming soon) */
+    .rpt-placeholder { padding: 18px 0; color: var(--text-3); font-size: 12px; }
+    .rpt-placeholder strong { color: var(--text-2); font-weight: 600; }
+
+    /* Headline tiles */
     .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
     .tile { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
     .tile-label { font-size: 11px; color: var(--text-2); margin-bottom: 6px; }
     .tile-value { font-size: 22px; font-weight: 700; letter-spacing: -0.5px; }
-    .tile-change { font-size: 11px; font-weight: 500; margin-top: 4px; display: flex; align-items: center; gap: 3px; }
+    .tile-change { font-size: 11px; font-weight: 500; margin-top: 4px; }
     .tile-change.pos { color: var(--pos); } .tile-change.neg { color: var(--neg); } .tile-change.neu { color: var(--text-3); }
     .tile-prev { font-size: 11px; color: var(--text-3); margin-top: 2px; }
 
     /* Chart */
-    .chart-wrap { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 20px; position: relative; height: 220px; }
+    .chart-wrap { position: relative; height: 240px; }
 
-    /* Stat row (traffic) */
-    .stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
-    .stat { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
-    .stat-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-3); margin-bottom: 5px; }
-    .stat-value { font-size: 18px; font-weight: 700; letter-spacing: -0.3px; }
-    .stat-sub { font-size: 11px; color: var(--text-2); margin-top: 3px; }
+    /* Ad summary grid (TACOS / TROAS / NTB block — Merchant Spring style) */
+    .ad-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .ad-stat { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+    .ad-stat-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-3); margin-bottom: 5px; }
+    .ad-stat-value { font-size: 18px; font-weight: 700; letter-spacing: -0.3px; }
+    .ad-stat-sub { font-size: 11px; color: var(--text-2); margin-top: 3px; }
+    .ad-section-sub { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-3); margin: 18px 0 8px; }
 
-    /* Table */
+    /* Top sellers table */
     .rpt-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-    .rpt-table th {
-      text-align: left; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;
-      color: var(--text-3); padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap;
-    }
+    .rpt-table th { text-align: left; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-3); padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
     .rpt-table th.r, .rpt-table td.r { text-align: right; }
     .rpt-table td { padding: 9px 10px; border-bottom: 1px solid #F1F5F9; vertical-align: middle; }
     .rpt-table tbody tr:hover { background: var(--bg); }
-    .product-title { font-weight: 500; color: var(--text); max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
-    .product-asin { font-size: 10px; color: var(--text-3); margin-top: 1px; }
+    .product-title { font-weight: 500; color: var(--text); max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+    .product-asin { font-size: 10px; color: var(--text-3); margin-top: 1px; font-family: ui-monospace, monospace; }
     .delta { font-size: 10px; font-weight: 500; padding: 2px 5px; border-radius: 4px; white-space: nowrap; }
     .delta.pos { color: var(--pos); background: #F0FDF4; } .delta.neg { color: var(--neg); background: #FEF2F2; } .delta.neu { color: var(--text-3); }
-    .bb-bar { display: flex; align-items: center; gap: 6px; }
-    .bb-track { flex: 1; height: 4px; background: var(--border); border-radius: 2px; min-width: 36px; }
-    .bb-fill { height: 100%; border-radius: 2px; background: var(--green); }
+    .stock-chip { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 10px; font-weight: 600; }
+    .stock-chip.good { background: #DCFCE7; color: #166534; }
+    .stock-chip.warn { background: var(--amber-bg); color: #92400E; }
+    .stock-chip.low  { background: var(--red-bg); color: #991B1B; }
 
     /* Footer */
-    .rpt-footer { border-top: 1px solid var(--border); padding-top: 16px; margin-top: 8px; display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--text-3); }
+    .rpt-footer { padding: 16px 24px; font-size: 11px; color: var(--text-3); display: flex; justify-content: space-between; align-items: center; }
     .rpt-footer strong { color: var(--green); }
-    .ads-pending { padding: 18px 0; color: var(--text-3); font-size: 12px; display: flex; align-items: center; gap: 10px; }
-
-    @media print {
-      body { background: #fff; }
-      .no-print { display: none !important; }
-      #report { padding: 0; }
-      .rpt-header { margin: 0 0 24px; }
-      .chart-wrap, .rpt-section { break-inside: avoid; }
-      .rpt-table td, .rpt-table th { padding: 6px 8px; }
-    }
   </style>
 </head>
 <body>
 
-<div id="loading">
-  <div class="spinner"></div>
-  <div>Generating report…</div>
-  <div style="font-size:11px;color:#9AAABB">Fetching sales and traffic data</div>
-</div>
+  <!-- Nav -->
+  <nav class="rmc-nav">
+    <div class="max-w-screen-2xl mx-auto px-8 py-5 flex items-center justify-between">
+      <div class="flex items-center gap-6">
+        <a href="/" class="nav-logo">
+          <img src="/rmc-logo.png" alt="RMC" />
+        </a>
+        <div class="flex gap-1">
+          <a href="/" class="nav-link">Dashboard</a>
+          <a href="/brands.html" class="nav-link">Brands</a>
+          <a href="/products.html" class="nav-link">Products</a>
+          <a href="/po.html" class="nav-link">PO Builder</a>
+          <a href="/reports.html" class="nav-link active">Reporting</a>
+        </div>
+      </div>
+    </div>
+  </nav>
 
-<div id="report">
-  <div class="rpt-header">
-    <div class="rpt-header-left">
-      <div class="rmc-brand">RMC <span>/ Rocky Mountain Co.</span></div>
-      <h1 id="brandName">Brand Report</h1>
-      <p id="periodLabel"></p>
-    </div>
-    <div class="rpt-header-meta">
-      <div><strong>Period</strong> <span id="metaPeriod"></span></div>
-      <div><strong>Comparison</strong> <span id="metaComparison"></span></div>
-      <div><strong>Currency</strong> CAD + USD</div>
-      <div style="margin-top:8px"><span id="metaGenerated"></span></div>
-    </div>
+  <!-- Report toolbar -->
+  <div class="rpt-toolbar">
+    <label for="brandSelect">Brand</label>
+    <select id="brandSelect"><option>Loading…</option></select>
+    <label for="periodSelect">Period</label>
+    <select id="periodSelect">
+      <option value="last7d">Last 7 Days</option>
+      <option value="last30d" selected>Last 30 Days</option>
+      <option value="mtd">Month to Date</option>
+      <option value="lastMonth">Last Month</option>
+      <option value="last90d">Last 90 Days</option>
+    </select>
+    <div class="spacer"></div>
+    <button class="btn" disabled title="Coming in slice 2.4">Generate PDF</button>
   </div>
 
-  <!-- Sections are rendered here in config order -->
-  <div id="sections"></div>
-
-  <div class="rpt-footer">
-    <div>Prepared by <strong>Rocky Mountain Co.</strong> — Confidential</div>
-    <div id="footerGenerated"></div>
+  <div id="loading">
+    <div class="spinner"></div>
+    <div>Generating report…</div>
+    <div style="font-size:11px;color:#9AAABB">Pulling data from the unified endpoint</div>
   </div>
-</div>
+
+  <div id="report">
+    <div class="rpt-header">
+      <div class="rpt-header-left">
+        <div class="rmc-brand">RMC <span>/ Rocky Mountain Co.</span></div>
+        <h1 id="brandName">Brand Report</h1>
+        <p id="periodLabel"></p>
+      </div>
+      <div class="rpt-header-meta">
+        <div><strong>Period</strong> <span id="metaPeriod"></span></div>
+        <div><strong>Comparison</strong> <span id="metaComparison"></span></div>
+        <div><strong>Currency</strong> CAD + USD</div>
+        <div style="margin-top:8px"><span id="metaGenerated"></span></div>
+      </div>
+    </div>
+
+    <!-- Sections are rendered in enabled_sections order from the API -->
+    <div id="sections"></div>
+
+    <div class="rpt-footer">
+      <div>Prepared by <strong>Rocky Mountain Co.</strong> — Confidential</div>
+      <div id="footerGenerated"></div>
+    </div>
+  </div>
 
 <script>
-// ── Report config ────────────────────────────────────────────────────────────
-// The report is DATA-DRIVEN: this object defines which sections render, in what
-// order, and which KPIs lead. Phase 2 (plug-and-play dashboard) will edit/persist
-// this per brand — the renderer below already reads from it, so no rebuild needed.
-const REPORT_CONFIG = {
-  headlineKpis: ['revCad', 'revUsd', 'units', 'sessions', 'cvr', 'buyBox'],
-  sections: [
-    { key: 'headline',    title: 'Performance Highlights', enabled: true },
-    { key: 'trend',       title: 'Revenue Trend',          enabled: true },
-    { key: 'traffic',     title: 'Traffic & Conversion',   enabled: true },
-    { key: 'advertising', title: 'Advertising',            enabled: true },
-    { key: 'products',    title: 'Product Performance',    enabled: true },
-  ],
-};
-
 const $ = id => document.getElementById(id);
 
-// ── Formatters ───────────────────────────────────────────────────────────────
-const pct = (curr, prev) => (!prev || prev === 0) ? null : Math.round((curr - prev) / prev * 1000) / 10;
-const fmtC = (v, sym = 'CA$') => (v == null || isNaN(v)) ? '—' : sym + Math.round(v).toLocaleString('en-US');
-const fmtN = v => v == null ? '—' : v.toLocaleString('en-US');
-const fmtPct = v => v == null || isNaN(v) ? '—' : (Math.round(v * 10) / 10) + '%';
+// ── URL state ─────────────────────────────────────────────────────────────────
+const qs = new URLSearchParams(location.search);
+let currentBrand  = qs.get('brand')  || '';
+let currentPeriod = qs.get('period') || 'last30d';
 
+// ── Formatters ────────────────────────────────────────────────────────────────
+const fmtC = (v, sym = 'CA$') => (v == null || isNaN(v)) ? '—' : sym + Math.round(v).toLocaleString('en-US');
+const fmtN = v => v == null ? '—' : Number(v).toLocaleString('en-US');
+const fmtPct = (v, d = 1) => v == null || isNaN(v) ? '—' : (Math.round(v * Math.pow(10, d)) / Math.pow(10, d)) + '%';
+const fmt2 = v => v == null || isNaN(v) ? '—' : (Math.round(v * 100) / 100).toFixed(2);
+
+function pct(curr, prev) {
+  if (!prev || prev === 0) return null;
+  return Math.round((curr - prev) / prev * 1000) / 10;
+}
 function deltaHtml(curr, prev) {
   const p = pct(curr, prev);
   if (p === null) return '<span class="delta neu">—</span>';
   return `<span class="delta ${p >= 0 ? 'pos' : 'neg'}">${p >= 0 ? '+' : ''}${p}%</span>`;
 }
-
-// ── Derived metrics ──────────────────────────────────────────────────────────
-function cvrOf(units, sessions) { return sessions ? units / sessions * 100 : null; }
-
-function computeExtras(d) {
-  const s = d.summary;
-  const cvr = cvrOf(s.units, s.sessions);
-  // Brand Buy Box = simple average of per-product buy box, matching the brand
-  // cards / /api/metrics (server.js avgBuyBox) so the two views stay consistent.
-  let sum = 0, n = 0;
-  for (const p of d.products) {
-    if (p.buyBox == null) continue;
-    sum += p.buyBox; n++;
-  }
-  const buyBox = n ? sum / n : null;
-  return { cvr, buyBox };
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 }
 
-// ── Tile builder ─────────────────────────────────────────────────────────────
-function tile(label, value, change, prevTxt) {
-  const cls = change == null ? 'neu' : change >= 0 ? 'pos' : 'neg';
-  const chg = change == null ? '' : `<div class="tile-change ${cls}">${change >= 0 ? '+' : ''}${change}% vs prior period</div>`;
-  const prev = prevTxt ? `<div class="tile-prev">${prevTxt}</div>` : '';
-  return `<div class="tile"><div class="tile-label">${label}</div><div class="tile-value">${value}</div>${chg}${prev}</div>`;
-}
-
-function headlineTile(key, s, sp, ex) {
-  switch (key) {
-    case 'revCad':   return tile('Revenue (CA$)', fmtC(s.revenueCad), pct(s.revenueCad, sp.revenueCad), 'Prior: ' + fmtC(sp.revenueCad));
-    case 'revUsd':   return tile('Revenue (US$)', fmtC(s.revenueUsd, 'US$'), pct(s.revenueUsd, sp.revenueUsd), 'Prior: ' + fmtC(sp.revenueUsd, 'US$'));
-    case 'units':    return tile('Units Sold', fmtN(s.units), pct(s.units, sp.units), 'Prior: ' + fmtN(sp.units));
-    case 'sessions': return tile('Sessions', fmtN(s.sessions), null, null);
-    case 'cvr':      return tile('Conversion (CVR)', fmtPct(ex.cvr), null, 'Units ÷ sessions');
-    case 'buyBox':   return tile('Buy Box %', fmtPct(ex.buyBox), null, 'Avg across products');
-    default:         return '';
-  }
-}
-
-// ── Section builders ─────────────────────────────────────────────────────────
-const SECTION_BUILDERS = {
-  headline(d, ex) {
-    return `<div class="tiles">${REPORT_CONFIG.headlineKpis.map(k => headlineTile(k, d.summary, d.summaryPrev, ex)).join('')}</div>`;
-  },
-  trend() {
-    return `<div class="chart-wrap"><canvas id="salesChart"></canvas></div>`;
-  },
-  traffic(d, ex) {
-    const s = d.summary;
-    return `<div class="stat-row">
-      <div class="stat"><div class="stat-label">Sessions</div><div class="stat-value">${fmtN(s.sessions)}</div><div class="stat-sub">Buyer sessions</div></div>
-      <div class="stat"><div class="stat-label">Page Views</div><div class="stat-value">${fmtN(s.pageViews)}</div><div class="stat-sub">Listing views</div></div>
-      <div class="stat"><div class="stat-label">Conversion (CVR)</div><div class="stat-value">${fmtPct(ex.cvr)}</div><div class="stat-sub">Units ÷ sessions</div></div>
-      <div class="stat"><div class="stat-label">Buy Box %</div><div class="stat-value">${fmtPct(ex.buyBox)}</div><div class="stat-sub">Avg across products</div></div>
-    </div>`;
-  },
-  advertising() {
-    return `<div class="ads-pending" id="adsPending">
-        <div class="spinner" style="width:18px;height:18px;border-width:2px"></div>
-        Fetching advertising data — this takes 1–3 minutes…
-      </div>
-      <div class="stat-row" id="adsGrid" style="grid-template-columns:repeat(4,1fr)"></div>`;
-  },
-  products(d) {
-    const rows = d.products.map(p => {
-      const currRev = p.revenueCad + p.revenueUsd;
-      const prevRev = p.prev.revenueCad + p.prev.revenueUsd;
-      const cvr = cvrOf(p.units, p.sessions);
-      const bb = p.buyBox != null
-        ? `<div class="bb-bar"><div class="bb-track"><div class="bb-fill" style="width:${Math.min(p.buyBox, 100)}%"></div></div><span>${p.buyBox}%</span></div>`
-        : '—';
-      return `<tr>
-        <td><span class="product-title" title="${p.title}">${p.title}</span><span class="product-asin">${p.asin}</span></td>
-        <td class="r">${fmtC(p.revenueCad)}</td>
-        <td class="r">${fmtC(p.revenueUsd, 'US$')}</td>
-        <td class="r">${fmtN(p.units)}</td>
-        <td class="r">${deltaHtml(currRev, prevRev)}</td>
-        <td class="r">${fmtN(p.sessions)}</td>
-        <td class="r">${fmtPct(cvr)}</td>
-        <td class="r">${bb}</td>
-        <td class="r acos-cell" style="display:none">—</td>
-      </tr>`;
-    }).join('');
-    return `<table class="rpt-table">
-      <thead><tr>
-        <th>Product</th>
-        <th class="r">Revenue (CA$)</th>
-        <th class="r">Revenue (US$)</th>
-        <th class="r">Units</th>
-        <th class="r">vs Prior</th>
-        <th class="r">Sessions</th>
-        <th class="r">CVR</th>
-        <th class="r">Buy Box</th>
-        <th class="r acos-head" style="display:none">ACOS</th>
-      </tr></thead>
-      <tbody>${rows}</tbody>
-    </table>`;
-  },
+// ── Section renderers ─────────────────────────────────────────────────────────
+const SECTION_TITLES = {
+  executive_summary:   'Executive Summary',
+  headline_tiles:      'Performance Highlights',
+  sales_trend:         'Revenue Trend',
+  ytd_chart:           'Year to Date',
+  sales_by_group:      'Sales by Product Group',
+  top_sellers:         'Top Sellers',
+  ad_trend:            'Advertising Trend',
+  ad_summary:          'Advertising Performance',
+  inventory_status:    'Inventory Status',
+  per_asin_sheet_link: 'Per-ASIN Detail',
 };
 
-// ── Render ───────────────────────────────────────────────────────────────────
-function render(d) {
-  document.title = `${d.brand.name} — RMC Report`;
-  $('brandName').textContent = d.brand.name;
-  $('periodLabel').textContent = d.period.label;
-  $('metaPeriod').textContent = d.period.label;
-  $('metaComparison').textContent = d.comparison.label;
-  const gen = new Date(d.generatedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
-  $('metaGenerated').textContent = `Generated ${gen}`;
-  $('footerGenerated').textContent = `Generated ${gen}`;
+const SECTION_RENDERERS = {
+  executive_summary: () => `
+    <div class="rpt-placeholder">
+      <strong>Coming soon</strong> — AI-generated narrative covering headline numbers,
+      MoM comparison, top product callouts, advertising commentary, and forward outlook.
+      Editable before saving.
+    </div>`,
 
-  const ex = computeExtras(d);
+  headline_tiles: (d) => {
+    const s = d.summary, sp = d.summaryPrev || {};
+    const conv = s.sessions ? s.units / s.sessions * 100 : null;
+    const tile = (label, value, change, prev) => {
+      const cls = change == null ? 'neu' : change >= 0 ? 'pos' : 'neg';
+      const chg = change == null ? '' : `<div class="tile-change ${cls}">${change >= 0 ? '+' : ''}${change}% vs prior</div>`;
+      const prv = prev ? `<div class="tile-prev">${prev}</div>` : '';
+      return `<div class="tile"><div class="tile-label">${label}</div><div class="tile-value">${value}</div>${chg}${prv}</div>`;
+    };
+    return `<div class="tiles">
+      ${tile('Revenue (CA$)', fmtC(s.revenueCad), pct(s.revenueCad, sp.revenueCad), 'Prior: ' + fmtC(sp.revenueCad))}
+      ${tile('Revenue (US$)', fmtC(s.revenueUsd, 'US$'), pct(s.revenueUsd, sp.revenueUsd), 'Prior: ' + fmtC(sp.revenueUsd, 'US$'))}
+      ${tile('Units Sold', fmtN(s.units), pct(s.units, sp.units), 'Prior: ' + fmtN(sp.units))}
+      ${tile('Sessions', fmtN(s.sessions), null, null)}
+      ${tile('Conversion (CVR)', fmtPct(conv), null, 'Units ÷ sessions')}
+      ${tile('Buy Box %', fmtPct(s.buyBox), null, 'Avg across products')}
+    </div>`;
+  },
 
-  // Build enabled sections in config order.
-  $('sections').innerHTML = REPORT_CONFIG.sections
-    .filter(sec => sec.enabled && SECTION_BUILDERS[sec.key])
-    .map(sec => `<div class="rpt-section" data-section="${sec.key}">
-        <div class="rpt-section-title">${sec.title}</div>
-        ${SECTION_BUILDERS[sec.key](d, ex)}
-      </div>`)
-    .join('');
+  sales_trend: () => `<div class="chart-wrap"><canvas id="salesChart"></canvas></div>`,
 
-  // Chart needs the canvas in the DOM first.
-  if (REPORT_CONFIG.sections.find(s => s.key === 'trend' && s.enabled)) {
-    buildChart(d.dailySeries, d.dailySeriesPrev, d.period, d.comparison);
-  }
+  ytd_chart: () => `
+    <div class="rpt-placeholder">
+      <strong>Coming soon</strong> — Current year vs prior year revenue chart
+      (Merchant Spring style). Needs YTD data extraction in a follow-up slice.
+    </div>`,
 
-  $('loading').style.display = 'none';
-  $('report').style.display = 'block';
-}
+  sales_by_group: () => `
+    <div class="rpt-placeholder">
+      <strong>Coming in v2</strong> — Product-group breakouts (e.g. Bike Carriers,
+      Cable Locks, Hitches). Requires per-brand product grouping in the database.
+    </div>`,
 
-function renderAds(a, totalRevCad, totalRevUsd) {
-  const grid = $('adsGrid');
-  const pending = $('adsPending');
-  if (!grid) return;
-  if (pending) pending.style.display = 'none';
+  top_sellers: (d) => {
+    const rows = (d.products || [])
+      .filter(p => (p.revenueCad + p.revenueUsd + p.units) > 0)
+      .map(p => {
+        const titleShort = (p.title || p.asin).length > 60 ? (p.title || p.asin).slice(0, 60) + '…' : (p.title || p.asin);
+        const stock = (p.inventory?.onHand ?? null);
+        let stockCls = 'good', stockTxt = stock == null ? '—' : `${stock} in stock`;
+        if (stock != null) {
+          if (stock <= 0) { stockCls = 'low'; stockTxt = 'Out of stock'; }
+          else if (stock < 30) { stockCls = 'low'; }
+          else if (stock < 100) { stockCls = 'warn'; }
+        }
+        return `<tr>
+          <td><span class="product-title">${escapeHtml(titleShort)}</span><div class="product-asin">${escapeHtml(p.asin)}</div></td>
+          <td class="r">${fmtC(p.revenueCad)}</td>
+          <td class="r">${fmtC(p.revenueUsd, 'US$')}</td>
+          <td class="r">${fmtN(p.units)}</td>
+          <td class="r">${fmtN(p.sessions)}</td>
+          <td class="r">${fmtPct(p.buyBox)}</td>
+          <td class="r">${deltaHtml(p.units, p.prev?.units)}</td>
+          <td class="r"><span class="stock-chip ${stockCls}">${stockTxt}</span></td>
+        </tr>`;
+      }).join('');
+    return `<table class="rpt-table">
+      <thead><tr><th>Product</th><th class="r">Rev CAD</th><th class="r">Rev USD</th><th class="r">Units</th><th class="r">Sessions</th><th class="r">Buy Box</th><th class="r">Δ Units</th><th class="r">Inventory</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="8" style="text-align:center;color:var(--text-3)">No products with activity in this period.</td></tr>'}</tbody>
+    </table>`;
+  },
 
-  const totalSpend = a.spendCad + a.spendUsd;
-  const totalRev = totalRevCad + totalRevUsd;
-  const tacos = totalRev > 0 ? Math.round(totalSpend / totalRev * 10000) / 100 : null;
-  const stats = [
-    { label: 'Total Ad Spend', value: fmtC(a.spendCad) + ' / ' + fmtC(a.spendUsd, 'US$'), sub: '' },
-    { label: 'ACOS', value: a.acos != null ? a.acos + '%' : '—', sub: 'Spend ÷ attributed sales' },
-    { label: 'ROAS', value: a.roas != null ? a.roas + 'x' : '—', sub: 'Sales per $ spent' },
-    { label: 'TACOS', value: tacos != null ? tacos + '%' : '—', sub: 'Spend ÷ total sales' },
-    { label: 'Attributed Sales', value: fmtC(a.salesCad) + ' / ' + fmtC(a.salesUsd, 'US$'), sub: '14-day attribution' },
-    { label: 'Clicks', value: fmtN(a.clicks), sub: 'CPC: ' + (a.cpc != null ? '$' + a.cpc : '—') },
-    { label: 'Impressions', value: fmtN(a.impressions), sub: '' },
-    { label: 'Ad Orders', value: fmtN(a.orders), sub: '' },
-  ];
-  grid.innerHTML = stats.map(s =>
-    `<div class="stat"><div class="stat-label">${s.label}</div><div class="stat-value">${s.value}</div>${s.sub ? `<div class="stat-sub">${s.sub}</div>` : ''}</div>`
-  ).join('');
+  ad_trend: () => `
+    <div class="rpt-placeholder">
+      <strong>Coming soon</strong> — Daily chart of ad sales vs organic sales with
+      ROAS overlay (Merchant Spring style). Needs per-day ad series surfacing in
+      the unified endpoint.
+    </div>`,
 
-  // Inject ACOS into the product table.
-  document.querySelectorAll('.acos-head').forEach(h => h.style.display = '');
-  document.querySelectorAll('#sections tbody tr').forEach(row => {
-    const asin = row.querySelector('.product-asin')?.textContent;
-    const cell = row.querySelector('.acos-cell');
-    if (cell) {
-      cell.style.display = '';
-      const d = asin && a.byAsin?.[asin];
-      cell.textContent = d?.acos != null ? d.acos + '%' : '—';
+  ad_summary: (d) => {
+    const ad = d.summary?.adSummary;
+    if (!ad) return `<div class="rpt-placeholder">No advertising activity in this period.</div>`;
+    const stat = (label, value, sub) => `<div class="ad-stat"><div class="ad-stat-label">${label}</div><div class="ad-stat-value">${value}</div>${sub ? `<div class="ad-stat-sub">${sub}</div>` : ''}</div>`;
+    const totalSpend = (ad.spendCad || 0) + (ad.spendUsd || 0);
+    const totalAttr  = (ad.attributedSalesCad || 0) + (ad.attributedSalesUsd || 0);
+    const totalNtb   = (ad.ntbSalesCad || 0) + (ad.ntbSalesUsd || 0);
+    return `
+      <div class="ad-grid">
+        ${stat('Total Ad Sales', fmtC(totalAttr, '$'), `CAD ${fmtC(ad.attributedSalesCad)} · USD ${fmtC(ad.attributedSalesUsd, 'US$')}`)}
+        ${stat('Total Spend',    fmtC(totalSpend, '$'), `CAD ${fmtC(ad.spendCad)} · USD ${fmtC(ad.spendUsd, 'US$')}`)}
+        ${stat('ACOS',           fmtPct(ad.acos), 'Spend ÷ ad sales')}
+        ${stat('ROAS',           ad.roas != null ? ad.roas.toFixed(2) + 'x' : '—', 'Ad sales ÷ spend')}
+      </div>
+      <div class="ad-section-sub">Vs total business</div>
+      <div class="ad-grid">
+        ${stat('TACOS',          fmtPct(ad.tacos), 'Spend ÷ total revenue')}
+        ${stat('TROAS',          ad.troas != null ? ad.troas.toFixed(2) + 'x' : '—', 'Total revenue ÷ spend')}
+        ${stat('Impressions',    fmtN(ad.impressions))}
+        ${stat('Clicks',         fmtN(ad.clicks), `CTR ${fmtPct(ad.ctr, 2)} · CPC $${fmt2(ad.cpc)}`)}
+      </div>
+      <div class="ad-section-sub">New-to-Brand (NTB)</div>
+      <div class="ad-grid">
+        ${stat('NTB Sales',      fmtC(totalNtb, '$'), `${fmtPct(ad.ntbSalesPct)} of ad sales`)}
+        ${stat('NTB Orders',     fmtN(ad.ntbOrders), `${fmtPct(ad.ntbOrdersPct)} of ad orders`)}
+        ${stat('NTB Units',      fmtN(ad.ntbUnits))}
+        ${stat('Ad Orders',      fmtN(ad.orders), `Ad CVR ${fmtPct(ad.adCvr)}`)}
+      </div>`;
+  },
+
+  inventory_status: (d) => {
+    // Compute summary of inventory levels across products.
+    const products = d.products || [];
+    let low = 0, warn = 0, good = 0, missing = 0;
+    for (const p of products) {
+      const s = p.inventory?.onHand;
+      if (s == null) { missing++; continue; }
+      if (s <= 0)        low++;
+      else if (s < 30)   low++;
+      else if (s < 100)  warn++;
+      else               good++;
     }
-  });
+    return `
+      <div class="ad-grid">
+        <div class="ad-stat"><div class="ad-stat-label">Healthy stock</div><div class="ad-stat-value" style="color:var(--pos)">${good}</div><div class="ad-stat-sub">100+ units on hand</div></div>
+        <div class="ad-stat"><div class="ad-stat-label">Warning</div><div class="ad-stat-value" style="color:var(--amber)">${warn}</div><div class="ad-stat-sub">30–99 units</div></div>
+        <div class="ad-stat"><div class="ad-stat-label">Low / out</div><div class="ad-stat-value" style="color:var(--neg)">${low}</div><div class="ad-stat-sub">Under 30 units</div></div>
+        <div class="ad-stat"><div class="ad-stat-label">No data</div><div class="ad-stat-value" style="color:var(--text-3)">${missing}</div><div class="ad-stat-sub">Inventory not synced</div></div>
+      </div>
+      <div class="rpt-placeholder" style="margin-top: 14px;">
+        <strong>Coming soon</strong> — Days of cover per ASIN, stockout days, inbound shipments.
+        Currently shows on-hand status only.
+      </div>`;
+  },
+
+  per_asin_sheet_link: () => `
+    <div class="rpt-placeholder">
+      <strong>Coming soon</strong> — Auto-generated Google Sheet with the full per-ASIN
+      detail breakdown, linked here. For now, use the Top Sellers table above.
+    </div>`,
+};
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+async function init() {
+  try {
+    // Populate brand selector
+    const brandsRes = await fetch('/api/brands?preset=last30d', { credentials: 'include' });
+    const brandsData = await brandsRes.json();
+    const brandList = (brandsData.brands || [])
+      .filter(b => b.id !== 'unknown-brand')
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    if (!currentBrand && brandList.length) currentBrand = brandList[0].id;
+
+    const sel = $('brandSelect');
+    sel.innerHTML = brandList.map(b => `<option value="${b.id}" ${b.id === currentBrand ? 'selected' : ''}>${escapeHtml(b.name)}</option>`).join('');
+    sel.addEventListener('change', () => { currentBrand = sel.value; updateUrl(); render(); });
+
+    const periodSel = $('periodSelect');
+    periodSel.value = currentPeriod;
+    periodSel.addEventListener('change', () => { currentPeriod = periodSel.value; updateUrl(); render(); });
+
+    await render();
+  } catch (err) {
+    console.error('init failed', err);
+    $('loading').innerHTML = `<div style="color:var(--neg)">Failed to load: ${escapeHtml(err.message)}</div>`;
+  }
 }
 
-function buildChart(series, seriesPrev, period, comparison) {
-  if (!series.length && !seriesPrev.length) return;
-  const periodDays = Math.round((new Date(period.to) - new Date(period.from)) / 86400000) + 1;
-  const labels = series.map(d => new Date(d.date + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
-  const prevMap = {};
-  for (const d of seriesPrev) prevMap[d.date] = d;
-  const prevAligned = series.map(d => {
-    const offsetStr = new Date(new Date(d.date + 'T12:00:00Z') - periodDays * 86400000).toISOString().split('T')[0];
-    return prevMap[offsetStr] || null;
-  });
-  const curr = series.map(d => Math.round((d.revCad + d.revUsd) * 100) / 100);
-  const prev = prevAligned.map(d => d ? Math.round((d.revCad + d.revUsd) * 100) / 100 : null);
+function updateUrl() {
+  const params = new URLSearchParams({ brand: currentBrand, period: currentPeriod });
+  history.replaceState({}, '', `${location.pathname}?${params}`);
+}
 
-  new Chart($('salesChart'), {
+let currentChart = null;
+async function render() {
+  $('loading').style.display = 'flex';
+  $('report').style.display = 'none';
+
+  try {
+    const res = await fetch(`/api/brand-report-dataset/${encodeURIComponent(currentBrand)}?period=${encodeURIComponent(currentPeriod)}`, { credentials: 'include' });
+    if (!res.ok) throw new Error(`Endpoint returned ${res.status}`);
+    const d = await res.json();
+
+    $('brandName').textContent     = `${d.brand.name} — Performance Report`;
+    $('periodLabel').textContent   = d.period.label;
+    $('metaPeriod').textContent    = d.period.label;
+    $('metaComparison').textContent = d.comparison.label;
+    const gen = new Date(d.generatedAt).toLocaleString();
+    $('metaGenerated').textContent  = `Generated ${gen}`;
+    $('footerGenerated').textContent = `Generated ${gen}`;
+
+    // Render only enabled sections, in order.
+    const enabled = d.config?.enabled_sections || Object.keys(SECTION_RENDERERS);
+    const sectionsEl = $('sections');
+    sectionsEl.innerHTML = enabled
+      .filter(key => SECTION_RENDERERS[key])
+      .map(key => `<div class="rpt-section" data-section="${key}">
+          <div class="rpt-section-title">${escapeHtml(SECTION_TITLES[key] || key)}</div>
+          ${SECTION_RENDERERS[key](d)}
+        </div>`)
+      .join('');
+
+    // Build chart after DOM exists.
+    if (enabled.includes('sales_trend')) buildChart(d.dailySeries, d.dailySeriesPrev);
+
+    $('loading').style.display = 'none';
+    $('report').style.display  = 'block';
+  } catch (err) {
+    console.error('render failed', err);
+    $('loading').innerHTML = `<div style="color:var(--neg)">Render failed: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function buildChart(daily, dailyPrev) {
+  const el = document.getElementById('salesChart');
+  if (!el) return;
+  if (currentChart) currentChart.destroy();
+
+  const labels = (daily || []).map(d => d.date);
+  const curr   = (daily || []).map(d => Math.round((d.revCad + d.revUsd) * 100) / 100);
+  // Align prior series to the SAME label positions, by index
+  const prevByIdx = (dailyPrev || []).map(d => Math.round((d.revCad + d.revUsd) * 100) / 100);
+
+  currentChart = new Chart(el, {
     type: 'line',
     data: {
       labels,
       datasets: [
-        { label: period.label, data: curr, borderColor: '#537D30', backgroundColor: 'rgba(83,125,48,0.08)', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#537D30', tension: 0.3, fill: true },
-        { label: comparison.label, data: prev, borderColor: '#94A3B8', backgroundColor: 'transparent', borderWidth: 1.5, pointRadius: 2, borderDash: [4, 3], tension: 0.3, fill: false },
+        { label: 'Current period', data: curr,        borderColor: '#537D30', backgroundColor: 'rgba(83,125,48,0.10)', fill: true,  tension: 0.3, borderWidth: 2, pointRadius: 0 },
+        { label: 'Prior period',   data: prevByIdx,   borderColor: '#9AAABB', backgroundColor: 'transparent',          fill: false, tension: 0.3, borderWidth: 2, pointRadius: 0, borderDash: [4, 4] },
       ],
     },
     options: {
       responsive: true, maintainAspectRatio: false,
-      interaction: { mode: 'index', intersect: false },
       plugins: {
-        legend: { position: 'top', labels: { font: { family: 'Inter', size: 11 }, boxWidth: 16, padding: 12 } },
-        tooltip: { callbacks: { label: ctx => ` ${ctx.dataset.label}: $${ctx.raw?.toLocaleString('en-US') || '—'}` } },
+        legend: { position: 'top', align: 'end', labels: { font: { size: 11 }, color: '#5A6A82', usePointStyle: true } },
+        tooltip: { mode: 'index', intersect: false },
       },
       scales: {
-        x: { grid: { display: false }, ticks: { font: { family: 'Inter', size: 10 }, maxRotation: 0, maxTicksLimit: 10 } },
-        y: { grid: { color: '#F1F5F9' }, ticks: { font: { family: 'Inter', size: 10 }, callback: v => '$' + v.toLocaleString('en-US') } },
+        x: { grid: { display: false }, ticks: { font: { size: 10 }, color: '#9AAABB', maxRotation: 0, autoSkip: true } },
+        y: { grid: { color: '#F1F5F9' }, ticks: { font: { size: 10 }, color: '#9AAABB', callback: v => '$' + v.toLocaleString() }, beginAtZero: true },
       },
     },
   });
 }
 
-// ── Init ─────────────────────────────────────────────────────────────────────
-(async function init() {
-  const params = new URLSearchParams(location.search);
-  const brand = params.get('brand');
-  const from = params.get('from');
-  const to = params.get('to');
-
-  if (!brand) {
-    $('loading').innerHTML = '<div style="color:#DC2626;font-size:14px">Missing <code>?brand=</code> parameter</div>';
-    return;
-  }
-
-  const qs = [from && `from=${from}`, to && `to=${to}`].filter(Boolean).join('&');
-  const base = `/api/report-data/${encodeURIComponent(brand)}${qs ? '?' + qs : ''}`;
-  const adsUrl = `/api/report-ads/${encodeURIComponent(brand)}${qs ? '?' + qs : ''}`;
-
-  let reportData;
-  try {
-    const res = await fetch(base, { credentials: 'include' });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || res.statusText);
-    reportData = data;
-    render(data);
-  } catch (e) {
-    $('loading').innerHTML = `<div style="color:#DC2626;font-size:14px">Failed to load report: ${e.message}</div>`;
-    return;
-  }
-
-  // Ads load separately (Amazon report must bake). Only if the section is enabled.
-  if (REPORT_CONFIG.sections.find(s => s.key === 'advertising' && s.enabled)) {
-    try {
-      const res = await fetch(adsUrl, { credentials: 'include' });
-      const data = await res.json();
-      if (res.ok) renderAds(data.summary, reportData.summary.revenueCad, reportData.summary.revenueUsd);
-      else { const p = $('adsPending'); if (p) p.textContent = 'Advertising data unavailable.'; }
-    } catch (e) {
-      const p = $('adsPending'); if (p) p.textContent = 'Advertising data unavailable.';
-    }
-  }
-})();
+init();
 </script>
+
 </body>
 </html>
