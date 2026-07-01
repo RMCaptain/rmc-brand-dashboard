@@ -3,7 +3,10 @@ services:
     name: rmc-brand-dashboard
     env: node
     plan: standard
-    buildCommand: npm install
+    # Install Chrome into the project-local cache (.puppeteerrc.cjs) so it
+    # persists into the runtime container. Without the explicit browsers
+    # install, the PDF export endpoints 500 with "Browser was not found".
+    buildCommand: npm install && npx puppeteer browsers install chrome
     startCommand: node server.js
     envVars:
       - key: NODE_ENV

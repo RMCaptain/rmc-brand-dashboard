@@ -8,6 +8,9 @@ server.log
 logs/
 pm_check.json
 
+# Puppeteer browser download (installed at build time, ~300MB — not source)
+.cache/
+
 # Data cache (generated, not source of truth)
 data/fx.json
 data/listings-cache.json
