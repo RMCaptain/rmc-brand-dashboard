@@ -3375,8 +3375,15 @@ app.post('/api/brand-report-summary/:brandId', async (req, res) => {
     // Pull the dataset (reuse the same internal logic). We hit the local
     // endpoint via fetch — simpler than refactoring the route handler into
     // a callable, and the localhost roundtrip is sub-millisecond.
+    // When Basic Auth is enabled (production), the internal fetch must send
+    // credentials or it 401s — the auth middleware applies to all routes
+    // including localhost-originated requests.
     const port = process.env.PORT || 3000;
-    const dsRes = await fetch(`http://localhost:${port}/api/brand-report-dataset/${encodeURIComponent(brandId)}?from=${from}&to=${to}`);
+    const dsHeaders = {};
+    if (process.env.AUTH_USERNAME && process.env.AUTH_PASSWORD) {
+      dsHeaders.Authorization = 'Basic ' + Buffer.from(`${process.env.AUTH_USERNAME}:${process.env.AUTH_PASSWORD}`).toString('base64');
+    }
+    const dsRes = await fetch(`http://localhost:${port}/api/brand-report-dataset/${encodeURIComponent(brandId)}?from=${from}&to=${to}`, { headers: dsHeaders });
     if (!dsRes.ok) throw new Error(`Dataset fetch failed: ${dsRes.status}`);
     const dataset = await dsRes.json();
     if (dataset.error) throw new Error(dataset.error);
