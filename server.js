@@ -1100,6 +1100,39 @@ function consolidatePOLines(lines) {
   return [...groups.values()];
 }
 
+// Ensure Puppeteer's Chrome is present, installing it at runtime the first
+// time if the build didn't. Render only persists the project dir from build
+// to runtime and its node_modules cache makes `npm install` skip Puppeteer's
+// download, so the browser can be missing at runtime. .puppeteerrc.cjs points
+// the cache into the project dir; this installs into it on demand. Memoized
+// so concurrent PDF requests share a single install.
+let _browserInstallPromise = null;
+async function ensureBrowserInstalled() {
+  const puppeteer = require('puppeteer');
+  const fs = require('fs');
+  const explicit = process.env.PUPPETEER_EXECUTABLE_PATH;
+  if (explicit && fs.existsSync(explicit)) return explicit;
+  let expected;
+  try { expected = puppeteer.executablePath(); } catch { expected = null; }
+  if (expected && fs.existsSync(expected)) return expected;
+
+  if (!_browserInstallPromise) {
+    _browserInstallPromise = new Promise((resolve, reject) => {
+      const { exec } = require('child_process');
+      console.log('[Puppeteer] Chrome missing — installing at runtime (one-time, ~30-60s)...');
+      exec('npx puppeteer browsers install chrome', { cwd: __dirname, timeout: 5 * 60 * 1000 }, (err, stdout) => {
+        if (err) { _browserInstallPromise = null; return reject(new Error('Runtime Chrome install failed: ' + err.message)); }
+        const line = String(stdout || '').trim().split('\n').pop();
+        console.log('[Puppeteer] Chrome installed:', line);
+        let p;
+        try { p = process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath(); } catch { p = null; }
+        resolve(p);
+      });
+    });
+  }
+  return _browserInstallPromise;
+}
+
 async function renderPoPdf({ brand, settings, poNum, lines, status, notes, date, optionalCols }) {
   const puppeteer = require('puppeteer');
   const poDate = date || new Date().toLocaleDateString('en-CA');
@@ -1284,10 +1317,11 @@ async function renderPoPdf({ brand, settings, poNum, lines, status, notes, date,
 </body>
 </html>`;
 
+    const execPath = await ensureBrowserInstalled();
     const browser = await puppeteer.launch({
       headless: 'new',
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath()
+      executablePath: execPath || (process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath())
     });
     const page = await browser.newPage();
     // 'load' is enough — HTML has no external resources (logo is inlined base64).
@@ -3082,10 +3116,11 @@ app.get('/api/brand-report-pdf/:brandId', async (req, res) => {
     if (to)   params.set('to',   to);
     const url = `http://127.0.0.1:${port}/brand-report.html?${params}`;
 
+    const execPath = await ensureBrowserInstalled();
     browser = await puppeteer.launch({
       headless: 'new',
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath(),
+      executablePath: execPath || (process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath()),
     });
     const page = await browser.newPage();
 
