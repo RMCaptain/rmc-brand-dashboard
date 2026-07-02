@@ -133,7 +133,7 @@
     /* Chart */
     .chart-wrap { position: relative; height: 240px; }
 
-    /* Ad summary grid (TACOS / TROAS / NTB block — Merchant Spring style) */
+    /* Ad summary grid (TACOS / TROAS / ACOS / ROAS — Merchant Spring style) */
     .ad-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
     .ad-stat { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
     .ad-stat-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-3); margin-bottom: 5px; }
@@ -376,7 +376,6 @@ const SECTION_RENDERERS = {
     const stat = (label, value, sub) => `<div class="ad-stat"><div class="ad-stat-label">${label}</div><div class="ad-stat-value">${value}</div>${sub ? `<div class="ad-stat-sub">${sub}</div>` : ''}</div>`;
     const totalSpend = (ad.spendCad || 0) + (ad.spendUsd || 0);
     const totalAttr  = (ad.attributedSalesCad || 0) + (ad.attributedSalesUsd || 0);
-    const totalNtb   = (ad.ntbSalesCad || 0) + (ad.ntbSalesUsd || 0);
     return `
       <div class="ad-grid">
         ${stat('Total Ad Sales', fmtC(totalAttr, '$'), `CAD ${fmtC(ad.attributedSalesCad)} · USD ${fmtC(ad.attributedSalesUsd, 'US$')}`)}
@@ -391,12 +390,12 @@ const SECTION_RENDERERS = {
         ${stat('Impressions',    fmtN(ad.impressions))}
         ${stat('Clicks',         fmtN(ad.clicks), `CTR ${fmtPct(ad.ctr, 2)} · CPC $${fmt2(ad.cpc)}`)}
       </div>
-      <div class="ad-section-sub">New-to-Brand (NTB)</div>
+      <div class="ad-section-sub">Engagement</div>
       <div class="ad-grid">
-        ${stat('NTB Sales',      fmtC(totalNtb, '$'), `${fmtPct(ad.ntbSalesPct)} of ad sales`)}
-        ${stat('NTB Orders',     fmtN(ad.ntbOrders), `${fmtPct(ad.ntbOrdersPct)} of ad orders`)}
-        ${stat('NTB Units',      fmtN(ad.ntbUnits))}
         ${stat('Ad Orders',      fmtN(ad.orders), `Ad CVR ${fmtPct(ad.adCvr)}`)}
+        ${stat('Ad CVR',         fmtPct(ad.adCvr), 'Orders ÷ clicks')}
+        ${stat('CPC',            ad.cpc != null ? '$' + fmt2(ad.cpc) : '—', 'Cost per click')}
+        ${stat('CTR',            fmtPct(ad.ctr, 2), 'Clicks ÷ impressions')}
       </div>`;
   },
 
