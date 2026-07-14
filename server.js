@@ -3193,37 +3193,10 @@ app.get('/api/brand-report-pdf/:brandId', async (req, res) => {
     const safeName  = String(brandName).replace(/[^a-z0-9\-_]+/gi, '_');
     const filename  = `RMC_${safeName}_${period}_${dateStamp}.pdf`;
 
-    // Record an archive entry. Best-effort — failure (e.g. missing table)
-    // must not block the PDF download.
-    try {
-      // Pull the period range Puppeteer just rendered via the page URL params.
-      // Resolve the same way the dataset endpoint does so the archive's
-      // dates exactly match what's in the PDF.
-      const { from: archiveFrom, to: archiveTo } = resolveSummaryRange(req);
-      let summarySnapshot = null;
-      try {
-        const cached = await trySelectSummary(brandId, archiveFrom, archiveTo);
-        summarySnapshot = cached?.summary_text || null;
-      } catch {}
-
-      const archiveRow = {
-        brand_id:              brandId,
-        period_from:           archiveFrom,
-        period_to:             archiveTo,
-        period_label:          period,
-        summary_text_snapshot: summarySnapshot,
-        generated_by:          req.headers['x-rmc-actor'] || 'system',
-        generated_at:          new Date().toISOString(),
-      };
-      const { error: archiveErr } = await supabase
-        .from('brand_report_archives')
-        .insert(archiveRow);
-      if (archiveErr && !String(archiveErr.message).match(/relation .* does not exist/i)) {
-        console.warn('[BrandReportPDF] archive insert error:', archiveErr.message);
-      }
-    } catch (e) {
-      console.warn('[BrandReportPDF] archive logging skipped:', e.message);
-    }
+    // NOTE: generating a PDF no longer creates a history row. Saving is now an
+    // explicit action (POST /api/brand-report-archives/:brandId) so the history
+    // is a list of deliverables rather than a log of every render — you can
+    // download a PDF to eyeball it without polluting the record.
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -3235,30 +3208,101 @@ app.get('/api/brand-report-pdf/:brandId', async (req, res) => {
   }
 });
 
-// ── Report history archives (Phase 2 slice 2.5) ──────────────────────────────
-// Lists past PDF generations for a brand. The archive row is logged each
-// time the PDF endpoint runs (see GET /api/brand-report-pdf above).
+// ── Saved reports ────────────────────────────────────────────────────────────
+// A saved report is a DELIVERABLE: the numbers and the summary frozen at the
+// moment it was saved. That's the opposite of the live view on purpose — what
+// a brand was sent shouldn't change afterwards just because the data did.
+//
+// Live view  → /api/brand-report-dataset (always fresh, free, no snapshot)
+// Saved report → this table (immutable, what the client actually got)
+
+// List saved reports for a brand (newest first). Snapshot bodies are excluded
+// so the dropdown stays light — fetch a single report to get its snapshot.
 app.get('/api/brand-report-archives/:brandId', async (req, res) => {
   const { brandId } = req.params;
   const limit = Math.min(parseInt(req.query.limit || '50', 10), 200);
   try {
     const { data, error } = await supabase
       .from('brand_report_archives')
-      .select('id, brand_id, period_from, period_to, period_label, summary_text_snapshot, generated_by, generated_at')
+      .select('id, brand_id, period_from, period_to, period_label, summary_text_snapshot, generated_by, generated_at, is_saved_report')
       .eq('brand_id', brandId)
       .order('generated_at', { ascending: false })
       .limit(limit);
     if (error) {
-      // Missing table → return empty list rather than 500ing the UI.
-      if (String(error.message).match(/relation .* does not exist|brand_report_archives/i)) {
-        return res.json({ brand_id: brandId, archives: [], note: 'archive table not created yet — run sql/brand-report-archives.sql' });
+      if (String(error.message).match(/relation .* does not exist|brand_report_archives|is_saved_report/i)) {
+        return res.json({ brand_id: brandId, archives: [], note: 'archive table not migrated yet — run sql/brand-report-snapshots.sql' });
       }
       throw new Error(error.message);
     }
     res.json({ brand_id: brandId, archives: data || [] });
   } catch (err) {
-    console.error('[BrandReportArchives] GET error:', err.message);
+    console.error('[SavedReports] list error:', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Load one saved report, including its frozen dataset snapshot.
+app.get('/api/brand-report-archives/:brandId/:reportId', async (req, res) => {
+  const { brandId, reportId } = req.params;
+  try {
+    const { data, error } = await supabase
+      .from('brand_report_archives')
+      .select('*')
+      .eq('brand_id', brandId).eq('id', reportId)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!data) return res.status(404).json({ error: 'Saved report not found' });
+    res.json(data);
+  } catch (err) {
+    console.error('[SavedReports] get error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Save the current report — freezes the dataset + whatever summary is cached.
+// Requires a summary to exist: saving a report with no narrative isn't a
+// deliverable, and silently saving an empty one would be worse.
+app.post('/api/brand-report-archives/:brandId', async (req, res) => {
+  const { brandId } = req.params;
+  try {
+    const { from, to } = resolveReportPeriod(req.query);
+
+    const summaryRow = await trySelectSummary(brandId, from, to);
+    if (!summaryRow?.summary_text) {
+      return res.status(400).json({
+        error: 'Generate the executive summary before saving — a report without one isn\'t sendable.',
+      });
+    }
+
+    const dataset = await buildBrandReportDataset(brandId, req.query);
+
+    const row = {
+      brand_id:              brandId,
+      period_from:           from,
+      period_to:             to,
+      period_label:          dataset.period?.label || `${from} → ${to}`,
+      summary_text_snapshot: summaryRow.summary_text,
+      dataset_snapshot:      dataset,
+      is_saved_report:       true,
+      generated_by:          req.headers['x-rmc-actor'] || 'system',
+      generated_at:          new Date().toISOString(),
+    };
+
+    const { data, error } = await supabase
+      .from('brand_report_archives')
+      .insert(row)
+      .select('id, brand_id, period_from, period_to, period_label, generated_at, generated_by, is_saved_report')
+      .single();
+    if (error) {
+      if (String(error.message).match(/dataset_snapshot|is_saved_report/i)) {
+        return res.status(503).json({ error: 'Run sql/brand-report-snapshots.sql first — the snapshot columns are missing.' });
+      }
+      throw new Error(error.message);
+    }
+    res.json({ success: true, ...data });
+  } catch (err) {
+    console.error('[SavedReports] save error:', err.message);
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
@@ -3503,23 +3547,25 @@ app.put('/api/brand-report-summary/:brandId', async (req, res) => {
 // Ads are no longer baked on-demand here — they come from daily_metrics
 // (which the ad-sync cron persists), so this endpoint returns in milliseconds
 // instead of the 1-5 min /api/report-ads bake.
-app.get('/api/brand-report-dataset/:brandId', async (req, res) => {
-  const { brandId } = req.params;
+// Builds the full report dataset for a brand+period. Extracted from the route
+// so the save-report path can freeze a snapshot without an HTTP round-trip.
+// Throws { status, message } on failure so the caller can map it to a response.
+async function buildBrandReportDataset(brandId, query = {}) {
   const msDay = 86400000;
   const fmtISO  = d => d.toISOString().split('T')[0];
   const fmtLabel = s => new Date(s + 'T12:00:00Z').toLocaleDateString('en-US',
     { month: 'short', day: 'numeric', year: 'numeric' });
 
-  try {
+  {
     // ── 1. Resolve brand
     const { brands } = await loadBrands();
     const brand = brands.find(b => b.id === brandId);
-    if (!brand) return res.status(404).json({ error: `Brand '${brandId}' not found` });
+    if (!brand) { const e = new Error(`Brand '${brandId}' not found`); e.status = 404; throw e; }
 
     // ── 2. Resolve period + comparison via the shared resolver (defaults to
     //      lastMonth, and compares calendar months against calendar months).
     const { from: fromStr, to: toStr, compFrom: compFromStr, compTo: compToStr } =
-      resolveReportPeriod(req.query);
+      resolveReportPeriod(query);
 
     // ── 3. Pull both periods from daily_metrics (uses the shared aggregator
     //      so output matches /api/metrics + the preset_metrics rebuild).
@@ -3531,7 +3577,7 @@ app.get('/api/brand-report-dataset/:brandId', async (req, res) => {
     const curr = currAll.brands?.[brandId];
     const prev = prevAll.brands?.[brandId];
     if (!curr) {
-      return res.status(200).json({
+      return {
         brand: { id: brand.id, name: brand.name, marketplace: brand.marketplace || 'CA' },
         period:     { from: fromStr,    to: toStr,    label: `${fmtLabel(fromStr)} – ${fmtLabel(toStr)}` },
         comparison: { from: compFromStr, to: compToStr, label: `${fmtLabel(compFromStr)} – ${fmtLabel(compToStr)}` },
@@ -3539,7 +3585,7 @@ app.get('/api/brand-report-dataset/:brandId', async (req, res) => {
         summary: null, summaryPrev: null, products: [], dailySeries: [], dailySeriesPrev: [],
         note: 'No daily_metrics rows for this brand in the requested window',
         generatedAt: new Date().toISOString(),
-      });
+      };
     }
 
     // ── 4. Per-brand config (hidden_sections). Missing row → empty defaults.
@@ -3619,8 +3665,8 @@ app.get('/api/brand-report-dataset/:brandId', async (req, res) => {
       wantYtd ? fetchYtdSeries() : Promise.resolve({ current: [], prior: [] }),
     ]);
 
-    // ── 6. Assemble response
-    res.json({
+    // ── 6. Assemble
+    return {
       brand: { id: brand.id, name: brand.name, marketplace: brand.marketplace || 'CA' },
       period:     { from: fromStr,    to: toStr,    label: `${fmtLabel(fromStr)} – ${fmtLabel(toStr)}` },
       comparison: { from: compFromStr, to: compToStr, label: `${fmtLabel(compFromStr)} – ${fmtLabel(compToStr)}` },
@@ -3638,10 +3684,20 @@ app.get('/api/brand-report-dataset/:brandId', async (req, res) => {
       ytdSeries:     ytd.current,
       ytdSeriesPrev: ytd.prior,
       generatedAt: new Date().toISOString(),
-    });
+    };
+  }
+}
+
+// Live dataset — always fresh from daily_metrics. Deliberately NOT cached:
+// re-querying is cheap and it means data corrections propagate to every
+// historical view. Saved reports are the frozen counterpart (see below).
+app.get('/api/brand-report-dataset/:brandId', async (req, res) => {
+  try {
+    const dataset = await buildBrandReportDataset(req.params.brandId, req.query);
+    res.json(dataset);
   } catch (err) {
     console.error('[BrandReportDataset] error:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 

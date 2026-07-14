@@ -100,6 +100,27 @@
     }
     .rpt-toolbar .btn:hover:not(:disabled) { background: var(--brand-hover); box-shadow: 0 0 24px var(--brand-glow); }
     .rpt-toolbar .btn:disabled { opacity: 0.5; cursor: wait; }
+    .rpt-toolbar .btn-secondary {
+      background: var(--bg-well); color: var(--text-2); border: 1px solid var(--border);
+      border-radius: var(--r-sm); padding: 8px 14px; font-size: 12px; font-weight: 600;
+      cursor: pointer; font-family: inherit; transition: all 0.15s ease;
+    }
+    .rpt-toolbar .btn-secondary:hover:not(:disabled) { background: rgba(255,255,255,0.08); color: var(--text); border-color: var(--border-hi); }
+    .rpt-toolbar .btn-secondary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* Banner shown when viewing a frozen saved report rather than live data. */
+    .snapshot-banner {
+      background: rgba(251,191,36,0.10); border-bottom: 1px solid rgba(251,191,36,0.30);
+      color: var(--warn); padding: 9px 32px; font-size: 12px;
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    }
+    .snapshot-banner button {
+      background: transparent; border: 1px solid rgba(251,191,36,0.45); color: var(--warn);
+      border-radius: var(--r-xs); padding: 4px 10px; font-size: 11px; font-weight: 600;
+      cursor: pointer; font-family: inherit;
+    }
+    .snapshot-banner button:hover { background: rgba(251,191,36,0.14); }
+    body.print-mode .snapshot-banner { display: none !important; }
 
     #loading { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 60vh; gap: 16px; color: var(--text-2); }
     .spinner { width: 36px; height: 36px; border: 3px solid var(--border); border-top-color: var(--brand); border-radius: 50%; animation: spin 0.8s linear infinite; }
@@ -130,6 +151,13 @@
     /* Executive summary editor */
     .exec-status { font-size: 12px; color: var(--text-3); margin-bottom: 10px; }
     .exec-status.error { color: var(--neg); }
+    .exec-status:empty { margin-bottom: 0; }
+    .exec-empty {
+      padding: 22px; text-align: center; background: var(--bg);
+      border: 1px dashed var(--border); border-radius: 10px;
+    }
+    .exec-empty p { font-size: 12px; color: var(--text-2); margin-bottom: 12px; }
+    body.print-mode .exec-empty { display: none !important; }
     .exec-textarea {
       width: 100%; min-height: 200px; padding: 14px 16px; font-family: 'Inter', sans-serif;
       font-size: 13px; line-height: 1.6; color: var(--text); background: var(--bg);
@@ -222,14 +250,23 @@
       <option value="last30d">Last 30 Days</option>
       <option value="last90d">Last 90 Days</option>
     </select>
+    <label for="savedSelect">Saved</label>
+    <select id="savedSelect" title="Previously saved reports for this brand">
+      <option value="">Live view</option>
+    </select>
     <div class="spacer"></div>
+    <button class="btn-secondary" id="saveBtn" type="button">Save report</button>
     <button class="btn" id="pdfBtn" type="button">Generate PDF</button>
+  </div>
+
+  <div id="snapshotBanner" class="snapshot-banner" style="display:none;">
+    <span id="snapshotBannerText"></span>
+    <button type="button" id="backToLiveBtn">Back to live view</button>
   </div>
 
   <div id="loading">
     <div class="spinner"></div>
-    <div>Generating report…</div>
-    <div style="font-size:11px;color:#9AAABB">Pulling data from the unified endpoint</div>
+    <div>Loading report…</div>
   </div>
 
   <div id="report">
@@ -306,9 +343,17 @@ const SECTION_TITLES = {
 const SECTION_RENDERERS = {
   executive_summary: () => `
     <div id="execSummaryWrap">
-      <div id="execSummaryStatus" class="exec-status">Loading summary…</div>
-      <textarea id="execSummaryText" class="exec-textarea" placeholder="Click Generate to draft a summary with AI, then edit as needed." spellcheck="true"></textarea>
-      <div class="exec-actions">
+      <div id="execSummaryStatus" class="exec-status"></div>
+
+      <!-- Shown when no summary exists yet. Nothing is generated automatically:
+           opening a report must never cost money. -->
+      <div id="execEmpty" class="exec-empty" style="display:none;">
+        <p>No executive summary for this period yet.</p>
+        <button id="execGenerateBtn" class="exec-btn" type="button">Generate summary</button>
+      </div>
+
+      <textarea id="execSummaryText" class="exec-textarea" placeholder="" spellcheck="true" style="display:none;"></textarea>
+      <div class="exec-actions" id="execActions" style="display:none;">
         <span id="execSummaryMeta" class="exec-meta"></span>
         <div class="exec-buttons">
           <button id="execRegenBtn" class="exec-btn-secondary" type="button">Regenerate</button>
@@ -535,19 +580,98 @@ async function init() {
 
     const sel = $('brandSelect');
     sel.innerHTML = brandList.map(b => `<option value="${b.id}" ${b.id === currentBrand ? 'selected' : ''}>${escapeHtml(b.name)}</option>`).join('');
-    sel.addEventListener('change', () => { currentBrand = sel.value; updateUrl(); render(); });
+    // Changing brand or period always drops you back to the live view — a
+    // saved report belongs to one brand+period, so keeping it selected would lie.
+    sel.addEventListener('change', () => {
+      currentBrand = sel.value; currentSavedId = null;
+      loadSavedReports(currentBrand); updateUrl(); render();
+    });
 
     const periodSel = $('periodSelect');
     periodSel.value = currentPeriod;
-    periodSel.addEventListener('change', () => { currentPeriod = periodSel.value; updateUrl(); render(); });
+    periodSel.addEventListener('change', () => {
+      currentPeriod = periodSel.value; currentSavedId = null;
+      $('savedSelect').value = ''; updateUrl(); render();
+    });
+
+    const savedSel = $('savedSelect');
+    if (savedSel) savedSel.addEventListener('change', () => {
+      currentSavedId = savedSel.value || null;
+      updateUrl(); render();
+    });
+
+    const backBtn = $('backToLiveBtn');
+    if (backBtn) backBtn.addEventListener('click', () => {
+      currentSavedId = null;
+      if (savedSel) savedSel.value = '';
+      updateUrl(); render();
+    });
 
     const pdfBtn = $('pdfBtn');
     if (pdfBtn) pdfBtn.addEventListener('click', generatePdf);
+    const saveBtn = $('saveBtn');
+    if (saveBtn) saveBtn.addEventListener('click', saveReport);
 
+    await loadSavedReports(currentBrand);
     await render();
   } catch (err) {
     console.error('init failed', err);
     $('loading').innerHTML = `<div style="color:var(--neg)">Failed to load: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+// ── Saved reports ─────────────────────────────────────────────────────────────
+// currentSavedId !== null means we're viewing a frozen snapshot, not live data.
+let currentSavedId = qs.get('saved') || null;
+let savedReportsCache = [];
+
+async function loadSavedReports(brandId) {
+  const sel = $('savedSelect');
+  if (!sel) return;
+  try {
+    const res  = await fetch(`/api/brand-report-archives/${encodeURIComponent(brandId)}?limit=50`, { credentials: 'include' });
+    const data = await res.json();
+    savedReportsCache = (data.archives || []).filter(a => a.is_saved_report !== false);
+    sel.innerHTML = '<option value="">Live view</option>' + savedReportsCache.map(a => {
+      const d = new Date(a.generated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      return `<option value="${a.id}" ${a.id === currentSavedId ? 'selected' : ''}>${escapeHtml(a.period_label || (a.period_from + ' → ' + a.period_to))} · saved ${escapeHtml(d)}</option>`;
+    }).join('');
+  } catch {
+    sel.innerHTML = '<option value="">Live view</option>';
+  }
+}
+
+// Enable "Save report" only when there's a summary to save and we're live.
+function refreshSaveBtn() {
+  const btn = $('saveBtn');
+  if (!btn) return;
+  const textarea = document.getElementById('execSummaryText');
+  const hasSummary = !!(textarea && textarea.value.trim());
+  btn.disabled = !hasSummary || !!currentSavedId;
+  btn.title = currentSavedId ? 'Viewing a saved report'
+            : hasSummary ? 'Freeze this report as a deliverable'
+            : 'Generate the executive summary first';
+}
+
+async function saveReport() {
+  const btn = $('saveBtn');
+  if (!btn || currentSavedId) return;
+  if (!confirm('Save this report?\n\nIt freezes the numbers and summary as they are now — a permanent record of what was sent. It will not change if the underlying data changes later.')) return;
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const res = await fetch(`/api/brand-report-archives/${encodeURIComponent(currentBrand)}?period=${encodeURIComponent(currentPeriod)}`,
+      { method: 'POST', credentials: 'include' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    await loadSavedReports(currentBrand);
+    await loadReportHistory(currentBrand);
+    btn.textContent = 'Saved ✓';
+    setTimeout(() => { btn.textContent = label; refreshSaveBtn(); }, 2000);
+  } catch (err) {
+    alert('Save failed: ' + err.message);
+    btn.textContent = label;
+    refreshSaveBtn();
   }
 }
 
@@ -619,6 +743,7 @@ async function generatePdf() {
 
 function updateUrl() {
   const params = new URLSearchParams({ brand: currentBrand, period: currentPeriod });
+  if (currentSavedId) params.set('saved', currentSavedId);
   history.replaceState({}, '', `${location.pathname}?${params}`);
 }
 
@@ -630,9 +755,24 @@ async function render() {
   $('report').style.display = 'none';
 
   try {
-    const res = await fetch(`/api/brand-report-dataset/${encodeURIComponent(currentBrand)}?period=${encodeURIComponent(currentPeriod)}`, { credentials: 'include' });
-    if (!res.ok) throw new Error(`Endpoint returned ${res.status}`);
-    const d = await res.json();
+    // Viewing a saved report → render its frozen snapshot. Otherwise pull live.
+    let d, frozenSummary = null;
+    if (currentSavedId) {
+      const r = await fetch(`/api/brand-report-archives/${encodeURIComponent(currentBrand)}/${encodeURIComponent(currentSavedId)}`, { credentials: 'include' });
+      if (!r.ok) throw new Error(`Saved report returned ${r.status}`);
+      const saved = await r.json();
+      if (!saved.dataset_snapshot) throw new Error('This saved report has no snapshot (saved before snapshots existed).');
+      d = saved.dataset_snapshot;
+      frozenSummary = saved.summary_text_snapshot || '';
+      const when = new Date(saved.generated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      $('snapshotBannerText').textContent = `Viewing a saved report from ${when} — these figures are frozen as sent and won't update.`;
+      $('snapshotBanner').style.display = 'flex';
+    } else {
+      $('snapshotBanner').style.display = 'none';
+      const res = await fetch(`/api/brand-report-dataset/${encodeURIComponent(currentBrand)}?period=${encodeURIComponent(currentPeriod)}`, { credentials: 'include' });
+      if (!res.ok) throw new Error(`Endpoint returned ${res.status}`);
+      d = await res.json();
+    }
 
     $('brandName').textContent     = `${d.brand.name} — Performance Report`;
     $('periodLabel').textContent   = d.period.label;
@@ -655,8 +795,11 @@ async function render() {
     if (enabled.includes('ytd_chart'))   buildYtdChart(d.ytdSeries, d.ytdSeriesPrev);
     if (enabled.includes('ad_trend'))    buildAdTrendChart(d.dailySeries);
 
-    // Initialize executive summary section if visible.
-    if (enabled.includes('executive_summary')) await initExecSummary(d.brand.id, d.period.from, d.period.to);
+    // Initialize executive summary section if visible. Never auto-generates.
+    if (enabled.includes('executive_summary')) {
+      await initExecSummary(d.brand.id, d.period.from, d.period.to, frozenSummary);
+    }
+    refreshSaveBtn();
 
     // Load past report archives (skipped in print-mode — meta info).
     if (!PRINT_MODE) loadReportHistory(d.brand.id);
@@ -804,59 +947,91 @@ function setExecMeta(meta) {
   if (el) el.textContent = meta || '';
 }
 
-async function initExecSummary(brandId, from, to) {
+function showExecSummary(text) {
+  const textarea = document.getElementById('execSummaryText');
+  const actions  = document.getElementById('execActions');
+  const empty    = document.getElementById('execEmpty');
+  if (!textarea) return;
+  textarea.value = text || '';
+  textarea.style.display = 'block';
+  if (actions) actions.style.display = 'flex';
+  if (empty)   empty.style.display = 'none';
+}
+
+function showExecEmpty() {
+  const textarea = document.getElementById('execSummaryText');
+  const actions  = document.getElementById('execActions');
+  const empty    = document.getElementById('execEmpty');
+  if (textarea) textarea.style.display = 'none';
+  if (actions)  actions.style.display = 'none';
+  if (empty)    empty.style.display = 'block';
+}
+
+// Loads a cached summary if one exists. Deliberately does NOT generate:
+// opening a report is free, generating costs money and must be a choice.
+// When viewing a saved report, the frozen summary is passed in directly.
+async function initExecSummary(brandId, from, to, frozenText) {
   execState = { brandId, from, to, dirty: false, edited: false };
 
   const textarea = document.getElementById('execSummaryText');
   const regenBtn = document.getElementById('execRegenBtn');
   const saveBtn  = document.getElementById('execSaveBtn');
-  if (!textarea || !regenBtn || !saveBtn) return;
+  const genBtn   = document.getElementById('execGenerateBtn');
+  if (!textarea) return;
 
-  // Reset UI
-  textarea.value = '';
-  saveBtn.disabled = true;
+  saveBtn.disabled  = true;
   regenBtn.disabled = false;
   setExecMeta('');
+  setExecStatus('');
 
-  // Listeners (attach once — reset rebinds because section innerHTML is rebuilt each render)
-  textarea.oninput = () => {
-    execState.dirty = true;
-    saveBtn.disabled = false;
-  };
+  textarea.oninput = () => { execState.dirty = true; saveBtn.disabled = false; };
   saveBtn.onclick  = () => saveExecSummary();
   regenBtn.onclick = () => regenerateExecSummary();
+  if (genBtn) genBtn.onclick = () => regenerateExecSummary();
 
-  // Try to load cached summary first
+  // Viewing a frozen saved report — show its summary, no editing, no fetching.
+  if (frozenText != null) {
+    showExecSummary(frozenText);
+    textarea.readOnly = true;
+    document.getElementById('execActions').style.display = 'none';
+    return;
+  }
+  textarea.readOnly = false;
+
   try {
     const res = await fetch(`/api/brand-report-summary/${encodeURIComponent(brandId)}?from=${from}&to=${to}`, { credentials: 'include' });
     const data = await res.json();
     if (data.summary_text) {
-      textarea.value = data.summary_text;
       execState.edited = !!data.edited;
-      setExecStatus('');
-      // Deliberately no "AI-drafted" label and no timestamp — this is a
-      // client-facing document; how it was produced isn't the brand's business.
-      setExecMeta('');
-      return;
+      showExecSummary(data.summary_text);
+    } else {
+      showExecEmpty();   // ← no Claude call
     }
-    // No cached summary — auto-generate
-    await regenerateExecSummary();
   } catch (err) {
     setExecStatus('Failed to load summary — ' + err.message, true);
+    showExecEmpty();
   }
+  refreshSaveBtn();
 }
 
 async function regenerateExecSummary() {
   const textarea = document.getElementById('execSummaryText');
   const regenBtn = document.getElementById('execRegenBtn');
   const saveBtn  = document.getElementById('execSaveBtn');
+  const genBtn   = document.getElementById('execGenerateBtn');
   if (!textarea) return;
 
-  if (execState.edited && !confirm('This summary has been edited. Regenerating will replace your edits. Continue?')) return;
+  // Every generation is a paid Claude call, so it's always confirmed. Once
+  // generated it's cached for this brand+period — viewing it again is free.
+  const warn = execState.edited
+    ? 'Regenerate this summary?\n\nThis calls Claude (a paid API request) AND will replace your edits.'
+    : 'Generate an executive summary?\n\nThis calls Claude — a paid API request. Once generated it\'s saved for this brand and period, so viewing it again is free.';
+  if (!confirm(warn)) return;
 
-  regenBtn.disabled = true;
-  saveBtn.disabled  = true;
-  setExecStatus('Generating with Claude…');
+  if (regenBtn) regenBtn.disabled = true;
+  if (genBtn)   { genBtn.disabled = true; genBtn.textContent = 'Generating…'; }
+  if (saveBtn)  saveBtn.disabled = true;
+  setExecStatus('Generating…');
   setExecMeta('');
 
   try {
@@ -865,15 +1040,17 @@ async function regenerateExecSummary() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
 
-    textarea.value     = data.summary_text || '';
-    execState.dirty    = false;
-    execState.edited   = false;
+    execState.dirty  = false;
+    execState.edited = false;
+    showExecSummary(data.summary_text || '');
     setExecStatus('');
     setExecMeta('');
+    refreshSaveBtn();
   } catch (err) {
     setExecStatus('Generation failed — ' + err.message, true);
   } finally {
-    regenBtn.disabled = false;
+    if (regenBtn) regenBtn.disabled = false;
+    if (genBtn)   { genBtn.disabled = false; genBtn.textContent = 'Generate summary'; }
   }
 }
 
