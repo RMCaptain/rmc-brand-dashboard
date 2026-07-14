@@ -567,7 +567,9 @@ async function loadReportHistory(brandId) {
     }
     list.innerHTML = archives.map(a => {
       const periodLabel = `${a.period_from} → ${a.period_to}`;
-      const when = new Date(a.generated_at).toLocaleString();
+      // Date only — the exact minute a PDF was rendered is noise.
+      const when = new Date(a.generated_at).toLocaleDateString('en-US',
+        { month: 'short', day: 'numeric', year: 'numeric' });
       const redownloadUrl = `/api/brand-report-pdf/${encodeURIComponent(brandId)}?from=${a.period_from}&to=${a.period_to}`;
       const actor = a.generated_by && a.generated_by !== 'system' ? ` · by ${escapeHtml(a.generated_by)}` : '';
       return `<div class="archive-row">
