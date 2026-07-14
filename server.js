@@ -3261,7 +3261,11 @@ app.get('/api/brand-report-archives/:brandId', async (req, res) => {
 // repeated views don't burn API tokens. When the table is missing, the code
 // degrades to "regenerate every call" — so the migration is non-blocking.
 
-const ANTHROPIC_MODEL = 'claude-sonnet-4-6';
+// Haiku by default: the summary is a summarising job, not a reasoning one —
+// the fact sheet in buildSummaryPrompt() has already done the analysis, so the
+// model just has to write it up in voice. Overridable via env so the model can
+// be swapped on Render without a deploy (useful for A/B-ing voice quality).
+const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001';
 
 async function trySelectSummary(brandId, fromS, toS) {
   try {
