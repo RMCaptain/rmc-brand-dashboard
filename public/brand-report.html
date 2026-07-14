@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>RMC Brand Report</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/style.css" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
@@ -15,13 +15,28 @@
        it's the client deliverable and becomes the PDF — so the light tokens
        are scoped to #report ONLY. Never override these on :root: the nav's
        hover state reads var(--text), so a global light override makes the
-       nav links invisible against the dark nav. */
+       nav links invisible against the dark nav.
+
+       Colours below are the official RMC brand palette (Canva brand guide,
+       2026-07-14). Fonts: Poppins for titles, Inter for everything else. */
     #report, body.print-mode {
-      --green: #537D30; --green-lt: #EBF1E4; --navy: #1A2332;
-      --text: #1A2332; --text-2: #5A6A82; --text-3: #9AAABB;
-      --border: #E2E8F0; --bg: #F8FAFC; --pos: #16A34A; --neg: #DC2626;
+      --green:    #2c3a20;   /* primary dark forest green */
+      --green-lt: #9db47e;   /* sage accent */
+      --green-tint: #eef2e8; /* derived wash for hovers/fills */
+      --navy:     #1b2016;   /* near-black green — report header */
+      --text:     #33392c;   /* dark olive — body copy */
+      --text-2:   #6e7567;   /* mid grey-green — secondary */
+      --text-3:   #9aa093;   /* derived muted — labels */
+      --border:   #e4e1d5;   /* warm light grey */
+      --bg:       #faf8f2;   /* cream — page/well background */
+      --pos: #16A34A; --neg: #DC2626;
       --amber: #F59E0B; --amber-bg: #FEF3C7; --red-bg: #FEE2E2;
     }
+    /* Poppins for the report's display type; Inter carries body copy. */
+    #report .rpt-header-left h1,
+    #report .rpt-section-title,
+    #report .tile-value,
+    #report .ad-stat-value { font-family: 'Poppins', 'Inter', sans-serif; }
     body {
       font-family: 'Inter', sans-serif; font-size: 13px;
       color: var(--text); background: var(--bg); line-height: 1.5;
@@ -97,12 +112,11 @@
       background: var(--navy); color: #fff; padding: 28px 32px; border-radius: 12px; margin-bottom: 24px;
       display: flex; align-items: flex-start; justify-content: space-between; gap: 24px;
     }
-    .rpt-header-left h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+    .rpt-header-left h1 { font-size: 22px; font-weight: 600; margin-bottom: 4px; }
     .rpt-header-left p  { font-size: 12px; color: rgba(255,255,255,0.55); }
     .rpt-header-meta { text-align: right; font-size: 12px; color: rgba(255,255,255,0.55); line-height: 1.8; }
     .rpt-header-meta strong { color: rgba(255,255,255,0.85); font-weight: 500; }
-    .rmc-brand { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; letter-spacing: 0.04em; color: var(--green-lt); text-transform: uppercase; margin-bottom: 12px; }
-    .rmc-brand span { color: rgba(255,255,255,0.7); font-weight: 400; letter-spacing: 0; text-transform: none; }
+    .rpt-logo { height: 34px; width: auto; display: block; margin-bottom: 14px; }
 
     /* Section */
     .rpt-section { margin-bottom: 28px; background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 20px 24px; }
@@ -111,6 +125,7 @@
     /* Placeholder section (coming soon) */
     .rpt-placeholder { padding: 18px 0; color: var(--text-3); font-size: 12px; }
     .rpt-placeholder strong { color: var(--text-2); font-weight: 600; }
+    .rpt-note { margin-top: 10px; font-size: 11px; color: var(--text-3); }
 
     /* Executive summary editor */
     .exec-status { font-size: 12px; color: var(--text-3); margin-bottom: 10px; }
@@ -201,10 +216,10 @@
     <select id="brandSelect"><option>Loading…</option></select>
     <label for="periodSelect">Period</label>
     <select id="periodSelect">
-      <option value="last7d">Last 7 Days</option>
-      <option value="last30d" selected>Last 30 Days</option>
+      <option value="lastMonth" selected>Last Month</option>
       <option value="mtd">Month to Date</option>
-      <option value="lastMonth">Last Month</option>
+      <option value="last7d">Last 7 Days</option>
+      <option value="last30d">Last 30 Days</option>
       <option value="last90d">Last 90 Days</option>
     </select>
     <div class="spacer"></div>
@@ -220,15 +235,13 @@
   <div id="report">
     <div class="rpt-header">
       <div class="rpt-header-left">
-        <div class="rmc-brand">RMC <span>/ Rocky Mountain Co.</span></div>
+        <img src="/rmc-logo.png" alt="Rocky Mountain Co." class="rpt-logo" />
         <h1 id="brandName">Brand Report</h1>
         <p id="periodLabel"></p>
       </div>
       <div class="rpt-header-meta">
         <div><strong>Period</strong> <span id="metaPeriod"></span></div>
         <div><strong>Comparison</strong> <span id="metaComparison"></span></div>
-        <div><strong>Currency</strong> CAD + USD</div>
-        <div style="margin-top:8px"><span id="metaGenerated"></span></div>
       </div>
     </div>
 
@@ -244,7 +257,6 @@
 
     <div class="rpt-footer">
       <div>Prepared by <strong>Rocky Mountain Co.</strong> — Confidential</div>
-      <div id="footerGenerated"></div>
     </div>
   </div>
 
@@ -254,7 +266,8 @@ const $ = id => document.getElementById(id);
 // ── URL state ─────────────────────────────────────────────────────────────────
 const qs = new URLSearchParams(location.search);
 let currentBrand  = qs.get('brand')  || '';
-let currentPeriod = qs.get('period') || 'last30d';
+// Last full calendar month is the default: it's the report RMC actually sends brands.
+let currentPeriod = qs.get('period') || 'lastMonth';
 const PRINT_MODE  = qs.get('print') === '1';
 if (PRINT_MODE) document.body.classList.add('print-mode');
 
@@ -283,7 +296,6 @@ const SECTION_TITLES = {
   headline_tiles:      'Performance Highlights',
   sales_trend:         'Revenue Trend',
   ytd_chart:           'Year to Date',
-  sales_by_group:      'Sales by Product Group',
   top_sellers:         'Top Sellers',
   ad_trend:            'Advertising Trend',
   ad_summary:          'Advertising Performance',
@@ -314,9 +326,24 @@ const SECTION_RENDERERS = {
       const prv = prev ? `<div class="tile-prev">${prev}</div>` : '';
       return `<div class="tile"><div class="tile-label">${label}</div><div class="tile-value">${value}</div>${chg}${prv}</div>`;
     };
+
+    // Only render a marketplace's revenue tile when that marketplace actually
+    // has data — current period or prior. Showing "US$0" on a CA-only brand is
+    // noise. Labels name the MARKETPLACE, not just the currency, so adding
+    // Walmart later doesn't silently read as the same line item.
+    // NOTE: the data model still keys on currency, so amazon_ca and a future
+    // walmart_ca would collapse. See the Notion entry on multi-marketplace.
+    const marketplaces = [
+      { label: 'Revenue — Amazon.ca (CA$)', sym: 'CA$',  cur: s.revenueCad, prev: sp.revenueCad },
+      { label: 'Revenue — Amazon.com (US$)', sym: 'US$', cur: s.revenueUsd, prev: sp.revenueUsd },
+    ].filter(mp => (mp.cur || 0) > 0 || (mp.prev || 0) > 0);
+
+    const revTiles = marketplaces.map(mp =>
+      tile(mp.label, fmtC(mp.cur, mp.sym), pct(mp.cur, mp.prev), 'Prior: ' + fmtC(mp.prev, mp.sym))
+    ).join('');
+
     return `<div class="tiles">
-      ${tile('Revenue (CA$)', fmtC(s.revenueCad), pct(s.revenueCad, sp.revenueCad), 'Prior: ' + fmtC(sp.revenueCad))}
-      ${tile('Revenue (US$)', fmtC(s.revenueUsd, 'US$'), pct(s.revenueUsd, sp.revenueUsd), 'Prior: ' + fmtC(sp.revenueUsd, 'US$'))}
+      ${revTiles}
       ${tile('Units Sold', fmtN(s.units), pct(s.units, sp.units), 'Prior: ' + fmtN(sp.units))}
       ${tile('Sessions', fmtN(s.sessions), null, null)}
       ${tile('Conversion (CVR)', fmtPct(conv), null, 'Units ÷ sessions')}
@@ -342,39 +369,57 @@ const SECTION_RENDERERS = {
       </div>`;
   },
 
-  sales_by_group: () => `
-    <div class="rpt-placeholder">
-      <strong>Coming in v2</strong> — Product-group breakouts (e.g. Bike Carriers,
-      Cable Locks, Hitches). Requires per-brand product grouping in the database.
-    </div>`,
-
   top_sellers: (d) => {
-    const rows = (d.products || [])
-      .filter(p => (p.revenueCad + p.revenueUsd + p.units) > 0)
-      .map(p => {
-        const titleShort = (p.title || p.asin).length > 60 ? (p.title || p.asin).slice(0, 60) + '…' : (p.title || p.asin);
-        const stock = (p.inventory?.onHand ?? null);
-        let stockCls = 'good', stockTxt = stock == null ? '—' : `${stock} in stock`;
-        if (stock != null) {
-          if (stock <= 0) { stockCls = 'low'; stockTxt = 'Out of stock'; }
-          else if (stock < 30) { stockCls = 'low'; }
-          else if (stock < 100) { stockCls = 'warn'; }
-        }
-        return `<tr>
-          <td><span class="product-title">${escapeHtml(titleShort)}</span><div class="product-asin">${escapeHtml(p.asin)}</div></td>
-          <td class="r">${fmtC(p.revenueCad)}</td>
-          <td class="r">${fmtC(p.revenueUsd, 'US$')}</td>
-          <td class="r">${fmtN(p.units)}</td>
-          <td class="r">${fmtN(p.sessions)}</td>
-          <td class="r">${fmtPct(p.buyBox)}</td>
-          <td class="r">${deltaHtml(p.units, p.prev?.units)}</td>
-          <td class="r"><span class="stock-chip ${stockCls}">${stockTxt}</span></td>
-        </tr>`;
-      }).join('');
+    const TOP_N = 10;
+    const active = (d.products || []).filter(p => (p.revenueCad + p.revenueUsd + p.units) > 0);
+    // Genuinely "top" sellers: ranked by combined revenue, capped at 10.
+    // (Previously this listed every product with any activity, which for a
+    // brand like Zellies meant the whole catalogue.)
+    const ranked = [...active].sort((a, b) =>
+      (b.revenueCad + b.revenueUsd) - (a.revenueCad + a.revenueUsd)
+    ).slice(0, TOP_N);
+
+    // Drop a currency column entirely if no shown product has revenue in it.
+    const showCad = ranked.some(p => (p.revenueCad || 0) > 0);
+    const showUsd = ranked.some(p => (p.revenueUsd || 0) > 0);
+
+    const rows = ranked.map(p => {
+      const full = p.title || p.asin;
+      const titleShort = full.length > 60 ? full.slice(0, 60) + '…' : full;
+      const stock = (p.inventory?.onHand ?? null);
+      let stockCls = 'good', stockTxt = stock == null ? '—' : `${stock} in stock`;
+      if (stock != null) {
+        if (stock <= 0) { stockCls = 'low'; stockTxt = 'Out of stock'; }
+        else if (stock < 30) { stockCls = 'low'; }
+        else if (stock < 100) { stockCls = 'warn'; }
+      }
+      // title attr gives the untruncated name on hover.
+      return `<tr>
+        <td><span class="product-title" title="${escapeHtml(full)}">${escapeHtml(titleShort)}</span><div class="product-asin">${escapeHtml(p.asin)}</div></td>
+        ${showCad ? `<td class="r">${fmtC(p.revenueCad)}</td>` : ''}
+        ${showUsd ? `<td class="r">${fmtC(p.revenueUsd, 'US$')}</td>` : ''}
+        <td class="r">${fmtN(p.units)}</td>
+        <td class="r">${fmtN(p.sessions)}</td>
+        <td class="r">${fmtPct(p.buyBox)}</td>
+        <td class="r">${deltaHtml(p.units, p.prev?.units)}</td>
+        <td class="r"><span class="stock-chip ${stockCls}">${stockTxt}</span></td>
+      </tr>`;
+    }).join('');
+
+    const cols = 6 + (showCad ? 1 : 0) + (showUsd ? 1 : 0);
+    const more = active.length > TOP_N
+      ? `<div class="rpt-note">Showing top ${TOP_N} of ${active.length} products by revenue.</div>` : '';
+
     return `<table class="rpt-table">
-      <thead><tr><th>Product</th><th class="r">Rev CAD</th><th class="r">Rev USD</th><th class="r">Units</th><th class="r">Sessions</th><th class="r">Buy Box</th><th class="r">Δ Units</th><th class="r">Inventory</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="8" style="text-align:center;color:var(--text-3)">No products with activity in this period.</td></tr>'}</tbody>
-    </table>`;
+      <thead><tr>
+        <th>Product</th>
+        ${showCad ? '<th class="r">Rev CA$</th>' : ''}
+        ${showUsd ? '<th class="r">Rev US$</th>' : ''}
+        <th class="r">Units</th><th class="r">Sessions</th><th class="r">Buy Box</th>
+        <th class="r">Δ Units</th><th class="r">Inventory</th>
+      </tr></thead>
+      <tbody>${rows || `<tr><td colspan="${cols}" style="text-align:center;color:var(--text-3)">No products with activity in this period.</td></tr>`}</tbody>
+    </table>${more}`;
   },
 
   ad_trend: (d) => {
@@ -400,7 +445,6 @@ const SECTION_RENDERERS = {
       <div class="ad-section-sub">Vs total business</div>
       <div class="ad-grid">
         ${stat('TACOS',          fmtPct(ad.tacos), 'Spend ÷ total revenue')}
-        ${stat('TROAS',          ad.troas != null ? ad.troas.toFixed(2) + 'x' : '—', 'Total revenue ÷ spend')}
         ${stat('Impressions',    fmtN(ad.impressions))}
         ${stat('Clicks',         fmtN(ad.clicks), `CTR ${fmtPct(ad.ctr, 2)} · CPC $${fmt2(ad.cpc)}`)}
       </div>
@@ -592,9 +636,6 @@ async function render() {
     $('periodLabel').textContent   = d.period.label;
     $('metaPeriod').textContent    = d.period.label;
     $('metaComparison').textContent = d.comparison.label;
-    const gen = new Date(d.generatedAt).toLocaleString();
-    $('metaGenerated').textContent  = `Generated ${gen}`;
-    $('footerGenerated').textContent = `Generated ${gen}`;
 
     // Render only enabled sections, in order.
     const enabled = d.config?.enabled_sections || Object.keys(SECTION_RENDERERS);
@@ -790,9 +831,10 @@ async function initExecSummary(brandId, from, to) {
     if (data.summary_text) {
       textarea.value = data.summary_text;
       execState.edited = !!data.edited;
-      const stamp = new Date(data.updated_at || data.generated_at).toLocaleString();
       setExecStatus('');
-      setExecMeta(`${data.edited ? 'Edited' : 'AI-drafted'} · last updated ${stamp}`);
+      // Deliberately no "AI-drafted" label and no timestamp — this is a
+      // client-facing document; how it was produced isn't the brand's business.
+      setExecMeta('');
       return;
     }
     // No cached summary — auto-generate
@@ -824,9 +866,8 @@ async function regenerateExecSummary() {
     textarea.value     = data.summary_text || '';
     execState.dirty    = false;
     execState.edited   = false;
-    const stamp = new Date(data.generated_at || data.updated_at).toLocaleString();
     setExecStatus('');
-    setExecMeta(`AI-drafted · generated ${stamp}`);
+    setExecMeta('');
   } catch (err) {
     setExecStatus('Generation failed — ' + err.message, true);
   } finally {
@@ -854,7 +895,8 @@ async function saveExecSummary() {
     execState.dirty  = false;
     execState.edited = true;
     setExecStatus('');
-    setExecMeta(`Edited · saved ${new Date(data.updated_at).toLocaleString()}`);
+    setExecMeta('Saved');
+    setTimeout(() => setExecMeta(''), 2500);
   } catch (err) {
     setExecStatus('Save failed — ' + err.message, true);
     saveBtn.disabled = false;

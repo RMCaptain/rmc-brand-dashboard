@@ -2673,7 +2673,14 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
         const a = byAsin[asin];
         if (!a) continue;
         const meta = lookupSkuMeta(brand.id, asin);
-        const sku = buildSku(asin, brand.id, a, meta.title || brand.asinTitles?.[asin] || '');
+        // Product name priority: the supplier's own name (set on the Products
+        // page) wins, because that's what the brand calls the product. Fall
+        // back to the Amazon listing title, then the raw ASIN.
+        const supplierName = brand.asinConfig?.[asin]?.supplierName?.trim();
+        const displayName  = supplierName || meta.title || brand.asinTitles?.[asin] || '';
+        const sku = buildSku(asin, brand.id, a, displayName);
+        sku.supplierName = supplierName || null;
+        sku.amazonTitle  = meta.title || brand.asinTitles?.[asin] || '';
         sku.imageUrl = imagesByAsin[asin] || meta.imageUrl || null;
         skus.push(sku);
         bUnits += a.units; bUnitsCa += a.units_ca; bUnitsUs += a.units_us;
@@ -2726,11 +2733,11 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
               orders:      bAdOrders,
               acos:  totalAttr > 0  ? Math.round(totalSpend / totalAttr * 10000) / 100 : null,
               roas:  totalSpend > 0 ? Math.round(totalAttr / totalSpend * 100) / 100 : null,
-              // TACOS / TROAS: ad spend vs TOTAL sales (organic + ad-attributed).
-              // Merchant Spring exposes these — they tell you ad cost as a share of
-              // your whole business, not just the ad-driven slice.
+              // TACOS: ad spend as a share of TOTAL sales (organic + ad-attributed),
+              // i.e. ad cost against the whole business rather than just the
+              // ad-driven slice. TROAS was dropped 2026-07-14 — Mike's call, it
+              // wasn't earning its space next to ROAS.
               tacos: totalRev > 0   ? Math.round(totalSpend / totalRev * 10000) / 100 : null,
-              troas: totalSpend > 0 ? Math.round(totalRev / totalSpend * 100) / 100 : null,
               ctr:   bAdImpressions > 0 ? Math.round(bAdClicks / bAdImpressions * 100000) / 1000 : null,
               cpc:   bAdClicks > 0      ? Math.round(totalSpend / bAdClicks * 10000) / 10000 : null,
               adCvr: bAdClicks > 0      ? Math.round(bAdOrders / bAdClicks * 10000) / 100 : null,
@@ -2958,7 +2965,6 @@ const REPORT_SECTION_KEYS = [
   'headline_tiles',       // revenue/units/sessions/CVR/buy box
   'sales_trend',          // 30-day daily chart vs comparison
   'ytd_chart',            // current year vs prior year
-  'sales_by_group',       // product-group breakouts (v2 — needs grouping)
   'top_sellers',          // per-product table with inventory chips
   'ad_trend',             // ad sales vs organic chart
   'ad_summary',           // TACOS / TROAS / ACOS / ROAS / CTR / CPC
@@ -3056,6 +3062,65 @@ app.post('/api/brand-report-config/seed-defaults', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ── Report period resolution ─────────────────────────────────────────────────
+// Single source of truth for turning a ?period= preset (or explicit from/to)
+// into a date window PLUS its comparison window. Both the dataset endpoint and
+// the AI-summary endpoint call this, so their cache keys always agree.
+//
+// Calendar presets (lastMonth / mtd) compare against the PRIOR CALENDAR MONTH,
+// not "the same number of days immediately before". Comparing June 1-30 against
+// May 2-31 would be wrong — it should be May 1-31. Rolling presets (last7d etc)
+// keep the same-length-immediately-prior behaviour, which is correct for them.
+//
+// Default is lastMonth: that's the report RMC actually sends brands.
+const REPORT_ROLLING_DAYS = { last7d: 7, last14d: 14, last30d: 30, last90d: 90 };
+
+function resolveReportPeriod(query = {}) {
+  const msDay  = 86400000;
+  const fmtISO = d => d.toISOString().split('T')[0];
+  const utc    = (y, m, d) => new Date(Date.UTC(y, m, d));
+
+  // Explicit from/to always wins; comparison is same-length immediately prior.
+  if (query.from && query.to) {
+    const from = query.from, to = query.to;
+    const days = Math.round((new Date(to) - new Date(from)) / msDay) + 1;
+    const compTo   = fmtISO(new Date(new Date(from) - msDay));
+    const compFrom = fmtISO(new Date(new Date(compTo) - (days - 1) * msDay));
+    return { from, to, compFrom, compTo, preset: 'custom' };
+  }
+
+  const preset = query.period || 'lastMonth';
+  const now    = new Date();
+  const y = now.getUTCFullYear(), m = now.getUTCMonth(), d = now.getUTCDate();
+
+  if (preset === 'lastMonth') {
+    // Full previous calendar month; compare to the month before that.
+    const from     = fmtISO(utc(y, m - 1, 1));
+    const to       = fmtISO(utc(y, m, 0));      // day 0 = last day of prev month
+    const compFrom = fmtISO(utc(y, m - 2, 1));
+    const compTo   = fmtISO(utc(y, m - 1, 0));
+    return { from, to, compFrom, compTo, preset };
+  }
+
+  if (preset === 'mtd') {
+    // 1st of this month → today; compare to the same span of last month.
+    const from     = fmtISO(utc(y, m, 1));
+    const to       = fmtISO(utc(y, m, d));
+    const compFrom = fmtISO(utc(y, m - 1, 1));
+    const lastMonthEnd = utc(y, m, 0).getUTCDate();   // clamp: Mar 31 → Feb 28
+    const compTo   = fmtISO(utc(y, m - 1, Math.min(d, lastMonthEnd)));
+    return { from, to, compFrom, compTo, preset };
+  }
+
+  // Rolling windows, ending yesterday (today is always partial).
+  const days = REPORT_ROLLING_DAYS[preset] || 30;
+  const to       = fmtISO(new Date(Date.now() - msDay));
+  const from     = fmtISO(new Date(new Date(to) - (days - 1) * msDay));
+  const compTo   = fmtISO(new Date(new Date(from) - msDay));
+  const compFrom = fmtISO(new Date(new Date(compTo) - (days - 1) * msDay));
+  return { from, to, compFrom, compTo, preset };
+}
 
 // ── Brand report PDF export (Phase 2 slice 2.4) ──────────────────────────────
 // Server-side PDF render using Puppeteer (same pattern as the PO Builder PDF
@@ -3328,20 +3393,11 @@ async function callClaudeForSummary(prompt) {
   return text;
 }
 
-// Resolve from/to from explicit query params OR a named preset, matching the
-// dataset endpoint's resolution so cache lookups stay aligned.
+// Summary cache keys must match the dataset window exactly, so both go through
+// the same resolver.
 function resolveSummaryRange(req) {
-  const msDay = 86400000;
-  const fmtISO = d => d.toISOString().split('T')[0];
-  const todayStr = fmtISO(new Date());
-  let toStr   = req.query.to;
-  let fromStr = req.query.from;
-  if (!toStr) toStr = todayStr;
-  if (!fromStr) {
-    const days = ({ last7d: 7, last14d: 14, last30d: 30, last90d: 90 })[req.query.period || 'last30d'] || 30;
-    fromStr = fmtISO(new Date(new Date(toStr) - (days - 1) * msDay));
-  }
-  return { from: fromStr, to: toStr };
+  const { from, to } = resolveReportPeriod(req.query);
+  return { from, to };
 }
 
 // GET — returns cached summary or null if none exists yet.
@@ -3449,19 +3505,10 @@ app.get('/api/brand-report-dataset/:brandId', async (req, res) => {
     const brand = brands.find(b => b.id === brandId);
     if (!brand) return res.status(404).json({ error: `Brand '${brandId}' not found` });
 
-    // ── 2. Resolve period: explicit from/to OR named preset (last7d/last30d/last90d)
-    const todayStr = fmtISO(new Date());
-    let toStr   = req.query.to;
-    let fromStr = req.query.from;
-    if (!toStr)   toStr   = todayStr;
-    if (!fromStr) {
-      const days = ({ last7d: 7, last14d: 14, last30d: 30, last90d: 90 })[req.query.period || 'last30d'] || 30;
-      fromStr = fmtISO(new Date(new Date(toStr) - (days - 1) * msDay));
-    }
-
-    const periodDays = Math.round((new Date(toStr) - new Date(fromStr)) / msDay) + 1;
-    const compToStr   = fmtISO(new Date(new Date(fromStr) - msDay));
-    const compFromStr = fmtISO(new Date(new Date(compToStr) - (periodDays - 1) * msDay));
+    // ── 2. Resolve period + comparison via the shared resolver (defaults to
+    //      lastMonth, and compares calendar months against calendar months).
+    const { from: fromStr, to: toStr, compFrom: compFromStr, compTo: compToStr } =
+      resolveReportPeriod(req.query);
 
     // ── 3. Pull both periods from daily_metrics (uses the shared aggregator
     //      so output matches /api/metrics + the preset_metrics rebuild).
