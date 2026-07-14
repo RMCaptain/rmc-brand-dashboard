@@ -3195,7 +3195,7 @@ app.get('/api/brand-report-pdf/:brandId', async (req, res) => {
 
     // NOTE: generating a PDF no longer creates a history row. Saving is now an
     // explicit action (POST /api/brand-report-archives/:brandId) so the history
-    // is a list of deliverables rather than a log of every render — you can
+    // is a list of kept records rather than a log of every render — you can
     // download a PDF to eyeball it without polluting the record.
 
     res.setHeader('Content-Type', 'application/pdf');
@@ -3222,9 +3222,10 @@ app.get('/api/brand-report-pdf/:brandId', async (req, res) => {
 // wouldn't satisfy.
 const REPORT_SCHEMA_VERSION = 1;
 
-// A saved report is a DELIVERABLE: the numbers and the summary frozen at the
-// moment it was saved. That's the opposite of the live view on purpose — what
-// a brand was sent shouldn't change afterwards just because the data did.
+// A saved report is a POINT-IN-TIME RECORD: the numbers and the summary frozen
+// at the moment it was saved. That's the opposite of the live view on purpose —
+// a record of a period shouldn't move afterwards just because the data did.
+// (Nothing here sends anything; saving and sending are unrelated.)
 //
 // Live view  → /api/brand-report-dataset (always fresh, free, no snapshot)
 // Saved report → this table (immutable, what the client actually got)
@@ -3272,8 +3273,8 @@ app.get('/api/brand-report-archives/:brandId/:reportId', async (req, res) => {
   }
 });
 
-// Delete a saved report. Permanent — it destroys the frozen record of what a
-// brand was sent, so the UI confirms hard before calling this.
+// Delete a saved report. Permanent — it destroys the frozen record of that
+// period, so the UI confirms hard before calling this.
 app.delete('/api/brand-report-archives/:brandId/:reportId', async (req, res) => {
   const { brandId, reportId } = req.params;
   try {

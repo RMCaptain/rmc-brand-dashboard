@@ -1,12 +1,12 @@
--- Saved reports become immutable deliverables.
+-- Saved reports become immutable point-in-time records.
 --
 -- Until now brand_report_archives only logged that a PDF was rendered, and
 -- stored the summary text. The numbers were always re-queried live, so an old
 -- report would silently change if the underlying data changed.
 --
--- That's right for a LIVE VIEW and wrong for a SENT REPORT. Adding a full
--- dataset snapshot lets a saved report be frozen: whatever the brand was sent
--- is exactly what we can show back, forever.
+-- That's right for a LIVE VIEW and wrong for a KEPT RECORD. Adding a full
+-- dataset snapshot lets a saved report be frozen: the figures as they stood
+-- when it was saved are exactly what we can show back, forever.
 --
 -- Live views stay live — they never read the snapshot. Only explicitly saved
 -- reports do.

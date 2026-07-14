@@ -12,7 +12,7 @@
   <style>
     /* The page keeps the app's DARK theme (from /style.css) so the nav and
        toolbar stay readable. The report itself is a light "paper" document —
-       it's the client deliverable and becomes the PDF — so the light tokens
+       it's what a brand sees and becomes the PDF — so the light tokens
        are scoped to #report ONLY. Never override these on :root: the nav's
        hover state reads var(--text), so a global light override makes the
        nav links invisible against the dark nav.
@@ -665,7 +665,7 @@ async function deleteSavedReport() {
   const label = rec ? (rec.period_label || `${rec.period_from} → ${rec.period_to}`) : 'this report';
   // Permanent, and it destroys the record of what the brand was actually
   // sent — so spell that out rather than a bare "are you sure?".
-  if (!confirm(`Delete the saved report for ${label}?\n\nThis permanently removes the frozen record of what was sent. It can't be undone — you'd have to re-save from the live view, and the figures may have changed since.`)) return;
+  if (!confirm(`Delete the saved report for ${label}?\n\nThis permanently removes the frozen record of this period. It can't be undone — you'd have to re-save from the live view, and the figures may have changed since.`)) return;
 
   const txt = btn.textContent;
   btn.disabled = true; btn.textContent = 'Deleting…';
@@ -697,7 +697,7 @@ function refreshSaveBtn() {
   btn.disabled = !!currentSavedId || execState.generating;
   btn.title = execState.generating ? 'Waiting for the summary to finish generating…'
             : currentSavedId ? 'Viewing a saved report'
-            : 'Freeze this report as a deliverable';
+            : 'Freeze these figures as a permanent record';
 }
 
 async function saveReport() {
@@ -705,7 +705,7 @@ async function saveReport() {
   if (!btn || currentSavedId) return;
   const textarea = document.getElementById('execSummaryText');
   const noSummary = !(textarea && textarea.value.trim());
-  const msg = 'Save this report?\n\nIt freezes the numbers and summary as they are now — a permanent record of what was sent. It will not change if the underlying data changes later.'
+  const msg = 'Save this report?\n\nIt freezes the numbers and summary as they are now — a permanent record of this period as it stands here. It will not change if the underlying data changes later.'
     + (noSummary ? '\n\nNote: there\'s no executive summary yet, so this saves the figures only.' : '');
   if (!confirm(msg)) return;
   const label = btn.textContent;
@@ -786,8 +786,8 @@ async function render() {
       // rendering it with today's code and hoping the shapes still line up.
       const stale = (d.schemaVersion ?? 0) !== REPORT_SCHEMA_VERSION;
       $('snapshotBannerText').textContent = stale
-        ? `Viewing a saved report from ${when}. It was saved under an earlier report format, so some sections may be missing or differ from how it was sent.`
-        : `Viewing a saved report from ${when} — these figures are frozen as sent and won't update.`;
+        ? `Viewing a saved report from ${when}. It was saved under an earlier report format, so some sections may be missing or differ from how they were saved.`
+        : `Viewing a saved report from ${when} — these figures are frozen as saved and won't update.`;
       $('snapshotBanner').style.display = 'flex';
     } else {
       $('snapshotBanner').style.display = 'none';
