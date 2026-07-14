@@ -426,16 +426,11 @@ const SECTION_RENDERERS = {
     const showCad = ranked.some(p => (p.revenueCad || 0) > 0);
     const showUsd = ranked.some(p => (p.revenueUsd || 0) > 0);
 
+    // Inventory deliberately omitted: the counts aren't reliable enough to put
+    // in front of a brand (Mike, 2026-07-14).
     const rows = ranked.map(p => {
       const full = p.title || p.asin;
       const titleShort = full.length > 60 ? full.slice(0, 60) + '…' : full;
-      const stock = (p.inventory?.onHand ?? null);
-      let stockCls = 'good', stockTxt = stock == null ? '—' : `${stock} in stock`;
-      if (stock != null) {
-        if (stock <= 0) { stockCls = 'low'; stockTxt = 'Out of stock'; }
-        else if (stock < 30) { stockCls = 'low'; }
-        else if (stock < 100) { stockCls = 'warn'; }
-      }
       // title attr gives the untruncated name on hover.
       return `<tr>
         <td><span class="product-title" title="${escapeHtml(full)}">${escapeHtml(titleShort)}</span><div class="product-asin">${escapeHtml(p.asin)}</div></td>
@@ -445,11 +440,10 @@ const SECTION_RENDERERS = {
         <td class="r">${fmtN(p.sessions)}</td>
         <td class="r">${fmtPct(p.buyBox)}</td>
         <td class="r">${deltaHtml(p.units, p.prev?.units)}</td>
-        <td class="r"><span class="stock-chip ${stockCls}">${stockTxt}</span></td>
       </tr>`;
     }).join('');
 
-    const cols = 6 + (showCad ? 1 : 0) + (showUsd ? 1 : 0);
+    const cols = 5 + (showCad ? 1 : 0) + (showUsd ? 1 : 0);
     const more = active.length > TOP_N
       ? `<div class="rpt-note">Showing top ${TOP_N} of ${active.length} products by revenue.</div>` : '';
 
@@ -459,7 +453,7 @@ const SECTION_RENDERERS = {
         ${showCad ? '<th class="r">Rev CA$</th>' : ''}
         ${showUsd ? '<th class="r">Rev US$</th>' : ''}
         <th class="r">Units</th><th class="r">Sessions</th><th class="r">Buy Box</th>
-        <th class="r">Δ Units</th><th class="r">Inventory</th>
+        <th class="r">Δ Units</th>
       </tr></thead>
       <tbody>${rows || `<tr><td colspan="${cols}" style="text-align:center;color:var(--text-3)">No products with activity in this period.</td></tr>`}</tbody>
     </table>${more}`;

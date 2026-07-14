@@ -3707,7 +3707,17 @@ async function buildBrandReportDataset(brandId, query = {}) {
       },
       summary:     curr.summary,
       summaryPrev: prev?.summary || null,
-      products:    curr.skus,
+      // Attach each product's prior-period figures so per-product deltas can be
+      // shown. The comparison period is already aggregated above — this just
+      // maps it on by ASIN. (Without it p.prev is undefined and every delta
+      // renders as a dash, which is exactly what it did until 2026-07-14.)
+      products:    (() => {
+        const prevByAsin = Object.fromEntries((prev?.skus || []).map(s => [s.asin, s]));
+        return (curr.skus || []).map(s => {
+          const p = prevByAsin[s.asin];
+          return { ...s, prev: p ? { units: p.units, revenueCad: p.revenueCad, revenueUsd: p.revenueUsd } : null };
+        });
+      })(),
       dailySeries,
       dailySeriesPrev,
       ytdSeries:     ytd.current,
