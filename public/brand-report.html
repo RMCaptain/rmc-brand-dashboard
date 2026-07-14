@@ -157,6 +157,8 @@
       border: 1px dashed var(--border); border-radius: 10px;
     }
     .exec-empty p { font-size: 12px; color: var(--text-2); margin-bottom: 12px; }
+    .exec-empty-actions { display: flex; gap: 8px; justify-content: center; }
+    .exec-empty-hint { font-size: 11px; color: var(--text-3); margin: 12px 0 0 !important; }
     body.print-mode .exec-empty { display: none !important; }
     .exec-textarea {
       width: 100%; min-height: 200px; padding: 14px 16px; font-family: 'Inter', sans-serif;
@@ -346,13 +348,19 @@ const SECTION_RENDERERS = {
       <div id="execSummaryStatus" class="exec-status"></div>
 
       <!-- Shown when no summary exists yet. Nothing is generated automatically:
-           opening a report must never cost money. -->
+           opening a report must never cost money. Two explicit routes in —
+           writing it yourself is free and never touches the API. -->
       <div id="execEmpty" class="exec-empty" style="display:none;">
         <p>No executive summary for this period yet.</p>
-        <button id="execGenerateBtn" class="exec-btn" type="button">Generate summary</button>
+        <div class="exec-empty-actions">
+          <button id="execWriteBtn"    class="exec-btn-secondary" type="button">Write it myself</button>
+          <button id="execGenerateBtn" class="exec-btn"           type="button">Generate with AI</button>
+        </div>
+        <p class="exec-empty-hint">Writing it yourself is free. Generating uses Claude — a paid API call.</p>
       </div>
 
-      <textarea id="execSummaryText" class="exec-textarea" placeholder="" spellcheck="true" style="display:none;"></textarea>
+      <textarea id="execSummaryText" class="exec-textarea" spellcheck="true" style="display:none;"
+        placeholder="Write the executive summary — headline numbers and what drove them, product callouts, advertising, and what to watch next."></textarea>
       <div class="exec-actions" id="execActions" style="display:none;">
         <span id="execSummaryMeta" class="exec-meta"></span>
         <div class="exec-buttons">
@@ -1001,6 +1009,7 @@ async function initExecSummary(brandId, from, to, frozenText, preloaded) {
   const regenBtn = document.getElementById('execRegenBtn');
   const saveBtn  = document.getElementById('execSaveBtn');
   const genBtn   = document.getElementById('execGenerateBtn');
+  const writeBtn = document.getElementById('execWriteBtn');
   if (!textarea) return;
 
   saveBtn.disabled  = true;
@@ -1012,6 +1021,12 @@ async function initExecSummary(brandId, from, to, frozenText, preloaded) {
   saveBtn.onclick  = () => saveExecSummary();
   regenBtn.onclick = () => regenerateExecSummary();
   if (genBtn) genBtn.onclick = () => regenerateExecSummary();
+  // Write-it-myself: just open the editor. No dialog, no API call, no cost.
+  if (writeBtn) writeBtn.onclick = () => {
+    showExecSummary('');
+    textarea.focus();
+    refreshSaveBtn();
+  };
 
   // Viewing a frozen saved report — show its summary, no editing, no fetching.
   if (frozenText != null) {
