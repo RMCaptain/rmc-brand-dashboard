@@ -10,13 +10,23 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
-    :root {
+    /* The page keeps the app's DARK theme (from /style.css) so the nav and
+       toolbar stay readable. The report itself is a light "paper" document —
+       it's the client deliverable and becomes the PDF — so the light tokens
+       are scoped to #report ONLY. Never override these on :root: the nav's
+       hover state reads var(--text), so a global light override makes the
+       nav links invisible against the dark nav. */
+    #report, body.print-mode {
       --green: #537D30; --green-lt: #EBF1E4; --navy: #1A2332;
       --text: #1A2332; --text-2: #5A6A82; --text-3: #9AAABB;
       --border: #E2E8F0; --bg: #F8FAFC; --pos: #16A34A; --neg: #DC2626;
       --amber: #F59E0B; --amber-bg: #FEF3C7; --red-bg: #FEE2E2;
     }
-    body { font-family: 'Inter', sans-serif; font-size: 13px; color: var(--text); background: #F8FAFC; line-height: 1.5; }
+    body {
+      font-family: 'Inter', sans-serif; font-size: 13px;
+      color: var(--text); background: var(--bg); line-height: 1.5;
+    }
+    #report { color: var(--text); }
 
     /* Print mode (used by the Puppeteer PDF render with ?print=1). Hides nav
        + toolbar + interactive controls; widens the report; removes editable
@@ -52,28 +62,32 @@
     .archive-redownload:hover { background: var(--green-lt); }
     .archive-empty { padding: 12px 0; color: var(--text-3); font-size: 12px; }
 
-    /* Report toolbar — sits below dashboard nav */
+    /* Report toolbar — app chrome, so it uses the DARK theme tokens (it sits
+       outside #report and therefore inherits :root from /style.css). */
     .rpt-toolbar {
-      background: #fff; border-bottom: 1px solid var(--border);
+      background: var(--bg-surface); border-bottom: 1px solid var(--border);
       padding: 16px 32px; display: flex; align-items: center; gap: 16px;
       position: sticky; top: 0; z-index: 10;
     }
-    .rpt-toolbar label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-3); }
+    .rpt-toolbar label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-2); }
     .rpt-toolbar select {
-      background: #fff; border: 1px solid var(--border); border-radius: 8px;
-      padding: 6px 10px; font-size: 13px; color: var(--text); font-family: inherit;
+      background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--r-sm);
+      padding: 6px 10px; font-size: 13px; color: var(--text); font-family: inherit; cursor: pointer;
     }
+    .rpt-toolbar select:hover  { border-color: var(--border-hi); }
+    .rpt-toolbar select:focus  { outline: none; border-color: var(--brand); }
+    .rpt-toolbar select option { background: var(--bg-surface); color: var(--text); }
     .rpt-toolbar .spacer { flex: 1; }
     .rpt-toolbar .btn {
-      background: var(--green); color: #fff; border: 0; border-radius: 8px;
+      background: var(--brand); color: #fff; border: 0; border-radius: var(--r-sm);
       padding: 8px 14px; font-size: 12px; font-weight: 600; cursor: pointer;
-      font-family: inherit;
+      font-family: inherit; transition: background 0.15s ease, box-shadow 0.15s ease;
     }
-    .rpt-toolbar .btn:hover:not(:disabled) { background: #466A28; }
-    .rpt-toolbar .btn:disabled { opacity: 0.6; cursor: wait; }
+    .rpt-toolbar .btn:hover:not(:disabled) { background: var(--brand-hover); box-shadow: 0 0 24px var(--brand-glow); }
+    .rpt-toolbar .btn:disabled { opacity: 0.5; cursor: wait; }
 
     #loading { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 60vh; gap: 16px; color: var(--text-2); }
-    .spinner { width: 36px; height: 36px; border: 3px solid var(--border); border-top-color: var(--green); border-radius: 50%; animation: spin 0.8s linear infinite; }
+    .spinner { width: 36px; height: 36px; border: 3px solid var(--border); border-top-color: var(--brand); border-radius: 50%; animation: spin 0.8s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
     #report { display: none; max-width: 1040px; margin: 0 auto; padding: 24px 24px 64px; }
