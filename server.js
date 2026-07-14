@@ -2972,8 +2972,15 @@ const REPORT_SECTION_KEYS = [
   'per_asin_sheet_link',  // auto-generated Google Sheet link
 ];
 
+// Sections hidden on a fresh brand. The section stays fully built and
+// available — it's just off by default, so turning it back on for a brand is
+// a config change rather than a code change.
+//   inventory_status — Mike 2026-07-14: useful internally, not what brands
+//   want in their monthly report. Kept for a future internal/ops view.
+const DEFAULT_HIDDEN_SECTIONS = ['inventory_status'];
+
 function defaultBrandReportConfig(brandId) {
-  return { brand_id: brandId, hidden_sections: [], updated_at: null };
+  return { brand_id: brandId, hidden_sections: [...DEFAULT_HIDDEN_SECTIONS], updated_at: null };
 }
 
 // GET — return a brand's config, or defaults if no row.
@@ -3049,7 +3056,7 @@ app.post('/api/brand-report-config/seed-defaults', async (req, res) => {
     }
     const rows = missing.map(b => ({
       brand_id: b.id,
-      hidden_sections: [],
+      hidden_sections: [...DEFAULT_HIDDEN_SECTIONS],
       updated_at: new Date().toISOString(),
     }));
     const { error: insertErr } = await supabase
