@@ -59,23 +59,6 @@
     body.print-mode .exec-actions,
     body.print-mode .exec-status:empty { display: none !important; }
     body.print-mode .exec-status { display: none; }
-    body.print-mode #reportHistory { display: none !important; }
-
-    /* Report history block */
-    .archive-row {
-      display: flex; align-items: center; gap: 12px; padding: 10px 0;
-      border-bottom: 1px solid #F1F5F9; font-size: 12px;
-    }
-    .archive-row:last-child { border-bottom: 0; }
-    .archive-period { font-weight: 600; color: var(--text); min-width: 220px; }
-    .archive-when { color: var(--text-3); flex: 1; }
-    .archive-actor { color: var(--text-3); font-size: 11px; }
-    .archive-redownload {
-      color: var(--green); font-weight: 600; text-decoration: none;
-      padding: 4px 10px; border-radius: 6px; transition: background 0.15s;
-    }
-    .archive-redownload:hover { background: var(--green-lt); }
-    .archive-empty { padding: 12px 0; color: var(--text-3); font-size: 12px; }
 
     /* Report toolbar — app chrome, so it uses the DARK theme tokens (it sits
        outside #report and therefore inherits :root from /style.css). */
@@ -252,9 +235,9 @@
       <option value="last30d">Last 30 Days</option>
       <option value="last90d">Last 90 Days</option>
     </select>
-    <label for="savedSelect">Saved</label>
-    <select id="savedSelect" title="Previously saved reports for this brand">
-      <option value="">Live view</option>
+    <label for="savedSelect">History</label>
+    <select id="savedSelect" title="Reports previously saved for this brand">
+      <option value="" disabled selected>No saved reports</option>
     </select>
     <div class="spacer"></div>
     <button class="btn-secondary" id="saveBtn" type="button">Save report</button>
@@ -287,13 +270,6 @@
     <!-- Sections are rendered in enabled_sections order from the API -->
     <div id="sections"></div>
 
-    <!-- Past reports (slice 2.5). Meta block, not part of report sections.
-         Hidden in print mode so the PDF doesn't include its own history. -->
-    <div id="reportHistory" class="rpt-section" style="display:none;">
-      <div class="rpt-section-title">Past Reports</div>
-      <div id="reportHistoryList"></div>
-    </div>
-
     <div class="rpt-footer">
       <div>Prepared by <strong>Rocky Mountain Co.</strong> — Confidential</div>
     </div>
@@ -309,6 +285,10 @@ let currentBrand  = qs.get('brand')  || '';
 let currentPeriod = qs.get('period') || 'lastMonth';
 const PRINT_MODE  = qs.get('print') === '1';
 if (PRINT_MODE) document.body.classList.add('print-mode');
+
+// Must track REPORT_SCHEMA_VERSION in server.js. A snapshot stamped with a
+// different version was saved under an older report format.
+const REPORT_SCHEMA_VERSION = 1;
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 const fmtC = (v, sym = 'CA$') => (v == null || isNaN(v)) ? '—' : sym + Math.round(v).toLocaleString('en-US');
@@ -633,19 +613,29 @@ async function init() {
 let currentSavedId = qs.get('saved') || null;
 let savedReportsCache = [];
 
+// Pure history list. "Live" isn't a saved report, so it isn't an option here —
+// the way back to live is the banner's "Back to live view" button.
 async function loadSavedReports(brandId) {
   const sel = $('savedSelect');
   if (!sel) return;
+  const ph = label => `<option value="" disabled ${currentSavedId ? '' : 'selected'}>${label}</option>`;
   try {
     const res  = await fetch(`/api/brand-report-archives/${encodeURIComponent(brandId)}?limit=50`, { credentials: 'include' });
     const data = await res.json();
     savedReportsCache = (data.archives || []).filter(a => a.is_saved_report !== false);
-    sel.innerHTML = '<option value="">Live view</option>' + savedReportsCache.map(a => {
+    if (!savedReportsCache.length) {
+      sel.innerHTML = ph('No saved reports');
+      sel.disabled = true;
+      return;
+    }
+    sel.disabled = false;
+    sel.innerHTML = ph('Select a saved report…') + savedReportsCache.map(a => {
       const d = new Date(a.generated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
       return `<option value="${a.id}" ${a.id === currentSavedId ? 'selected' : ''}>${escapeHtml(a.period_label || (a.period_from + ' → ' + a.period_to))} · saved ${escapeHtml(d)}</option>`;
     }).join('');
   } catch {
-    sel.innerHTML = '<option value="">Live view</option>';
+    sel.innerHTML = ph('No saved reports');
+    sel.disabled = true;
   }
 }
 
@@ -678,7 +668,6 @@ async function saveReport() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
     await loadSavedReports(currentBrand);
-    await loadReportHistory(currentBrand);
     btn.textContent = 'Saved ✓';
     setTimeout(() => { btn.textContent = label; refreshSaveBtn(); }, 2000);
   } catch (err) {
@@ -688,37 +677,6 @@ async function saveReport() {
   }
 }
 
-async function loadReportHistory(brandId) {
-  const wrap = document.getElementById('reportHistory');
-  const list = document.getElementById('reportHistoryList');
-  if (!wrap || !list) return;
-  list.innerHTML = '<div class="archive-empty">Loading…</div>';
-  wrap.style.display = 'block';
-  try {
-    const res = await fetch(`/api/brand-report-archives/${encodeURIComponent(brandId)}?limit=20`, { credentials: 'include' });
-    const data = await res.json();
-    const archives = data.archives || [];
-    if (!archives.length) {
-      list.innerHTML = `<div class="archive-empty">No PDFs generated for this brand yet${data.note ? ' (' + escapeHtml(data.note) + ')' : ''}.</div>`;
-      return;
-    }
-    list.innerHTML = archives.map(a => {
-      const periodLabel = `${a.period_from} → ${a.period_to}`;
-      // Date only — the exact minute a PDF was rendered is noise.
-      const when = new Date(a.generated_at).toLocaleDateString('en-US',
-        { month: 'short', day: 'numeric', year: 'numeric' });
-      const redownloadUrl = `/api/brand-report-pdf/${encodeURIComponent(brandId)}?from=${a.period_from}&to=${a.period_to}`;
-      const actor = a.generated_by && a.generated_by !== 'system' ? ` · by ${escapeHtml(a.generated_by)}` : '';
-      return `<div class="archive-row">
-        <div class="archive-period">${escapeHtml(periodLabel)}</div>
-        <div class="archive-when">Generated ${escapeHtml(when)}${actor}</div>
-        <a class="archive-redownload" href="${redownloadUrl}" target="_blank" rel="noopener">Re-download</a>
-      </div>`;
-    }).join('');
-  } catch (err) {
-    list.innerHTML = `<div class="archive-empty" style="color:var(--neg)">Failed to load: ${escapeHtml(err.message)}</div>`;
-  }
-}
 
 async function generatePdf() {
   const btn = $('pdfBtn');
@@ -744,8 +702,6 @@ async function generatePdf() {
     document.body.removeChild(a);
     URL.revokeObjectURL(dlUrl);
 
-    // Refresh history so the new archive row appears immediately.
-    loadReportHistory(currentBrand);
   } catch (err) {
     alert('PDF generation failed: ' + err.message);
   } finally {
@@ -778,7 +734,12 @@ async function render() {
       d = saved.dataset_snapshot;
       frozenSummary = saved.summary_text_snapshot || '';
       const when = new Date(saved.generated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-      $('snapshotBannerText').textContent = `Viewing a saved report from ${when} — these figures are frozen as sent and won't update.`;
+      // Say so if this snapshot predates the current report format, rather than
+      // rendering it with today's code and hoping the shapes still line up.
+      const stale = (d.schemaVersion ?? 0) !== REPORT_SCHEMA_VERSION;
+      $('snapshotBannerText').textContent = stale
+        ? `Viewing a saved report from ${when}. It was saved under an earlier report format, so some sections may be missing or differ from how it was sent.`
+        : `Viewing a saved report from ${when} — these figures are frozen as sent and won't update.`;
       $('snapshotBanner').style.display = 'flex';
     } else {
       $('snapshotBanner').style.display = 'none';
@@ -832,9 +793,6 @@ async function render() {
       await initExecSummary(d.brand.id, d.period.from, d.period.to, frozenSummary, preloadedSummary);
     }
     refreshSaveBtn();
-
-    // Load past report archives (skipped in print-mode — meta info).
-    if (!PRINT_MODE) loadReportHistory(d.brand.id);
 
     // Signal to Puppeteer (print-mode PDF render) that this report is
     // fully rendered including charts + cached/generated summary.

@@ -3209,6 +3209,19 @@ app.get('/api/brand-report-pdf/:brandId', async (req, res) => {
 });
 
 // ── Saved reports ────────────────────────────────────────────────────────────
+// Snapshot format version. A saved report freezes its data but is rendered by
+// whatever the renderer looks like at view time — so if the report's shape
+// changes (a section added, a field renamed, a metric recomputed), an old
+// snapshot can be rendered by code expecting fields it doesn't have.
+//
+// Stamping the version into the snapshot means a future renderer can detect an
+// old format and either render it faithfully or say plainly that it was saved
+// under an earlier report format — rather than silently showing something wrong.
+//
+// BUMP THIS whenever the dataset shape changes in a way an older snapshot
+// wouldn't satisfy.
+const REPORT_SCHEMA_VERSION = 1;
+
 // A saved report is a DELIVERABLE: the numbers and the summary frozen at the
 // moment it was saved. That's the opposite of the live view on purpose — what
 // a brand was sent shouldn't change afterwards just because the data did.
@@ -3276,7 +3289,8 @@ app.post('/api/brand-report-archives/:brandId', async (req, res) => {
       period_to:             to,
       period_label:          dataset.period?.label || `${from} → ${to}`,
       summary_text_snapshot: summaryRow?.summary_text || null,
-      dataset_snapshot:      dataset,
+      // schemaVersion rides inside the JSONB so this needs no migration.
+      dataset_snapshot:      { ...dataset, schemaVersion: REPORT_SCHEMA_VERSION },
       is_saved_report:       true,
       generated_by:          req.headers['x-rmc-actor'] || 'system',
       generated_at:          new Date().toISOString(),
