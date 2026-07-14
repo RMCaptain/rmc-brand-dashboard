@@ -2453,12 +2453,44 @@ app.post('/api/asins/images/migrate', async (req, res) => {
 // refund columns are preserved via Supabase's column-level upsert.
 // Persisting clicks/impressions/orders (added 2026-06-30) means reports can
 // read them instantly instead of triggering a fresh 1-5 min Ads API bake.
+// Amazon Ads rejects any report whose date range exceeds 31 days:
+//   "startDate to endDate range (89 days) must not exceed maximum range (31 days)"
+// Requesting more fails the whole pull with a 400, which the caller treats as
+// non-fatal — so a too-wide backfill silently writes nothing while reporting
+// success. That's exactly what happened to two 90-day backfills (2026-07-01 and
+// 2026-07-14): both were rejected on the spot and nothing was ever stored.
+// Chunk instead, so any window works regardless of size.
+const ADS_MAX_RANGE_DAYS = 31;
+
+function adsDateChunks(from, to) {
+  const chunks = [];
+  let start = from;
+  while (start <= to) {
+    // -(N) adds days. Stay a day inside the limit; the API counts the span,
+    // not inclusive days, so 31 exactly is the edge.
+    let end = pstSubtractDays(start, -(ADS_MAX_RANGE_DAYS - 1));
+    if (end > to) end = to;
+    chunks.push([start, end]);
+    start = pstSubtractDays(end, -1);
+  }
+  return chunks;
+}
+
 async function syncDailyAdSpend({ windowDays = 30, includeToday = true } = {}) {
   const { pullAdSpendDaily } = require('./sync/ads');
   const today = pstDateStr();
   const endDate = includeToday ? today : pstSubtractDays(today, 1);
   const from    = pstSubtractDays(today, windowDays);
-  const merged  = await pullAdSpendDaily(from, endDate);
+
+  const chunks = adsDateChunks(from, endDate);
+  if (chunks.length > 1) console.log(`[AdsDaily] ${from} → ${endDate} split into ${chunks.length} chunks (Amazon caps ranges at ${ADS_MAX_RANGE_DAYS} days)`);
+
+  const merged = {};
+  for (const [cFrom, cTo] of chunks) {
+    console.log(`[AdsDaily] pulling ${cFrom} → ${cTo}...`);
+    const part = await pullAdSpendDaily(cFrom, cTo);   // throws on failure — do NOT swallow
+    Object.assign(merged, part);
+  }
 
   const { brands } = await loadBrands();
   const asinBrand = {};
@@ -2489,15 +2521,34 @@ async function syncDailyAdSpend({ windowDays = 30, includeToday = true } = {}) {
   return { rowCount, datesTouched: Object.keys(merged).length };
 }
 
-// Manual trigger
+// Manual trigger. Window is now chunked internally, so it's capped only by how
+// far back Amazon retains report data (~95 days), not by the 31-day range limit.
+//
+// Runs synchronously by default so the caller learns whether it actually worked.
+// The old fire-and-forget behaviour returned "started" and swallowed failures —
+// which is how two 90-day backfills silently did nothing. Pass ?async=true for
+// the old behaviour on very large windows.
 app.post('/api/ads/sync-daily', async (req, res) => {
   if (process.env.SYNC_ENABLED !== 'true') return res.status(403).json({ error: 'SYNC_ENABLED is false' });
-  const windowDays = Math.min(parseInt(req.query.windowDays || '30', 10), 90);
-  res.json({ status: 'started', windowDays });
-  setImmediate(async () => {
-    try { const r = await syncDailyAdSpend({ windowDays }); console.log('[AdsDaily] Done:', JSON.stringify(r)); }
-    catch (e) { console.error('[AdsDaily] Manual sync error:', e.message); }
-  });
+  const windowDays = Math.min(parseInt(req.query.windowDays || '30', 10), 95);
+
+  if (req.query.async === 'true') {
+    res.json({ status: 'started', windowDays });
+    setImmediate(async () => {
+      try { const r = await syncDailyAdSpend({ windowDays }); console.log('[AdsDaily] Done:', JSON.stringify(r)); }
+      catch (e) { console.error('[AdsDaily] Manual sync error:', e.message); }
+    });
+    return;
+  }
+
+  try {
+    const r = await syncDailyAdSpend({ windowDays });
+    console.log('[AdsDaily] Done:', JSON.stringify(r));
+    res.json({ success: true, windowDays, ...r });
+  } catch (e) {
+    console.error('[AdsDaily] Manual sync error:', e.message);
+    res.status(500).json({ success: false, windowDays, error: e.message });
+  }
 });
 
 // Manually trigger refund sync. Returns when complete (can take ~5-15 min depending
