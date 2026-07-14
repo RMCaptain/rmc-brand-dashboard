@@ -642,24 +642,26 @@ async function loadSavedReports(brandId) {
 }
 
 // Enable "Save report" only when there's a summary to save and we're live.
+// A summary is NOT required to save — the numbers are worth freezing on their
+// own. Only blocked while already viewing a saved report, or mid-generation
+// (where we'd otherwise snapshot a summary that's about to change).
 function refreshSaveBtn() {
   const btn = $('saveBtn');
   if (!btn) return;
-  const textarea = document.getElementById('execSummaryText');
-  const hasSummary = !!(textarea && textarea.value.trim());
-  btn.disabled = !hasSummary || !!currentSavedId || execState.generating;
-  // Generation takes a few seconds, during which Save is legitimately
-  // disabled — say so, rather than leaving it mysteriously greyed.
+  btn.disabled = !!currentSavedId || execState.generating;
   btn.title = execState.generating ? 'Waiting for the summary to finish generating…'
             : currentSavedId ? 'Viewing a saved report'
-            : hasSummary ? 'Freeze this report as a deliverable'
-            : 'Generate the executive summary first';
+            : 'Freeze this report as a deliverable';
 }
 
 async function saveReport() {
   const btn = $('saveBtn');
   if (!btn || currentSavedId) return;
-  if (!confirm('Save this report?\n\nIt freezes the numbers and summary as they are now — a permanent record of what was sent. It will not change if the underlying data changes later.')) return;
+  const textarea = document.getElementById('execSummaryText');
+  const noSummary = !(textarea && textarea.value.trim());
+  const msg = 'Save this report?\n\nIt freezes the numbers and summary as they are now — a permanent record of what was sent. It will not change if the underlying data changes later.'
+    + (noSummary ? '\n\nNote: there\'s no executive summary yet, so this saves the figures only.' : '');
+  if (!confirm(msg)) return;
   const label = btn.textContent;
   btn.disabled = true; btn.textContent = 'Saving…';
   try {
@@ -782,11 +784,29 @@ async function render() {
     $('metaPeriod').textContent    = d.period.label;
     $('metaComparison').textContent = d.comparison.label;
 
+    // Resolve the summary BEFORE rendering sections. In print mode a report
+    // with no summary should omit the Executive Summary section entirely
+    // rather than emit an empty titled box into the PDF.
+    let preloadedSummary = null;
+    const enabledRaw = d.config?.enabled_sections || Object.keys(SECTION_RENDERERS);
+    if (frozenSummary != null) {
+      preloadedSummary = { summary_text: frozenSummary };
+    } else if (enabledRaw.includes('executive_summary')) {
+      try {
+        const sr = await fetch(`/api/brand-report-summary/${encodeURIComponent(d.brand.id)}?from=${d.period.from}&to=${d.period.to}`, { credentials: 'include' });
+        preloadedSummary = await sr.json();
+      } catch { preloadedSummary = null; }
+    }
+    const hasSummaryText = !!(preloadedSummary?.summary_text || '').trim();
+
     // Render only enabled sections, in order.
-    const enabled = d.config?.enabled_sections || Object.keys(SECTION_RENDERERS);
+    const enabled = enabledRaw.filter(key => {
+      if (!SECTION_RENDERERS[key]) return false;
+      if (key === 'executive_summary' && PRINT_MODE && !hasSummaryText) return false;
+      return true;
+    });
     const sectionsEl = $('sections');
     sectionsEl.innerHTML = enabled
-      .filter(key => SECTION_RENDERERS[key])
       .map(key => `<div class="rpt-section" data-section="${key}">
           <div class="rpt-section-title">${escapeHtml(SECTION_TITLES[key] || key)}</div>
           ${SECTION_RENDERERS[key](d)}
@@ -798,9 +818,10 @@ async function render() {
     if (enabled.includes('ytd_chart'))   buildYtdChart(d.ytdSeries, d.ytdSeriesPrev);
     if (enabled.includes('ad_trend'))    buildAdTrendChart(d.dailySeries);
 
-    // Initialize executive summary section if visible. Never auto-generates.
+    // Initialize executive summary section if visible. Never auto-generates —
+    // the summary was already fetched above, so this doesn't re-request it.
     if (enabled.includes('executive_summary')) {
-      await initExecSummary(d.brand.id, d.period.from, d.period.to, frozenSummary);
+      await initExecSummary(d.brand.id, d.period.from, d.period.to, frozenSummary, preloadedSummary);
     }
     refreshSaveBtn();
 
@@ -973,7 +994,7 @@ function showExecEmpty() {
 // Loads a cached summary if one exists. Deliberately does NOT generate:
 // opening a report is free, generating costs money and must be a choice.
 // When viewing a saved report, the frozen summary is passed in directly.
-async function initExecSummary(brandId, from, to, frozenText) {
+async function initExecSummary(brandId, from, to, frozenText, preloaded) {
   execState = { brandId, from, to, dirty: false, edited: false, generating: false };
 
   const textarea = document.getElementById('execSummaryText');
@@ -1002,9 +1023,11 @@ async function initExecSummary(brandId, from, to, frozenText) {
   textarea.readOnly = false;
 
   try {
-    const res = await fetch(`/api/brand-report-summary/${encodeURIComponent(brandId)}?from=${from}&to=${to}`, { credentials: 'include' });
-    const data = await res.json();
-    if (data.summary_text) {
+    // render() already fetched this; only fall back to a request if it didn't.
+    const data = preloaded ?? await (await fetch(
+      `/api/brand-report-summary/${encodeURIComponent(brandId)}?from=${from}&to=${to}`,
+      { credentials: 'include' })).json();
+    if (data?.summary_text) {
       execState.edited = !!data.edited;
       showExecSummary(data.summary_text);
     } else {

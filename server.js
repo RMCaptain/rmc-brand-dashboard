@@ -3260,20 +3260,14 @@ app.get('/api/brand-report-archives/:brandId/:reportId', async (req, res) => {
 });
 
 // Save the current report — freezes the dataset + whatever summary is cached.
-// Requires a summary to exist: saving a report with no narrative isn't a
-// deliverable, and silently saving an empty one would be worse.
+// A summary is NOT required: the numbers are worth freezing on their own, and
+// you might well want to snapshot the period now and write the narrative later.
 app.post('/api/brand-report-archives/:brandId', async (req, res) => {
   const { brandId } = req.params;
   try {
     const { from, to } = resolveReportPeriod(req.query);
 
     const summaryRow = await trySelectSummary(brandId, from, to);
-    if (!summaryRow?.summary_text) {
-      return res.status(400).json({
-        error: 'Generate the executive summary before saving — a report without one isn\'t sendable.',
-      });
-    }
-
     const dataset = await buildBrandReportDataset(brandId, req.query);
 
     const row = {
@@ -3281,7 +3275,7 @@ app.post('/api/brand-report-archives/:brandId', async (req, res) => {
       period_from:           from,
       period_to:             to,
       period_label:          dataset.period?.label || `${from} → ${to}`,
-      summary_text_snapshot: summaryRow.summary_text,
+      summary_text_snapshot: summaryRow?.summary_text || null,
       dataset_snapshot:      dataset,
       is_saved_report:       true,
       generated_by:          req.headers['x-rmc-actor'] || 'system',
