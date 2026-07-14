@@ -90,6 +90,14 @@
     }
     .rpt-toolbar .btn-secondary:hover:not(:disabled) { background: rgba(255,255,255,0.08); color: var(--text); border-color: var(--border-hi); }
     .rpt-toolbar .btn-secondary:disabled { opacity: 0.4; cursor: not-allowed; }
+    /* Destructive — muted until hover so it isn't the loudest thing on screen. */
+    .rpt-toolbar .btn-danger {
+      background: transparent; color: var(--neg); border: 1px solid rgba(248,113,113,0.35);
+      border-radius: var(--r-sm); padding: 8px 14px; font-size: 12px; font-weight: 600;
+      cursor: pointer; font-family: inherit; transition: all 0.15s ease;
+    }
+    .rpt-toolbar .btn-danger:hover:not(:disabled) { background: rgba(248,113,113,0.12); border-color: var(--neg); }
+    .rpt-toolbar .btn-danger:disabled { opacity: 0.4; cursor: wait; }
 
     /* Banner shown when viewing a frozen saved report rather than live data. */
     .snapshot-banner {
@@ -240,6 +248,8 @@
       <option value="" disabled selected>No saved reports</option>
     </select>
     <div class="spacer"></div>
+    <!-- Only shown while viewing a saved report — there's nothing to delete otherwise. -->
+    <button class="btn-danger" id="deleteBtn" type="button" style="display:none;">Delete report</button>
     <button class="btn-secondary" id="saveBtn" type="button">Save report</button>
     <button class="btn" id="pdfBtn" type="button">Generate PDF</button>
   </div>
@@ -599,6 +609,8 @@ async function init() {
     if (pdfBtn) pdfBtn.addEventListener('click', generatePdf);
     const saveBtn = $('saveBtn');
     if (saveBtn) saveBtn.addEventListener('click', saveReport);
+    const delBtn = $('deleteBtn');
+    if (delBtn) delBtn.addEventListener('click', deleteSavedReport);
 
     await loadSavedReports(currentBrand);
     await render();
@@ -636,6 +648,42 @@ async function loadSavedReports(brandId) {
   } catch {
     sel.innerHTML = ph('No saved reports');
     sel.disabled = true;
+  }
+}
+
+// Delete only makes sense while looking at a saved report.
+function refreshDeleteBtn() {
+  const btn = $('deleteBtn');
+  if (!btn) return;
+  btn.style.display = currentSavedId ? 'inline-block' : 'none';
+}
+
+async function deleteSavedReport() {
+  const btn = $('deleteBtn');
+  if (!btn || !currentSavedId) return;
+  const rec = savedReportsCache.find(a => a.id === currentSavedId);
+  const label = rec ? (rec.period_label || `${rec.period_from} → ${rec.period_to}`) : 'this report';
+  // Permanent, and it destroys the record of what the brand was actually
+  // sent — so spell that out rather than a bare "are you sure?".
+  if (!confirm(`Delete the saved report for ${label}?\n\nThis permanently removes the frozen record of what was sent. It can't be undone — you'd have to re-save from the live view, and the figures may have changed since.`)) return;
+
+  const txt = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Deleting…';
+  try {
+    const res = await fetch(`/api/brand-report-archives/${encodeURIComponent(currentBrand)}/${encodeURIComponent(currentSavedId)}`,
+      { method: 'DELETE', credentials: 'include' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    // Deleted what we were looking at — drop back to live.
+    currentSavedId = null;
+    await loadSavedReports(currentBrand);
+    updateUrl();
+    await render();
+  } catch (err) {
+    alert('Delete failed: ' + err.message);
+  } finally {
+    btn.disabled = false; btn.textContent = txt;
+    refreshDeleteBtn();
   }
 }
 
@@ -793,6 +841,7 @@ async function render() {
       await initExecSummary(d.brand.id, d.period.from, d.period.to, frozenSummary, preloadedSummary);
     }
     refreshSaveBtn();
+    refreshDeleteBtn();
 
     // Signal to Puppeteer (print-mode PDF render) that this report is
     // fully rendered including charts + cached/generated summary.

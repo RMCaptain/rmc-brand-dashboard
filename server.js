@@ -3272,6 +3272,26 @@ app.get('/api/brand-report-archives/:brandId/:reportId', async (req, res) => {
   }
 });
 
+// Delete a saved report. Permanent — it destroys the frozen record of what a
+// brand was sent, so the UI confirms hard before calling this.
+app.delete('/api/brand-report-archives/:brandId/:reportId', async (req, res) => {
+  const { brandId, reportId } = req.params;
+  try {
+    const { data, error } = await supabase
+      .from('brand_report_archives')
+      .delete()
+      .eq('brand_id', brandId).eq('id', reportId)
+      .select('id')
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!data) return res.status(404).json({ error: 'Saved report not found' });
+    res.json({ success: true, id: data.id });
+  } catch (err) {
+    console.error('[SavedReports] delete error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Save the current report — freezes the dataset + whatever summary is cached.
 // A summary is NOT required: the numbers are worth freezing on their own, and
 // you might well want to snapshot the period now and write the narrative later.
