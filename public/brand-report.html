@@ -647,8 +647,11 @@ function refreshSaveBtn() {
   if (!btn) return;
   const textarea = document.getElementById('execSummaryText');
   const hasSummary = !!(textarea && textarea.value.trim());
-  btn.disabled = !hasSummary || !!currentSavedId;
-  btn.title = currentSavedId ? 'Viewing a saved report'
+  btn.disabled = !hasSummary || !!currentSavedId || execState.generating;
+  // Generation takes a few seconds, during which Save is legitimately
+  // disabled — say so, rather than leaving it mysteriously greyed.
+  btn.title = execState.generating ? 'Waiting for the summary to finish generating…'
+            : currentSavedId ? 'Viewing a saved report'
             : hasSummary ? 'Freeze this report as a deliverable'
             : 'Generate the executive summary first';
 }
@@ -934,7 +937,7 @@ function buildAdTrendChart(daily) {
 }
 
 // ── Executive summary controller ──────────────────────────────────────────────
-let execState = { brandId: null, from: null, to: null, dirty: false, edited: false };
+let execState = { brandId: null, from: null, to: null, dirty: false, edited: false, generating: false };
 
 function setExecStatus(msg, isError = false) {
   const el = document.getElementById('execSummaryStatus');
@@ -971,7 +974,7 @@ function showExecEmpty() {
 // opening a report is free, generating costs money and must be a choice.
 // When viewing a saved report, the frozen summary is passed in directly.
 async function initExecSummary(brandId, from, to, frozenText) {
-  execState = { brandId, from, to, dirty: false, edited: false };
+  execState = { brandId, from, to, dirty: false, edited: false, generating: false };
 
   const textarea = document.getElementById('execSummaryText');
   const regenBtn = document.getElementById('execRegenBtn');
@@ -1028,6 +1031,8 @@ async function regenerateExecSummary() {
     : 'Generate an executive summary?\n\nThis calls Claude — a paid API request. Once generated it\'s saved for this brand and period, so viewing it again is free.';
   if (!confirm(warn)) return;
 
+  execState.generating = true;
+  refreshSaveBtn();
   if (regenBtn) regenBtn.disabled = true;
   if (genBtn)   { genBtn.disabled = true; genBtn.textContent = 'Generating…'; }
   if (saveBtn)  saveBtn.disabled = true;
@@ -1049,8 +1054,10 @@ async function regenerateExecSummary() {
   } catch (err) {
     setExecStatus('Generation failed — ' + err.message, true);
   } finally {
+    execState.generating = false;
     if (regenBtn) regenBtn.disabled = false;
     if (genBtn)   { genBtn.disabled = false; genBtn.textContent = 'Generate summary'; }
+    refreshSaveBtn();
   }
 }
 
