@@ -5,7 +5,7 @@
 -- We deliberately do NOT store the PDF blob: PDFs can be regenerated
 -- on demand from the same period params, and Render's filesystem is
 -- ephemeral. The summary_text_snapshot preserves the narrative used
--- at the time so re-renders show what was sent, even if the live
+-- at the time so re-renders show the narrative as it stood, even if the live
 -- summary cache has since been edited.
 
 CREATE TABLE IF NOT EXISTS brand_report_archives (
