@@ -125,25 +125,28 @@
 
     #report { display: none; max-width: 1040px; margin: 0 auto; padding: 24px 24px 64px; }
 
-    /* Report header (the polished document banner).
-       --green, not --navy: #1b2016 is near-black and printed as an almost-black
-       slab (Mike). --green (#2c3a20) is RMC's actual primary green from the
-       brand guide, so this lightens it while staying on-palette rather than
-       inventing a colour. White text on it is ~12:1 contrast. */
+    /* Report header. White with dark text (Mike, 2026-07-15).
+       Was a dark slab: #1b2016 printed almost black, and lightening it to
+       --green only exposed that rmc-logo.png is a DARK mark built for light
+       backgrounds — its tones measured 1.05:1 and 1.14:1 against the green, so
+       the logo was a watermark either way. White fixes the cause rather than
+       the symptom: the logo renders as designed, no filter, and it prints with
+       a fraction of the ink.
+       Green survives as the h1 and the accent rule, so the banner still reads
+       as RMC rather than as another section card. */
     .rpt-header {
-      background: var(--green); color: #fff; padding: 28px 32px; border-radius: 12px; margin-bottom: 24px;
+      background: #fff; color: var(--text);
+      border: 1px solid var(--border); border-top: 3px solid var(--green);
+      padding: 26px 32px; border-radius: 12px; margin-bottom: 24px;
       display: flex; align-items: flex-start; justify-content: space-between; gap: 24px;
     }
-    .rpt-header-left h1 { font-size: 22px; font-weight: 600; margin-bottom: 4px; }
-    /* Bumped from 0.55: legible on the lighter green, and 0.55 white was weak
-       in print even on the old near-black. */
-    .rpt-header-left p  { font-size: 12px; color: rgba(255,255,255,0.72); }
-    .rpt-header-meta { text-align: right; font-size: 12px; color: rgba(255,255,255,0.72); line-height: 1.8; }
-    .rpt-header-meta strong { color: #fff; font-weight: 500; }
+    .rpt-header-left h1 { font-size: 22px; font-weight: 600; margin-bottom: 4px; color: var(--green); }
+    .rpt-header-left p  { font-size: 12px; color: var(--text-2); }
+    .rpt-header-meta { text-align: right; font-size: 12px; color: var(--text-2); line-height: 1.8; }
+    .rpt-header-meta strong { color: var(--text); font-weight: 600; }
     /* 34px on a 1000x1000 square logo rendered 34x34 — too small to read as a
-       mark at all. 85px is ~2.5x (Mike asked for 2-3x).
-
-       Logo keeps its own colours (Mike) — no white filter. */
+       mark at all. 85px is ~2.5x (Mike asked for 2-3x). Own colours, no filter:
+       on white it finally shows as designed. */
     .rpt-logo { height: 85px; width: auto; display: block; margin-bottom: 16px; }
 
     /* Section */
