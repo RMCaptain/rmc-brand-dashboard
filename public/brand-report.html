@@ -23,7 +23,7 @@
       --green:    #2c3a20;   /* primary dark forest green */
       --green-lt: #9db47e;   /* sage accent */
       --green-tint: #eef2e8; /* derived wash for hovers/fills */
-      --navy:     #1b2016;   /* near-black green — report header */
+      --navy:     #1b2016;   /* near-black green — unused; too dark in print */
       --text:     #33392c;   /* dark olive — body copy */
       --text-2:   #6e7567;   /* mid grey-green — secondary */
       --text-3:   #9aa093;   /* derived muted — labels */
@@ -125,16 +125,34 @@
 
     #report { display: none; max-width: 1040px; margin: 0 auto; padding: 24px 24px 64px; }
 
-    /* Report header (the polished document banner) */
+    /* Report header (the polished document banner).
+       --green, not --navy: #1b2016 is near-black and printed as an almost-black
+       slab (Mike). --green (#2c3a20) is RMC's actual primary green from the
+       brand guide, so this lightens it while staying on-palette rather than
+       inventing a colour. White text on it is ~12:1 contrast. */
     .rpt-header {
-      background: var(--navy); color: #fff; padding: 28px 32px; border-radius: 12px; margin-bottom: 24px;
+      background: var(--green); color: #fff; padding: 28px 32px; border-radius: 12px; margin-bottom: 24px;
       display: flex; align-items: flex-start; justify-content: space-between; gap: 24px;
     }
     .rpt-header-left h1 { font-size: 22px; font-weight: 600; margin-bottom: 4px; }
-    .rpt-header-left p  { font-size: 12px; color: rgba(255,255,255,0.55); }
-    .rpt-header-meta { text-align: right; font-size: 12px; color: rgba(255,255,255,0.55); line-height: 1.8; }
-    .rpt-header-meta strong { color: rgba(255,255,255,0.85); font-weight: 500; }
-    .rpt-logo { height: 34px; width: auto; display: block; margin-bottom: 14px; }
+    /* Bumped from 0.55: legible on the lighter green, and 0.55 white was weak
+       in print even on the old near-black. */
+    .rpt-header-left p  { font-size: 12px; color: rgba(255,255,255,0.72); }
+    .rpt-header-meta { text-align: right; font-size: 12px; color: rgba(255,255,255,0.72); line-height: 1.8; }
+    .rpt-header-meta strong { color: #fff; font-weight: 500; }
+    /* 34px on a 1000x1000 square logo rendered 34x34 — too small to read as a
+       mark at all. 85px is ~2.5x (Mike asked for 2-3x).
+
+       Rendered white. rmc-logo.png is a dark mark built for light backgrounds:
+       its dominant colours measure 1.05:1, 1.14:1 and 1.93:1 against this green
+       — invisible. It survives on the near-black nav, not here. Enlarging it
+       without this just made an unreadable mark bigger.
+       brightness(0) flattens to black, invert(1) flips to pure white. If a
+       proper white/reversed logo asset turns up, drop the filter and use it. */
+    .rpt-logo {
+      height: 85px; width: auto; display: block; margin-bottom: 16px;
+      filter: brightness(0) invert(1);
+    }
 
     /* Section */
     .rpt-section { margin-bottom: 28px; background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 20px 24px; }
