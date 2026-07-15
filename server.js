@@ -2544,6 +2544,153 @@ app.post('/api/ads/sync-daily', async (req, res) => {
   });
 });
 
+// ── Ads API expansion: search terms + campaign structure ────────────────────
+// Feeds the team's ppc-* skills. Tables: ads_search_terms (rolling 30d clicked
+// terms, wipe-and-replace per profile) and ads_campaign_snapshot (JSONB per
+// profile: campaigns/adGroups/keywords/targets/negativeKeywords/productAds).
+
+// Campaign→brand mapping: product ads carry the ASIN; ASINs map to brands.
+// A campaign belongs to every brand whose ASIN it advertises (normally one).
+function campaignBrandMap(snapshot, asinBrand) {
+  const map = {}; // campaignId -> Set(brandId)
+  for (const pa of (snapshot?.productAds || [])) {
+    const brand = asinBrand[pa.asin];
+    if (!brand || pa.campaignId == null) continue;
+    const cid = String(pa.campaignId);
+    if (!map[cid]) map[cid] = new Set();
+    map[cid].add(brand);
+  }
+  return map;
+}
+
+async function loadSnapshots(profileFilter) {
+  let q = supabase.from('ads_campaign_snapshot').select('profile,snapshot,pulled_at');
+  if (profileFilter) q = q.eq('profile', profileFilter);
+  const { data, error } = await q;
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+// Search terms for the ppc-search-terms skill. Optional ?brand=<id> (filters
+// via campaign→brand map from the structure snapshot) and ?profile=CA|US.
+app.get('/api/ads/search-terms', async (req, res) => {
+  try {
+    const { brand, profile } = req.query;
+    let q = supabase.from('ads_search_terms').select('*').order('cost', { ascending: false }).limit(10000);
+    if (profile) q = q.eq('profile', String(profile).toUpperCase());
+    const { data, error } = await q;
+    if (error) throw new Error(error.message);
+    let rows = data || [];
+    let brandFilter = null;
+    if (brand) {
+      const { brands } = await loadBrands();
+      const asinBrand = {};
+      for (const b of brands) for (const a of (b.asins || [])) asinBrand[a] = b.id;
+      const snapshots = await loadSnapshots(profile ? String(profile).toUpperCase() : null);
+      const allowed = new Set();
+      for (const s of snapshots) {
+        const map = campaignBrandMap(s.snapshot, asinBrand);
+        for (const [cid, brandsSet] of Object.entries(map)) if (brandsSet.has(brand)) allowed.add(cid);
+      }
+      rows = rows.filter(r => r.campaign_id && allowed.has(r.campaign_id));
+      brandFilter = { brand, campaigns: allowed.size };
+      if (!snapshots.length) brandFilter.warning = 'no structure snapshot yet — run POST /api/ads/sync-structure';
+    }
+    const window = rows[0] ? { start: rows[0].report_start, end: rows[0].report_end, pulledAt: rows[0].pulled_at } : null;
+    res.json({ count: rows.length, window, brandFilter, terms: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Campaign structure for the ppc skills. Summary by default; ?full=1 includes
+// keywords/targets/negatives detail. Optional ?brand=<id>, ?profile=CA|US.
+app.get('/api/ads/campaigns', async (req, res) => {
+  try {
+    const { brand, profile, full } = req.query;
+    const snapshots = await loadSnapshots(profile ? String(profile).toUpperCase() : null);
+    if (!snapshots.length) return res.status(404).json({ error: 'no structure snapshot yet — run POST /api/ads/sync-structure' });
+    const { brands } = await loadBrands();
+    const asinBrand = {};
+    for (const b of brands) for (const a of (b.asins || [])) asinBrand[a] = b.id;
+
+    const out = [];
+    for (const s of snapshots) {
+      const snap = s.snapshot;
+      const cbMap = campaignBrandMap(snap, asinBrand);
+      const byCampaign = (list, idKey = 'campaignId') => {
+        const m = {};
+        for (const item of (list || [])) {
+          const cid = String(item[idKey]);
+          if (!m[cid]) m[cid] = [];
+          m[cid].push(item);
+        }
+        return m;
+      };
+      const adGroups  = byCampaign(snap.adGroups);
+      const keywords  = byCampaign(snap.keywords);
+      const targets   = byCampaign(snap.targets);
+      const negatives = byCampaign(snap.negativeKeywords);
+      const prodAds   = byCampaign(snap.productAds);
+
+      for (const c of (snap.campaigns || [])) {
+        const cid = String(c.campaignId);
+        const cBrands = [...(cbMap[cid] || [])];
+        if (brand && !cBrands.includes(brand)) continue;
+        const entry = {
+          profile: s.profile,
+          campaignId: cid,
+          name: c.name,
+          state: c.state,
+          targetingType: c.targetingType,
+          budget: c.budget,
+          dynamicBidding: c.dynamicBidding,
+          startDate: c.startDate,
+          brands: cBrands,
+          asins: [...new Set((prodAds[cid] || []).map(p => p.asin).filter(Boolean))],
+          adGroupCount: (adGroups[cid] || []).length,
+          keywordCount: (keywords[cid] || []).length,
+          targetCount: (targets[cid] || []).length,
+          negativeCount: (negatives[cid] || []).length,
+        };
+        if (full === '1') {
+          entry.adGroups = adGroups[cid] || [];
+          entry.keywords = keywords[cid] || [];
+          entry.targets = targets[cid] || [];
+          entry.negativeKeywords = negatives[cid] || [];
+        }
+        out.push(entry);
+      }
+    }
+    res.json({ count: out.length, pulledAt: snapshots[0].pulled_at, campaigns: out });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Manual triggers. Search terms bake 12-15 min per report — fire-and-forget
+// like sync-daily; verify via GET /api/ads/search-terms afterwards. Structure
+// is management-API only (seconds) so it runs inline and returns counts.
+app.post('/api/ads/sync-search-terms', async (req, res) => {
+  if (process.env.SYNC_ENABLED !== 'true') return res.status(403).json({ error: 'SYNC_ENABLED is false' });
+  const today = pstDateStr();
+  const endDate = pstSubtractDays(today, 1);
+  const startDate = pstSubtractDays(endDate, 29);
+  res.json({ status: 'started', window: `${startDate} → ${endDate}`, note: 'Bakes ~12-15 min. Verify via GET /api/ads/search-terms.' });
+  setImmediate(async () => {
+    try {
+      const { syncSearchTerms } = require('./sync/adsSearchTerms');
+      const r = await syncSearchTerms(supabase, startDate, endDate);
+      console.log('[AdsTerms] Done:', JSON.stringify(r));
+    } catch (e) { console.error('[AdsTerms] Manual sync error:', e.message); }
+  });
+});
+
+app.post('/api/ads/sync-structure', async (req, res) => {
+  if (process.env.SYNC_ENABLED !== 'true') return res.status(403).json({ error: 'SYNC_ENABLED is false' });
+  try {
+    const { syncCampaignStructure } = require('./sync/adsCampaigns');
+    const r = await syncCampaignStructure(supabase);
+    res.json({ ok: true, ...r });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Manually trigger refund sync. Returns when complete (can take ~5-15 min depending
 // on how many fresh refund events). For ad-hoc runs after the initial schema migration.
 app.post('/api/refunds/sync', async (req, res) => {
@@ -4869,7 +5016,31 @@ function scheduleDailySync() {
       .catch(err => console.warn('[Audit] cron error:', err.message));
   });
 
-  console.log('[AutoSync] Crons scheduled: sync 6am/9am/12pm UTC, Slack digest 7am UTC, Orders poll */15min, Orders hourly-rebuild :05, Yesterday-finalize 8:30 UTC, Backfill 8am UTC, Audit 9am UTC, AdsDaily 9:10 UTC + */2h :20, Refunds 9:15 UTC, Images backfill 10 UTC + :30 hourly refresh');
+  // Search terms: weekly Monday 11am UTC — rolling 30d clicked terms per
+  // profile into ads_search_terms (feeds the ppc-search-terms skill).
+  // SYNC_ENABLED-gated so local dev doesn't burn Ads API quota.
+  cron.schedule('0 11 * * 1', () => {
+    if (process.env.SYNC_ENABLED !== 'true') return;
+    console.log('[AdsTerms] Monday 11 UTC cron fired');
+    const today = pstDateStr();
+    const endDate = pstSubtractDays(today, 1);
+    const { syncSearchTerms } = require('./sync/adsSearchTerms');
+    syncSearchTerms(supabase, pstSubtractDays(endDate, 29), endDate)
+      .catch(err => console.warn('[AdsTerms] cron error:', err.message));
+  });
+
+  // Campaign structure snapshot: daily 11:15am UTC — management API only
+  // (seconds, no report baking). Keeps budgets/bids/negatives current for
+  // /api/ads/campaigns and brand filtering of search terms.
+  cron.schedule('15 11 * * *', () => {
+    if (process.env.SYNC_ENABLED !== 'true') return;
+    console.log('[AdsStructure] 11:15 UTC cron fired');
+    const { syncCampaignStructure } = require('./sync/adsCampaigns');
+    syncCampaignStructure(supabase)
+      .catch(err => console.warn('[AdsStructure] cron error:', err.message));
+  });
+
+  console.log('[AutoSync] Crons scheduled: sync 6am/9am/12pm UTC, Slack digest 7am UTC, Orders poll */15min, Orders hourly-rebuild :05, Yesterday-finalize 8:30 UTC, Backfill 8am UTC, Audit 9am UTC, AdsDaily 9:10 UTC + */2h :20, Refunds 9:15 UTC, Images backfill 10 UTC + :30 hourly refresh, AdsTerms Mon 11 UTC, AdsStructure 11:15 UTC');
 
   // Load image cache at startup so first requests see images.
   refreshImagesCache().catch(err => console.warn('[Images] Startup load:', err.message));

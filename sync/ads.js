@@ -342,4 +342,8 @@ function mergeAdData(caData, usData) {
   return result;
 }
 
-module.exports = { syncAdMetrics, startAdReports, finishAdReports, pullAdSpendDaily };
+module.exports = {
+  syncAdMetrics, startAdReports, finishAdReports, pullAdSpendDaily,
+  // Low-level helpers shared by adsSearchTerms.js / adsCampaigns.js
+  getAdsToken, adsReq, waitForAdReport, downloadAdReport, PROFILES,
+};
