@@ -19,7 +19,12 @@ const { createClient } = require('@supabase/supabase-js');
 const { computeDayFromOrders } = require('../sync/orders');
 const { pstDateStr, pstSubtractDays } = require('../sync/dateUtils');
 
+// Usage: node scripts/rebuild-from-orders.js <start> [end]
+// END defaults to yesterday. Pass it to target a specific gap instead of
+// re-pulling every day since START — the Orders API is heavily rate-limited,
+// so re-doing months that are already correct costs hours for nothing.
 const START_DATE = process.argv[2] || '2026-05-01';
+const END_DATE   = process.argv[3] || null;
 
 function daysBetween(startStr, endStr) {
   const out = [];
@@ -43,8 +48,9 @@ function daysBetween(startStr, endStr) {
   console.log(`Loaded ${brands.length} brands, ${Object.keys(asinBrand).length} mapped ASINs.`);
 
   const yesterday = pstSubtractDays(pstDateStr(), 1);
-  const dates = daysBetween(START_DATE, yesterday);
-  console.log(`Rebuilding ${dates.length} days from Orders API: ${yesterday} -> ${START_DATE}\n`);
+  const endDate   = END_DATE && END_DATE < yesterday ? END_DATE : yesterday;
+  const dates = daysBetween(START_DATE, endDate);
+  console.log(`Rebuilding ${dates.length} days from Orders API: ${endDate} -> ${START_DATE}\n`);
 
   let done = 0;
   for (const date of dates) {
