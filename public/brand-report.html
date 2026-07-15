@@ -143,16 +143,8 @@
     /* 34px on a 1000x1000 square logo rendered 34x34 — too small to read as a
        mark at all. 85px is ~2.5x (Mike asked for 2-3x).
 
-       Rendered white. rmc-logo.png is a dark mark built for light backgrounds:
-       its dominant colours measure 1.05:1, 1.14:1 and 1.93:1 against this green
-       — invisible. It survives on the near-black nav, not here. Enlarging it
-       without this just made an unreadable mark bigger.
-       brightness(0) flattens to black, invert(1) flips to pure white. If a
-       proper white/reversed logo asset turns up, drop the filter and use it. */
-    .rpt-logo {
-      height: 85px; width: auto; display: block; margin-bottom: 16px;
-      filter: brightness(0) invert(1);
-    }
+       Logo keeps its own colours (Mike) — no white filter. */
+    .rpt-logo { height: 85px; width: auto; display: block; margin-bottom: 16px; }
 
     /* Section */
     .rpt-section { margin-bottom: 28px; background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 20px 24px; }
