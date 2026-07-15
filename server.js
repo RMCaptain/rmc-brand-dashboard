@@ -3286,12 +3286,18 @@ app.put('/api/brand-report-config/:brandId', async (req, res) => {
 
   // section_order is optional — a client that only toggles visibility shouldn't
   // have to send an order, and must not wipe the stored one by omitting it.
+  //
+  // An EMPTY array is stored as-is rather than expanded, because "no custom
+  // order" and "an explicit order that happens to match the default" only look
+  // identical until a new section is added: the empty one puts it in its
+  // natural position, an explicit one appends it to the end. A brand that never
+  // customised should get the natural position.
   let orderPatch = {};
   if (body.section_order !== undefined) {
     if (!Array.isArray(body.section_order)) {
       return res.status(400).json({ error: 'section_order must be an array of strings' });
     }
-    orderPatch = { section_order: resolveSectionOrder(body.section_order) };
+    orderPatch = { section_order: body.section_order.length ? resolveSectionOrder(body.section_order) : [] };
   }
 
   try {
