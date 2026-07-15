@@ -3487,38 +3487,48 @@ app.delete('/api/brand-report-archives/:brandId/:reportId', async (req, res) => 
 // Save the current report — freezes the dataset + whatever summary is cached.
 // A summary is NOT required: the numbers are worth freezing on their own, and
 // you might well want to snapshot the period now and write the narrative later.
-app.post('/api/brand-report-archives/:brandId', async (req, res) => {
-  const { brandId } = req.params;
-  try {
-    const { from, to } = resolveReportPeriod(req.query);
+// Freeze a report as a permanent record. Shared by the Save button and the
+// monthly cron so both produce byte-identical rows — an auto-saved report must
+// be indistinguishable from a hand-saved one apart from `generated_by`.
+//
+// Never generates a summary: trySelectSummary only reads one that already
+// exists. Opening or saving a report must not cost money.
+async function saveBrandReportSnapshot(brandId, query, actor = 'system') {
+  const { from, to } = resolveReportPeriod(query);
+  const summaryRow = await trySelectSummary(brandId, from, to);
+  const dataset    = await buildBrandReportDataset(brandId, query);
 
-    const summaryRow = await trySelectSummary(brandId, from, to);
-    const dataset = await buildBrandReportDataset(brandId, req.query);
+  const row = {
+    brand_id:              brandId,
+    period_from:           from,
+    period_to:             to,
+    period_label:          dataset.period?.label || `${from} → ${to}`,
+    summary_text_snapshot: summaryRow?.summary_text || null,
+    // schemaVersion rides inside the JSONB so this needs no migration.
+    dataset_snapshot:      { ...dataset, schemaVersion: REPORT_SCHEMA_VERSION },
+    is_saved_report:       true,
+    generated_by:          actor,
+    generated_at:          new Date().toISOString(),
+  };
 
-    const row = {
-      brand_id:              brandId,
-      period_from:           from,
-      period_to:             to,
-      period_label:          dataset.period?.label || `${from} → ${to}`,
-      summary_text_snapshot: summaryRow?.summary_text || null,
-      // schemaVersion rides inside the JSONB so this needs no migration.
-      dataset_snapshot:      { ...dataset, schemaVersion: REPORT_SCHEMA_VERSION },
-      is_saved_report:       true,
-      generated_by:          req.headers['x-rmc-actor'] || 'system',
-      generated_at:          new Date().toISOString(),
-    };
-
-    const { data, error } = await supabase
-      .from('brand_report_archives')
-      .insert(row)
-      .select('id, brand_id, period_from, period_to, period_label, generated_at, generated_by, is_saved_report')
-      .single();
-    if (error) {
-      if (String(error.message).match(/dataset_snapshot|is_saved_report/i)) {
-        return res.status(503).json({ error: 'Run sql/brand-report-snapshots.sql first — the snapshot columns are missing.' });
-      }
-      throw new Error(error.message);
+  const { data, error } = await supabase
+    .from('brand_report_archives')
+    .insert(row)
+    .select('id, brand_id, period_from, period_to, period_label, generated_at, generated_by, is_saved_report')
+    .single();
+  if (error) {
+    if (String(error.message).match(/dataset_snapshot|is_saved_report/i)) {
+      const e = new Error('Run sql/brand-report-snapshots.sql first — the snapshot columns are missing.');
+      e.status = 503; throw e;
     }
+    throw new Error(error.message);
+  }
+  return data;
+}
+
+app.post('/api/brand-report-archives/:brandId', async (req, res) => {
+  try {
+    const data = await saveBrandReportSnapshot(req.params.brandId, req.query, req.headers['x-rmc-actor'] || 'system');
     res.json({ success: true, ...data });
   } catch (err) {
     console.error('[SavedReports] save error:', err.message);
@@ -4927,6 +4937,63 @@ async function runFullSync(tag = 'Sync') {
   }
 }
 
+// ── Monthly report auto-save ─────────────────────────────────────────────────
+//
+// Freezes last month's report for every brand into saved history, so the record
+// exists whether or not anyone remembered to click Save.
+//
+// Runs on the 4TH, not the 1st. Amazon's Sales & Traffic data lags ~2 days —
+// on 2026-07-15 the 14th still had 0 sessions. Snapshots are immutable by
+// design, so saving on the 1st would permanently freeze last month's final days
+// with zero sessions and an understated CVR, and the report would look
+// authoritative while being quietly wrong. Three days of buffer avoids that.
+//
+// Costs nothing: reads daily_metrics, writes one row per brand (~79 KB each).
+// No SP-API, no Ads API, and no Claude — an existing summary is captured if
+// someone wrote one, but none is ever generated.
+async function autoSaveMonthlyReports(tag = 'AutoReport') {
+  const query = { period: 'lastMonth' };
+  const { from, to } = resolveReportPeriod(query);
+  console.log(`[${tag}] Auto-saving reports for ${from} → ${to}`);
+
+  let saved = 0, skipped = 0, failed = 0;
+  try {
+    const { brands } = await loadBrands();
+    for (const b of (brands || [])) {
+      if (!b.id || b.id === 'unknown-brand') continue;
+      try {
+        // Idempotent: a re-run, or a month someone already saved by hand, must
+        // not produce a duplicate record for the same period.
+        const { data: existing } = await supabase
+          .from('brand_report_archives')
+          .select('id')
+          .eq('brand_id', b.id).eq('period_from', from).eq('period_to', to)
+          .eq('is_saved_report', true)
+          .maybeSingle();
+        if (existing) { skipped++; continue; }
+
+        await saveBrandReportSnapshot(b.id, query, 'auto-monthly');
+        saved++;
+      } catch (e) {
+        // One brand's failure must not cost the other fourteen their record.
+        failed++;
+        console.error(`[${tag}] ${b.id} failed:`, e.message);
+      }
+    }
+  } catch (e) {
+    console.error(`[${tag}] Fatal:`, e.message);
+    return { saved, skipped, failed, error: e.message };
+  }
+  console.log(`[${tag}] Done — ${saved} saved, ${skipped} already existed, ${failed} failed`);
+  return { saved, skipped, failed, from, to };
+}
+
+// Manual trigger — same code path, so testing it tests the real thing.
+app.post('/api/reports/auto-save-monthly', async (req, res) => {
+  try { res.json({ success: true, ...(await autoSaveMonthlyReports('AutoReport-manual')) }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Daily auto-sync at 6am server time ───────────────────────────────────────
 function scheduleDailySync() {
   // Primary sync: 6am UTC (midnight MDT). Backup: 9am UTC (3am MDT) and 12pm UTC (6am MDT).
@@ -4942,6 +5009,14 @@ function scheduleDailySync() {
   cron.schedule('0 12 * * *', () => {
     console.log('[AutoSync] 12pm UTC backup cron fired');
     runFullSync('AutoSync-12pm');
+  });
+
+  // Monthly report auto-save — 1pm UTC on the 4th, after the noon sync has
+  // landed so the snapshot freezes the freshest data. See autoSaveMonthlyReports
+  // for why the 4th and not the 1st.
+  cron.schedule('0 13 4 * *', () => {
+    console.log('[AutoReport] 4th-of-month cron fired');
+    autoSaveMonthlyReports('AutoReport-cron');
   });
 
   // Slack health digest — 7am UTC daily → #account-health
