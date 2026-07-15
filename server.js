@@ -3186,6 +3186,7 @@ const REPORT_SECTION_KEYS = [
   'sales_trend',          // 30-day daily chart vs comparison
   'ytd_chart',            // current year vs prior year
   'top_sellers',          // top 10 products by revenue
+  'revenue_share_pie',    // revenue share by ASIN — OPTIONAL, off by default
   'ad_trend',             // ad sales vs organic chart
   'ad_summary',           // TACOS / TROAS / ACOS / ROAS / CTR / CPC
   'inventory_status',     // days of cover, stockouts, inbound
@@ -3197,7 +3198,11 @@ const REPORT_SECTION_KEYS = [
 // a config change rather than a code change.
 //   inventory_status — Mike 2026-07-14: useful internally, not what brands
 //   want in their monthly report. Kept for a future internal/ops view.
-const DEFAULT_HIDDEN_SECTIONS = ['inventory_status'];
+// Off for a fresh brand. Both are built and working — they're opt-in, not
+// unfinished. inventory_status: useful internally, not what brands want in a
+// monthly report (Mike). revenue_share_pie: the first OPTIONAL section, outside
+// the standard report — turn it on per brand from the report sidebar.
+const DEFAULT_HIDDEN_SECTIONS = ['inventory_status', 'revenue_share_pie'];
 
 function defaultBrandReportConfig(brandId) {
   return { brand_id: brandId, hidden_sections: [...DEFAULT_HIDDEN_SECTIONS], updated_at: null };

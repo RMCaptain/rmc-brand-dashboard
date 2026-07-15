@@ -208,6 +208,22 @@
     .stock-chip.warn { background: var(--amber-bg); color: #92400E; }
     .stock-chip.low  { background: var(--red-bg); color: #991B1B; }
 
+    /* Revenue share pie */
+    .pie-wrap { display: grid; grid-template-columns: 1fr 260px; gap: 24px; align-items: center; }
+    .pie-chart-box { height: 300px; position: relative; }
+    .pie-legend { display: flex; flex-direction: column; gap: 7px; }
+    .pie-legend-row { display: flex; align-items: baseline; gap: 8px; font-size: 11px; }
+    .pie-swatch { width: 10px; height: 10px; border-radius: 2px; flex: none; transform: translateY(1px); }
+    .pie-legend-name { flex: 1; color: var(--text); line-height: 1.3; min-width: 0; }
+    .pie-legend-asin {
+      display: block; font-size: 9px; color: var(--text-3);
+      font-family: ui-monospace, monospace; margin-top: 1px;
+    }
+    .pie-legend-pct { font-weight: 600; color: var(--text); white-space: nowrap; }
+    /* Stack under the chart when narrow, and keep the pie off a page break. */
+    @media (max-width: 820px) { .pie-wrap { grid-template-columns: 1fr; } }
+    @media print { .pie-wrap { page-break-inside: avoid; } }
+
     /* Per-ASIN detail */
     .per-asin-table { font-size: 11px; }
     .per-asin-table td { padding: 7px 8px; }
@@ -412,6 +428,7 @@ const SECTION_TITLES = {
   ad_trend:            'Advertising Trend',
   ad_summary:          'Advertising Performance',
   inventory_status:    'Inventory Status',
+  revenue_share_pie: 'Revenue Share by Product',
   per_asin_detail: 'Per-ASIN Detail',
 };
 
@@ -561,6 +578,40 @@ const SECTION_RENDERERS = {
     </table>${more}`;
   },
 
+  // Revenue share by ASIN — OPTIONAL section, off by default.
+  //
+  // Labels use the SUPPLIER name, not the Amazon title (Mike): "Original 12pk"
+  // reads; "Zellies Cool Mint Mints, Pouch, 540 ct, Sugar Free..." does not.
+  // Only ~17% of ASINs carry a supplier name today, so anything missing one
+  // falls back to a truncated Amazon title and is called out beneath the chart —
+  // silently mixing naming schemes would make the chart quietly untrustworthy.
+  revenue_share_pie: (d) => {
+    const slices = revenueShareSlices(d);
+    if (!slices.length) return `<div class="rpt-placeholder">No product revenue in this period.</div>`;
+
+    const total = slices.reduce((s, x) => s + x.revenue, 0);
+    const legend = slices.map((s, i) => `
+      <div class="pie-legend-row">
+        <span class="pie-swatch" style="background:${PIE_COLORS[i % PIE_COLORS.length]}"></span>
+        <span class="pie-legend-name">
+          ${escapeHtml(s.label)}
+          ${s.asin ? `<span class="pie-legend-asin">${escapeHtml(s.asin)}</span>` : ''}
+        </span>
+        <span class="pie-legend-pct">${(s.revenue / total * 100).toFixed(1)}%</span>
+      </div>`).join('');
+
+    const unnamed = slices.filter(s => s.asin && !s.named).length;
+    const note = unnamed
+      ? `<div class="rpt-note">${unnamed} product${unnamed === 1 ? ' has' : 's have'} no supplier name, so the Amazon title is shown instead. Set supplier names in Product Data for cleaner labels.</div>`
+      : '';
+
+    return `
+      <div class="pie-wrap">
+        <div class="pie-chart-box"><canvas id="revenueShareChart"></canvas></div>
+        <div class="pie-legend">${legend}</div>
+      </div>${note}`;
+  },
+
   ad_trend: (d) => {
     const days = d.dailySeries || [];
     const cov  = coverageState(d, 'ads', d.period.from, d.period.to);
@@ -672,6 +723,102 @@ const SECTION_RENDERERS = {
       </div>
     </div>`,
 };
+
+// ── Revenue share pie ─────────────────────────────────────────────────────────
+
+const PIE_TOP_N = 10;
+
+// Distinguishable at a glance in print and on screen, and deliberately not the
+// RMC greens — ten shades of one hue is unreadable as a pie. Grey is reserved
+// for "All others" so it never reads as a product.
+const PIE_COLORS = [
+  '#2c3a20', '#4a7c1f', '#9db47e', '#c9a227', '#e08a3c',
+  '#a63d40', '#6b4e8f', '#3b7ea1', '#5f9ea0', '#8c6d4f',
+];
+const PIE_OTHER_COLOR = '#c8c6bc';
+
+/**
+ * Top N ASINs by revenue + an "All others" slice.
+ *
+ * Label is the SUPPLIER name where set, else a truncated Amazon title. `named`
+ * records which, so the renderer can say when it fell back rather than passing
+ * an Amazon title off as a supplier name.
+ */
+function revenueShareSlices(d) {
+  const products = (d.products || [])
+    .map(p => ({
+      asin: p.asin,
+      revenue: (p.revenueCad || 0) + (p.revenueUsd || 0),
+      supplierName: (p.supplierName || '').trim(),
+      amazonTitle: (p.amazonTitle || p.title || '').trim(),
+    }))
+    .filter(p => p.revenue > 0)
+    .sort((a, b) => b.revenue - a.revenue);
+
+  if (!products.length) return [];
+
+  const top = products.slice(0, PIE_TOP_N).map(p => {
+    const named = !!p.supplierName;
+    let label = p.supplierName || p.amazonTitle || p.asin;
+    if (!named && label.length > 34) label = label.slice(0, 34) + '…';
+    return { asin: p.asin, label, revenue: p.revenue, named };
+  });
+
+  const rest = products.slice(PIE_TOP_N);
+  if (rest.length) {
+    top.push({
+      asin: null,
+      label: `All others (${rest.length})`,
+      revenue: rest.reduce((s, p) => s + p.revenue, 0),
+      named: true,
+    });
+  }
+  return top;
+}
+
+function buildRevenuePieChart(d) {
+  const el = document.getElementById('revenueShareChart');
+  if (!el) return;
+  if (revenuePieChart) revenuePieChart.destroy();
+
+  const slices = revenueShareSlices(d);
+  if (!slices.length) return;
+  const total = slices.reduce((s, x) => s + x.revenue, 0);
+
+  revenuePieChart = new Chart(el, {
+    type: 'pie',
+    data: {
+      labels: slices.map(s => s.label),
+      datasets: [{
+        data: slices.map(s => Math.round(s.revenue * 100) / 100),
+        backgroundColor: slices.map((s, i) => s.asin === null ? PIE_OTHER_COLOR : PIE_COLORS[i % PIE_COLORS.length]),
+        borderColor: '#fff',
+        borderWidth: 1.5,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      // The legend beside the chart already names every slice with its ASIN and
+      // share — Chart.js's own legend would just repeat it, worse.
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => {
+              const v = ctx.parsed;
+              const pct = (v / total * 100).toFixed(1);
+              const s = slices[ctx.dataIndex];
+              return `${s.label}: ${fmtC(v, '$')} (${pct}%)`;
+            },
+          },
+        },
+      },
+      // Charts must be fully painted before Puppeteer snapshots the PDF.
+      animation: PRINT_MODE ? false : undefined,
+    },
+  });
+}
 
 // ── Per-ASIN detail ───────────────────────────────────────────────────────────
 
@@ -1010,6 +1157,7 @@ function updateUrl() {
 let currentChart = null;
 let currentYtdChart = null;
 let currentAdChart  = null;
+let revenuePieChart = null;
 async function render() {
   $('loading').style.display = 'flex';
   $('report').style.display = 'none';
@@ -1077,6 +1225,7 @@ async function render() {
     if (enabled.includes('sales_trend')) buildChart(d.dailySeries, d.dailySeriesPrev);
     if (enabled.includes('ytd_chart'))   buildYtdChart(d.ytdSeries, d.ytdSeriesPrev);
     if (enabled.includes('ad_trend'))    buildAdTrendChart(d.dailySeries);
+    if (enabled.includes('revenue_share_pie')) buildRevenuePieChart(d);
     if (enabled.includes('per_asin_detail')) initPerAsinTable(d);
 
     // Initialize executive summary section if visible. Never auto-generates —
