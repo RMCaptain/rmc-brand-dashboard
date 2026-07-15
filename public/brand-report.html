@@ -434,11 +434,14 @@ const SECTION_RENDERERS = {
 
       <textarea id="execSummaryText" class="exec-textarea" spellcheck="true" style="display:none;"
         placeholder="Write the executive summary — headline numbers and what drove them, product callouts, advertising, and what to watch next."></textarea>
+      <!-- No Regenerate button by design (Mike, 2026-07-15). Once a summary
+           exists — written or generated — there is deliberately no one-click
+           path to another paid Claude call. Generation happens once, from the
+           empty state. To redo one, clear the text and save. -->
       <div class="exec-actions" id="execActions" style="display:none;">
         <span id="execSummaryMeta" class="exec-meta"></span>
         <div class="exec-buttons">
-          <button id="execRegenBtn" class="exec-btn-secondary" type="button">Regenerate</button>
-          <button id="execSaveBtn"  class="exec-btn"          type="button" disabled>Save</button>
+          <button id="execSaveBtn" class="exec-btn" type="button" disabled>Save</button>
         </div>
       </div>
     </div>`,
@@ -1254,21 +1257,19 @@ async function initExecSummary(brandId, from, to, frozenText, preloaded) {
   execState = { brandId, from, to, dirty: false, edited: false, generating: false };
 
   const textarea = document.getElementById('execSummaryText');
-  const regenBtn = document.getElementById('execRegenBtn');
   const saveBtn  = document.getElementById('execSaveBtn');
   const genBtn   = document.getElementById('execGenerateBtn');
   const writeBtn = document.getElementById('execWriteBtn');
   if (!textarea) return;
 
   saveBtn.disabled  = true;
-  regenBtn.disabled = false;
   setExecMeta('');
   setExecStatus('');
 
   textarea.oninput = () => { execState.dirty = true; saveBtn.disabled = false; };
   saveBtn.onclick  = () => saveExecSummary();
-  regenBtn.onclick = () => regenerateExecSummary();
-  if (genBtn) genBtn.onclick = () => regenerateExecSummary();
+  // Generation is reachable ONLY from the empty state — there is no regenerate.
+  if (genBtn) genBtn.onclick = () => generateExecSummary();
   // Write-it-myself: just open the editor. No dialog, no API call, no cost.
   if (writeBtn) writeBtn.onclick = () => {
     showExecSummary('');
@@ -1303,30 +1304,27 @@ async function initExecSummary(brandId, from, to, frozenText, preloaded) {
   refreshSaveBtn();
 }
 
-async function regenerateExecSummary() {
+// One-shot: only reachable from the empty state, so it can never overwrite an
+// existing summary or fire twice from a stray click.
+async function generateExecSummary() {
   const textarea = document.getElementById('execSummaryText');
-  const regenBtn = document.getElementById('execRegenBtn');
   const saveBtn  = document.getElementById('execSaveBtn');
   const genBtn   = document.getElementById('execGenerateBtn');
   if (!textarea) return;
 
-  // Every generation is a paid Claude call, so it's always confirmed. Once
-  // generated it's cached for this brand+period — viewing it again is free.
-  const warn = execState.edited
-    ? 'Regenerate this summary?\n\nThis calls Claude (a paid API request) AND will replace your edits.'
-    : 'Generate an executive summary?\n\nThis calls Claude — a paid API request. Once generated it\'s saved for this brand and period, so viewing it again is free.';
-  if (!confirm(warn)) return;
+  // Generation is a paid Claude call, so it's always confirmed. Once generated
+  // it's cached for this brand+period — viewing it again is free.
+  if (!confirm('Generate an executive summary?\n\nThis calls Claude — a paid API request. Once generated it\'s saved for this brand and period, so viewing it again is free.')) return;
 
   execState.generating = true;
   refreshSaveBtn();
-  if (regenBtn) regenBtn.disabled = true;
   if (genBtn)   { genBtn.disabled = true; genBtn.textContent = 'Generating…'; }
   if (saveBtn)  saveBtn.disabled = true;
   setExecStatus('Generating…');
   setExecMeta('');
 
   try {
-    const url = `/api/brand-report-summary/${encodeURIComponent(execState.brandId)}?from=${execState.from}&to=${execState.to}${execState.edited ? '&force=true' : ''}`;
+    const url = `/api/brand-report-summary/${encodeURIComponent(execState.brandId)}?from=${execState.from}&to=${execState.to}`;
     const res = await fetch(url, { method: 'POST', credentials: 'include' });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
@@ -1341,7 +1339,6 @@ async function regenerateExecSummary() {
     setExecStatus('Generation failed — ' + err.message, true);
   } finally {
     execState.generating = false;
-    if (regenBtn) regenBtn.disabled = false;
     if (genBtn)   { genBtn.disabled = false; genBtn.textContent = 'Generate summary'; }
     refreshSaveBtn();
   }
