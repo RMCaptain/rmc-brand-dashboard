@@ -209,44 +209,68 @@
     .stock-chip.low  { background: var(--red-bg); color: #991B1B; }
 
     /* ── Section panel (screen only) ──────────────────────────────────────
+       A COLUMN beside the report, not an overlay on top of it. The first
+       version was position:fixed and covered the toolbar.
+
        Uses the app's DARK theme tokens — it sits outside #report, on the app
        chrome, NOT on the report's light paper. Hardcoding light colours here
        is how the text disappeared last time. */
+    .rpt-layout {
+      display: flex; align-items: flex-start; gap: 20px;
+      max-width: 1360px; margin: 0 auto; padding: 24px 24px 0;
+    }
     .section-panel {
-      position: fixed; top: 150px; left: 24px; width: 216px; z-index: 40;
+      width: 268px; flex: none;
+      /* Sticky, not fixed: it scrolls with the page but stops clear of the
+         sticky toolbar instead of sitting on it. */
+      position: sticky; top: 88px;
       background: var(--bg-card); border: 1px solid var(--border);
-      border-radius: var(--r); padding: 14px;
-      backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-      max-height: calc(100vh - 190px); overflow-y: auto;
+      border-radius: var(--r); padding: 16px;
+      max-height: calc(100vh - 110px); overflow-y: auto;
     }
     .sp-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-    .sp-title { font-size: 12px; font-weight: 600; color: var(--text); }
-    .sp-status { font-size: 10px; color: var(--text-3); }
+    .sp-title { font-size: 14px; font-weight: 600; color: var(--text); }
+    .sp-status { font-size: 11px; color: var(--text-3); }
     .sp-status.err { color: var(--neg); }
-    .sp-hint { font-size: 10px; color: var(--text-3); margin: 4px 0 10px; line-height: 1.4; }
-    .sp-list { display: flex; flex-direction: column; gap: 2px; }
+    .sp-hint { font-size: 11px; color: var(--text-2); margin: 6px 0 14px; line-height: 1.45; }
+    .sp-list { display: flex; flex-direction: column; gap: 3px; }
     .sp-row {
-      display: flex; align-items: center; gap: 7px;
-      padding: 6px 6px; border-radius: 6px; border: 1px solid transparent;
-      font-size: 11px; color: var(--text); cursor: grab;
+      display: flex; align-items: center; gap: 9px;
+      padding: 9px 8px; border-radius: 7px; border: 1px solid transparent;
+      font-size: 13px; color: var(--text); cursor: grab;
     }
     .sp-row:hover { background: var(--bg-card-h); }
     .sp-row.sp-dragging { opacity: 0.4; cursor: grabbing; }
     .sp-row.sp-drop-target { border-color: var(--brand); background: var(--bg-card-h); }
-    .sp-grip { color: var(--text-3); font-size: 12px; line-height: 1; flex: none; letter-spacing: -1px; }
-    .sp-name { display: flex; align-items: center; gap: 6px; flex: 1; cursor: inherit; min-width: 0; }
-    .sp-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .sp-name input { accent-color: var(--brand); cursor: pointer; flex: none; }
+    .sp-grip { color: var(--text-3); font-size: 15px; line-height: 1; flex: none; letter-spacing: -2px; }
+    .sp-name { display: flex; align-items: center; gap: 9px; flex: 1; cursor: inherit; min-width: 0; }
+    /* Names wrap rather than truncate — "Revenue Share by Prod…" tells you less
+       than two tidy lines do, and these are the labels you pick sections by. */
+    .sp-name span { white-space: normal; line-height: 1.3; }
+    .sp-name input { accent-color: var(--brand); cursor: pointer; flex: none; width: 15px; height: 15px; }
     /* Pinned: no grip, no checkbox, not draggable — structural, not optional. */
-    .sp-row-pinned { cursor: default; opacity: 0.72; }
+    .sp-row-pinned { cursor: default; }
     .sp-row-pinned:hover { background: transparent; }
-    .sp-grip-locked { font-size: 9px; filter: grayscale(1); }
-    .sp-always { font-size: 9px; color: var(--text-3); white-space: nowrap; }
-    /* Panel would overlap the report on narrower screens — drop it inline. */
-    @media (max-width: 1400px) {
-      .section-panel { position: static; width: auto; max-width: 900px;
-        margin: 0 auto 16px; max-height: none; }
+    .sp-row-pinned .sp-name { color: var(--text-2); }
+    .sp-grip-locked { font-size: 11px; opacity: 0.5; }
+    /* Sits under the name, so a long title keeps the full row width to itself
+       instead of being squeezed onto two lines by this label. */
+    .sp-always {
+      font-size: 10px; color: var(--text-3); white-space: nowrap;
+      align-self: center; margin-left: auto; padding-left: 8px;
     }
+    /* Report keeps its own max-width; drop the auto-centring so it sits in the
+       column rather than fighting flex for the middle of the page. */
+    .rpt-layout #report { flex: 1; min-width: 0; margin: 0; padding: 0 0 64px; }
+    /* Not enough room for two columns — stack, full width, no sticky. */
+    @media (max-width: 1180px) {
+      .rpt-layout { flex-direction: column; padding: 16px; }
+      .section-panel { position: static; width: 100%; max-height: none; }
+      .rpt-layout #report { width: 100%; }
+    }
+    /* Print: the layout wrapper must not constrain the page. */
+    body.print-mode .rpt-layout { display: block; max-width: none; padding: 0; }
+    body.print-mode .rpt-layout #report { padding: 0; }
 
     /* Section grips (screen only) */
     .rpt-section-draggable .rpt-section-title { display: flex; align-items: center; gap: 8px; }
@@ -370,16 +394,20 @@
     <div>Loading report…</div>
   </div>
 
-  <!-- Screen-only report customiser. Hidden in print-mode (a PDF has no
-       controls) and while viewing a saved report (its layout is frozen). -->
-  <aside id="sectionPanel" class="section-panel" style="display:none;">
-    <div class="sp-head">
-      <span class="sp-title">Report sections</span>
-      <span id="spStatus" class="sp-status"></span>
-    </div>
-    <p class="sp-hint">Toggle sections on or off. Drag to reorder — this becomes the brand's default.</p>
-    <div id="spList" class="sp-list"></div>
-  </aside>
+  <!-- Panel and report are COLUMNS of one flex row, not a floating overlay.
+       The panel was position:fixed and sat on top of the toolbar. -->
+  <div class="rpt-layout">
+
+    <!-- Screen-only report customiser. Hidden in print-mode (a PDF has no
+         controls) and while viewing a saved report (its layout is frozen). -->
+    <aside id="sectionPanel" class="section-panel" style="display:none;">
+      <div class="sp-head">
+        <span class="sp-title">Report sections</span>
+        <span id="spStatus" class="sp-status"></span>
+      </div>
+      <p class="sp-hint">Toggle on or off. Drag to reorder — this becomes the brand's default.</p>
+      <div id="spList" class="sp-list"></div>
+    </aside>
 
   <div id="report">
     <div class="rpt-header">
@@ -401,6 +429,7 @@
       <div>Prepared by <strong>Rocky Mountain Co.</strong> — Confidential</div>
     </div>
   </div>
+  </div><!-- /.rpt-layout -->
 
 <script>
 const $ = id => document.getElementById(id);
