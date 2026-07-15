@@ -2521,34 +2521,27 @@ async function syncDailyAdSpend({ windowDays = 30, includeToday = true } = {}) {
   return { rowCount, datesTouched: Object.keys(merged).length };
 }
 
-// Manual trigger. Window is now chunked internally, so it's capped only by how
-// far back Amazon retains report data (~95 days), not by the 31-day range limit.
+// Manual trigger. The window is chunked internally (see syncDailyAdSpend), so
+// it's bounded only by Amazon's ~95-day report retention, not the 31-day range
+// limit.
 //
-// Runs synchronously by default so the caller learns whether it actually worked.
-// The old fire-and-forget behaviour returned "started" and swallowed failures —
-// which is how two 90-day backfills silently did nothing. Pass ?async=true for
-// the old behaviour on very large windows.
+// Necessarily fire-and-forget: Amazon takes 12-15 MINUTES to bake each report,
+// even a 1-day one, and Render's proxy closes the connection long before that.
+// A synchronous version was tried and returns an empty body 100% of the time.
+//
+// So the HTTP response cannot tell you whether this worked. It only tells you
+// the job started. To find out what actually happened, check the DATA — compare
+// days-with-spend against days-with-clicks in daily_metrics. `scripts/backfill-ads.js`
+// does the same job locally with visible per-chunk progress, which is the better
+// tool for any large or one-off backfill.
 app.post('/api/ads/sync-daily', async (req, res) => {
   if (process.env.SYNC_ENABLED !== 'true') return res.status(403).json({ error: 'SYNC_ENABLED is false' });
   const windowDays = Math.min(parseInt(req.query.windowDays || '30', 10), 95);
-
-  if (req.query.async === 'true') {
-    res.json({ status: 'started', windowDays });
-    setImmediate(async () => {
-      try { const r = await syncDailyAdSpend({ windowDays }); console.log('[AdsDaily] Done:', JSON.stringify(r)); }
-      catch (e) { console.error('[AdsDaily] Manual sync error:', e.message); }
-    });
-    return;
-  }
-
-  try {
-    const r = await syncDailyAdSpend({ windowDays });
-    console.log('[AdsDaily] Done:', JSON.stringify(r));
-    res.json({ success: true, windowDays, ...r });
-  } catch (e) {
-    console.error('[AdsDaily] Manual sync error:', e.message);
-    res.status(500).json({ success: false, windowDays, error: e.message });
-  }
+  res.json({ status: 'started', windowDays, note: 'Takes ~12-15 min per 31-day chunk. Verify via daily_metrics, not this response.' });
+  setImmediate(async () => {
+    try { const r = await syncDailyAdSpend({ windowDays }); console.log('[AdsDaily] Done:', JSON.stringify(r)); }
+    catch (e) { console.error('[AdsDaily] Manual sync error:', e.message); }
+  });
 });
 
 // Manually trigger refund sync. Returns when complete (can take ~5-15 min depending
