@@ -62,10 +62,16 @@
 
     /* Report toolbar — app chrome, so it uses the DARK theme tokens (it sits
        outside #report and therefore inherits :root from /style.css). */
+    /* Sticks BELOW the nav, not under it. .rmc-nav is sticky at top:0 with
+       z-index:50 and is ~145px tall, so a toolbar stuck at top:0 with z-index:10
+       slid straight underneath and disappeared the moment you scrolled — the
+       Save/Generate PDF buttons with it. --nav-h is measured at runtime
+       (setStickyOffsets) rather than hardcoded, since the nav's height comes
+       from its content. */
     .rpt-toolbar {
       background: var(--bg-surface); border-bottom: 1px solid var(--border);
       padding: 16px 32px; display: flex; align-items: center; gap: 16px;
-      position: sticky; top: 0; z-index: 10;
+      position: sticky; top: var(--nav-h, 145px); z-index: 10;
     }
     .rpt-toolbar label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-2); }
     .rpt-toolbar select {
@@ -221,22 +227,40 @@
     }
     .section-panel {
       width: 268px; flex: none;
-      /* Sticky, not fixed: it scrolls with the page but stops clear of the
-         sticky toolbar instead of sitting on it. */
-      position: sticky; top: 88px;
+      /* Sticky, not fixed. Must clear BOTH sticky bars above it — the nav
+         (z-index 50) and the toolbar — or its header sits behind them. Stuck at
+         a hardcoded 88px it was occluded by 57px of nav, which is what "cuts
+         off when you scroll" actually was. Offsets are measured at runtime. */
+      position: sticky;
+      top: calc(var(--nav-h, 145px) + var(--bar-h, 69px) + 12px);
       background: var(--bg-card); border: 1px solid var(--border);
-      border-radius: var(--r); padding: 16px;
-      max-height: calc(100vh - 110px); overflow-y: auto;
+      border-radius: var(--r); padding: 0 16px 12px;
+      /* Only engages on a short window. When it does, the panel takes the wheel
+         from the page and its own header scrolls away — hence the sticky
+         .sp-head below, so the title survives either way. */
+      max-height: calc(100vh - var(--nav-h, 145px) - var(--bar-h, 69px) - 24px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
     }
-    .sp-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+    /* Pinned inside the panel: on a short window the panel scrolls internally,
+       and a control strip whose title vanishes is what "cuts off when you
+       scroll" looked like. */
+    .sp-head {
+      display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+      position: sticky; top: 0; z-index: 1;
+      background: var(--bg-card); padding: 14px 0 0;
+    }
     .sp-title { font-size: 14px; font-weight: 600; color: var(--text); }
     .sp-status { font-size: 11px; color: var(--text-3); }
     .sp-status.err { color: var(--neg); }
     .sp-hint { font-size: 11px; color: var(--text-2); margin: 6px 0 14px; line-height: 1.45; }
     .sp-list { display: flex; flex-direction: column; gap: 3px; }
+    /* Tightened from 9px: keeps the whole panel inside a ~600px-tall window so
+       it never needs its own scrollbar. Text size is untouched — that was the
+       actual readability complaint. */
     .sp-row {
       display: flex; align-items: center; gap: 9px;
-      padding: 9px 8px; border-radius: 7px; border: 1px solid transparent;
+      padding: 7px 8px; border-radius: 7px; border: 1px solid transparent;
       font-size: 13px; color: var(--text); cursor: grab;
     }
     .sp-row:hover { background: var(--bg-card-h); }
@@ -433,6 +457,20 @@
 
 <script>
 const $ = id => document.getElementById(id);
+
+// The nav and toolbar are both sticky, so anything else that sticks has to know
+// how tall they are. Measured rather than hardcoded: the nav's height comes from
+// its content, and a magic number silently rots the day that changes.
+function setStickyOffsets() {
+  const nav = document.querySelector('.rmc-nav');
+  const bar = document.querySelector('.rpt-toolbar');
+  const root = document.documentElement;
+  if (nav) root.style.setProperty('--nav-h', nav.offsetHeight + 'px');
+  // Toolbar is display:none in print — offsetHeight 0 is correct there.
+  if (bar) root.style.setProperty('--bar-h', bar.offsetHeight + 'px');
+}
+setStickyOffsets();
+window.addEventListener('resize', setStickyOffsets);
 
 // ── URL state ─────────────────────────────────────────────────────────────────
 const qs = new URLSearchParams(location.search);
