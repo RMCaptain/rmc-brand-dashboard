@@ -3156,11 +3156,11 @@ const REPORT_SECTION_KEYS = [
   'headline_tiles',       // revenue/units/sessions/CVR/buy box
   'sales_trend',          // 30-day daily chart vs comparison
   'ytd_chart',            // current year vs prior year
-  'top_sellers',          // per-product table with inventory chips
+  'top_sellers',          // top 10 products by revenue
   'ad_trend',             // ad sales vs organic chart
   'ad_summary',           // TACOS / TROAS / ACOS / ROAS / CTR / CPC
   'inventory_status',     // days of cover, stockouts, inbound
-  'per_asin_sheet_link',  // auto-generated Google Sheet link
+  'per_asin_detail',      // full paginated per-ASIN table
 ];
 
 // Sections hidden on a fresh brand. The section stays fully built and

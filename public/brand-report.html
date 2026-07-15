@@ -206,6 +206,37 @@
     .stock-chip.warn { background: var(--amber-bg); color: #92400E; }
     .stock-chip.low  { background: var(--red-bg); color: #991B1B; }
 
+    /* Per-ASIN detail */
+    .per-asin-table { font-size: 11px; }
+    .per-asin-table td { padding: 7px 8px; }
+    .per-asin-table .product-title { max-width: 230px; }
+    .rpt-table th.sortable { cursor: pointer; user-select: none; }
+    .rpt-table th.sortable:hover { color: var(--text); }
+    .rpt-table th.sorted { color: var(--green); }
+    .per-asin-foot {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; margin-top: 12px; flex-wrap: wrap;
+    }
+    .per-asin-pager { display: flex; align-items: center; gap: 8px; }
+    .pg-btn {
+      background: #fff; border: 1px solid var(--border); border-radius: 6px;
+      padding: 5px 11px; font-size: 11px; font-weight: 500; color: var(--text);
+      font-family: 'Inter', sans-serif; cursor: pointer;
+    }
+    .pg-btn:hover:not(:disabled) { border-color: var(--green-lt); color: var(--green); }
+    .pg-btn:disabled { opacity: 0.4; cursor: default; }
+    .pg-info { font-size: 11px; color: var(--text-2); }
+
+    /* Print: the table can run past one page, so repeat the header on each and
+       never split a row across the break. Pager is screen-only by definition. */
+    body.print-mode .per-asin-foot { margin-top: 8px; }
+    body.print-mode .per-asin-pager { display: none; }
+    @media print {
+      .per-asin-table thead { display: table-header-group; }
+      .per-asin-table tr    { page-break-inside: avoid; }
+      .per-asin-pager       { display: none; }
+    }
+
     /* Footer */
     .rpt-footer { padding: 16px 24px; font-size: 11px; color: var(--text-3); display: flex; justify-content: space-between; align-items: center; }
     .rpt-footer strong { color: var(--green); }
@@ -329,7 +360,7 @@ const SECTION_TITLES = {
   ad_trend:            'Advertising Trend',
   ad_summary:          'Advertising Performance',
   inventory_status:    'Inventory Status',
-  per_asin_sheet_link: 'Per-ASIN Detail',
+  per_asin_detail: 'Per-ASIN Detail',
 };
 
 const SECTION_RENDERERS = {
@@ -551,12 +582,153 @@ const SECTION_RENDERERS = {
       </table>` : ''}`;
   },
 
-  per_asin_sheet_link: () => `
-    <div class="rpt-placeholder">
-      <strong>Coming soon</strong> — Auto-generated Google Sheet with the full per-ASIN
-      detail breakdown, linked here. For now, use the Top Sellers table above.
+  // Full per-ASIN breakdown. Top Sellers answers "what's winning"; this answers
+  // "what happened to everything". Paginated on screen so it doesn't bury the
+  // rest of the report — but print mode renders EVERY row (see initPerAsinTable),
+  // because a PDF silently truncated to page 1 is worse than no table.
+  per_asin_detail: () => `
+    <div id="perAsinWrap">
+      <div id="perAsinTableWrap"></div>
+      <div id="perAsinFoot" class="per-asin-foot">
+        <div id="perAsinCount" class="rpt-note"></div>
+        <div id="perAsinPager" class="per-asin-pager"></div>
+      </div>
     </div>`,
 };
+
+// ── Per-ASIN detail ───────────────────────────────────────────────────────────
+
+const PER_ASIN_PAGE_SIZE = 25;
+let perAsin = { rows: [], page: 0, sortKey: 'revenue', sortDir: 'desc', showCad: true, showUsd: true };
+
+// value:  sorting + emptiness both key off this, so they can never disagree
+// render: display only
+const PER_ASIN_COLS = [
+  { key:'title',    label:'Product',  cls:'',  value:p => (p.title || p.asin).toLowerCase(),
+    render:p => {
+      const full = p.title || p.asin;
+      const short = full.length > 52 ? full.slice(0,52) + '…' : full;
+      return `<span class="product-title" title="${escapeHtml(full)}">${escapeHtml(short)}</span>
+              <div class="product-asin">${escapeHtml(p.asin)}</div>`;
+    } },
+  { key:'revenueCad', label:'Rev CA$', cls:'r', cur:'cad', value:p => p.revenueCad || 0, render:p => fmtC(p.revenueCad) },
+  { key:'revenueUsd', label:'Rev US$', cls:'r', cur:'usd', value:p => p.revenueUsd || 0, render:p => fmtC(p.revenueUsd, 'US$') },
+  { key:'units',      label:'Units',    cls:'r', value:p => p.units || 0,    render:p => fmtN(p.units) },
+  { key:'sessions',   label:'Sessions', cls:'r', value:p => p.sessions || 0, render:p => fmtN(p.sessions) },
+  { key:'cvr',        label:'CVR',      cls:'r', value:p => p.cvr ?? -1,     render:p => fmtPct(p.cvr) },
+  { key:'buyBox',     label:'Buy Box',  cls:'r', value:p => p.buyBox ?? -1,  render:p => fmtPct(p.buyBox) },
+  // Ad columns read '—' rather than '$0' when an ASIN had no ad activity at
+  // all. A real zero and "no ad data for this period" are different facts and
+  // must not look identical — that conflation is what produced "Prior YTD $0".
+  { key:'adSpend', label:'Ad Spend', cls:'r', value:p => adSpendOf(p) ?? -1,
+    render:p => { const s = adSpendOf(p); return s == null ? '—' : fmtC(s); } },
+  { key:'acos', label:'ACOS', cls:'r', value:p => p.acos ?? -1, render:p => fmtPct(p.acos) },
+  { key:'roas', label:'ROAS', cls:'r', value:p => p.roas ?? -1,
+    render:p => p.roas == null ? '—' : p.roas.toFixed(2) + 'x' },
+];
+
+// Combined CAD+USD, matching how buildSku already derives acos/roas. Returns
+// null when the ASIN shows no ad activity whatsoever, so "no data" stays
+// distinct from a genuine $0.
+function adSpendOf(p) {
+  const spend = (p.spendCad || 0) + (p.spendUsd || 0);
+  if (spend > 0) return spend;
+  const touched = (p.adClicks || 0) > 0 || (p.adImpressions || 0) > 0 || (p.adOrders || 0) > 0;
+  return touched ? 0 : null;
+}
+
+function perAsinSortVal(p, key) {
+  if (key === 'revenue') return (p.revenueCad || 0) + (p.revenueUsd || 0);
+  const col = PER_ASIN_COLS.find(c => c.key === key);
+  return col ? col.value(p) : 0;
+}
+
+function renderPerAsinTable() {
+  const wrap = document.getElementById('perAsinTableWrap');
+  if (!wrap) return;
+
+  const cols = PER_ASIN_COLS.filter(c =>
+    !(c.cur === 'cad' && !perAsin.showCad) && !(c.cur === 'usd' && !perAsin.showUsd));
+
+  const sorted = [...perAsin.rows].sort((a, b) => {
+    const av = perAsinSortVal(a, perAsin.sortKey), bv = perAsinSortVal(b, perAsin.sortKey);
+    const cmp = typeof av === 'string' ? av.localeCompare(bv) : av - bv;
+    return perAsin.sortDir === 'asc' ? cmp : -cmp;
+  });
+
+  // Print renders everything: a PDF has no "next page" button.
+  const paged = PRINT_MODE ? sorted
+    : sorted.slice(perAsin.page * PER_ASIN_PAGE_SIZE, (perAsin.page + 1) * PER_ASIN_PAGE_SIZE);
+
+  const head = cols.map(c => {
+    const active = perAsin.sortKey === c.key || (c.key === 'revenueCad' && perAsin.sortKey === 'revenue');
+    const arrow  = active ? (perAsin.sortDir === 'asc' ? ' ▲' : ' ▼') : '';
+    return PRINT_MODE
+      ? `<th class="${c.cls}">${escapeHtml(c.label)}</th>`
+      : `<th class="${c.cls} sortable${active ? ' sorted' : ''}" data-sort="${c.key}">${escapeHtml(c.label)}${arrow}</th>`;
+  }).join('');
+
+  const body = paged.map(p =>
+    `<tr>${cols.map(c => `<td class="${c.cls}">${c.render(p)}</td>`).join('')}</tr>`
+  ).join('');
+
+  wrap.innerHTML = `<table class="rpt-table per-asin-table">
+      <thead><tr>${head}</tr></thead>
+      <tbody>${body || `<tr><td colspan="${cols.length}" style="text-align:center;color:var(--text-3);padding:20px">No products with activity in this period.</td></tr>`}</tbody>
+    </table>`;
+
+  if (!PRINT_MODE) {
+    wrap.querySelectorAll('th.sortable').forEach(th => th.addEventListener('click', () => {
+      const key = th.dataset.sort;
+      if (perAsin.sortKey === key) perAsin.sortDir = perAsin.sortDir === 'asc' ? 'desc' : 'asc';
+      else { perAsin.sortKey = key; perAsin.sortDir = key === 'title' ? 'asc' : 'desc'; }
+      perAsin.page = 0;
+      renderPerAsinTable();
+    }));
+  }
+  renderPerAsinFoot(sorted.length);
+}
+
+function renderPerAsinFoot(total) {
+  const countEl = document.getElementById('perAsinCount');
+  const pagerEl = document.getElementById('perAsinPager');
+  if (!countEl || !pagerEl) return;
+
+  if (PRINT_MODE || total <= PER_ASIN_PAGE_SIZE) {
+    countEl.textContent = total ? `${total} product${total === 1 ? '' : 's'} with activity in this period.` : '';
+    pagerEl.innerHTML = '';
+    return;
+  }
+  const pages = Math.ceil(total / PER_ASIN_PAGE_SIZE);
+  const from  = perAsin.page * PER_ASIN_PAGE_SIZE + 1;
+  const to    = Math.min((perAsin.page + 1) * PER_ASIN_PAGE_SIZE, total);
+  countEl.textContent = `Showing ${from}–${to} of ${total} products with activity.`;
+  pagerEl.innerHTML = `
+    <button class="pg-btn" id="pgPrev" ${perAsin.page === 0 ? 'disabled' : ''}>Previous</button>
+    <span class="pg-info">Page ${perAsin.page + 1} of ${pages}</span>
+    <button class="pg-btn" id="pgNext" ${perAsin.page >= pages - 1 ? 'disabled' : ''}>Next</button>`;
+  const prev = document.getElementById('pgPrev'), next = document.getElementById('pgNext');
+  if (prev) prev.addEventListener('click', () => { if (perAsin.page > 0) { perAsin.page--; renderPerAsinTable(); } });
+  if (next) next.addEventListener('click', () => { if (perAsin.page < pages - 1) { perAsin.page++; renderPerAsinTable(); } });
+}
+
+function initPerAsinTable(d) {
+  // "Activity" is deliberately broader than Top Sellers' revenue filter: an
+  // ASIN with sessions but no sales, or spend but no sales, is exactly what a
+  // detail view exists to surface. Only fully-dormant ASINs are dropped.
+  const rows = (d.products || []).filter(p =>
+    (p.units || 0) > 0 || (p.revenueCad || 0) > 0 || (p.revenueUsd || 0) > 0 ||
+    (p.sessions || 0) > 0 || ((p.spendCad || 0) + (p.spendUsd || 0)) > 0);
+
+  perAsin = {
+    rows, page: 0, sortKey: 'revenue', sortDir: 'desc',
+    showCad: rows.some(p => (p.revenueCad || 0) > 0),
+    showUsd: rows.some(p => (p.revenueUsd || 0) > 0),
+  };
+  // Never hide both currency columns (a period with sessions but no sales).
+  if (!perAsin.showCad && !perAsin.showUsd) perAsin.showCad = true;
+  renderPerAsinTable();
+}
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 async function init() {
@@ -828,6 +1000,7 @@ async function render() {
     if (enabled.includes('sales_trend')) buildChart(d.dailySeries, d.dailySeriesPrev);
     if (enabled.includes('ytd_chart'))   buildYtdChart(d.ytdSeries, d.ytdSeriesPrev);
     if (enabled.includes('ad_trend'))    buildAdTrendChart(d.dailySeries);
+    if (enabled.includes('per_asin_detail')) initPerAsinTable(d);
 
     // Initialize executive summary section if visible. Never auto-generates —
     // the summary was already fetched above, so this doesn't re-request it.
