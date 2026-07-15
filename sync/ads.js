@@ -89,7 +89,14 @@ async function createAdReport(profileId, token, startDate, endDate) {
   throw new Error(`Ads report create failed (${res.status}): ${JSON.stringify(res.body)}`);
 }
 
-async function waitForAdReport(reportId, profileId, token, maxWaitMs = 20 * 60 * 1000) {
+// 20 minutes is fine for the recent windows the crons pull, but historical
+// reports bake far slower — an April backfill took Amazon 28 MINUTES for CA
+// while US sat PENDING for 50+ with no processing at all. The old ceiling gave
+// up 8 minutes before ready data and reported a timeout, making a slow report
+// look like a broken one. Override via ADS_REPORT_WAIT_MIN for backfills.
+const ADS_REPORT_WAIT_MS = (parseInt(process.env.ADS_REPORT_WAIT_MIN || '20', 10)) * 60 * 1000;
+
+async function waitForAdReport(reportId, profileId, token, maxWaitMs = ADS_REPORT_WAIT_MS) {
   const deadline = Date.now() + maxWaitMs;
   let attempt = 0;
   while (Date.now() < deadline) {
