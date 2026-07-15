@@ -25,12 +25,13 @@ function chunks(from,to){const out=[];let s=from;while(s<=to){let e=pstSubtractD
   const asinBrand={};
   for(const br of b.data.brands) for(const a of (br.asins||[])) asinBrand[a]=br.id;
 
+  const failed=[];
   for(const [cf,ct] of chunks(FROM,TO)){
     const t0=Date.now();
     console.log(`\n[chunk] ${cf} → ${ct}  pulling...`);
     let merged;
     try { merged = await pullAdSpendDaily(cf,ct); }
-    catch(e){ console.log('  FAILED:', e.message.slice(0,200)); continue; }
+    catch(e){ console.log('  FAILED:', e.message.slice(0,200)); failed.push([cf,ct,e.message.slice(0,120)]); continue; }
     const mins=((Date.now()-t0)/60000).toFixed(1);
     let wrote=0;
     for(const [date,asins] of Object.entries(merged)){
@@ -48,5 +49,14 @@ function chunks(from,to){const out=[];let s=from;while(s<=to){let e=pstSubtractD
     }
     console.log(`  done in ${mins}m — ${Object.keys(merged).length} dates, wrote ${wrote} rows`);
   }
-  console.log('\nBACKFILL COMPLETE');
-})();
+  // Never claim success when a chunk failed. The whole reason this script
+  // exists is that the endpoint reported success while writing nothing —
+  // printing "COMPLETE" over a failed chunk repeats exactly that mistake.
+  if (failed.length) {
+    console.log(`\nBACKFILL INCOMPLETE — ${failed.length} chunk(s) failed:`);
+    for (const [cf,ct,msg] of failed) console.log(`  ${cf} → ${ct}: ${msg}`);
+    console.log('Re-run the same command to retry; completed chunks are already written and Amazon reuses baked reports.');
+    process.exit(1);
+  }
+  console.log('\nBACKFILL COMPLETE — all chunks written');
+})().catch(e=>{ console.error('Fatal:', e.message); process.exit(1); });
