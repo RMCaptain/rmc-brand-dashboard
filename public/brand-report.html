@@ -137,6 +137,8 @@
     /* Placeholder section (coming soon) */
     .rpt-placeholder { padding: 18px 0; color: var(--text-3); font-size: 12px; }
     .rpt-placeholder strong { color: var(--text-2); font-weight: 600; }
+    /* "No data" must read as an absence, not as a number worth comparing. */
+    .ad-stat-value.ad-stat-nodata { color: var(--text-3); font-weight: 500; }
     .rpt-note { margin-top: 10px; font-size: 11px; color: var(--text-3); }
 
     /* Executive summary editor */
@@ -335,6 +337,56 @@ const REPORT_SCHEMA_VERSION = 1;
 const fmtC = (v, sym = 'CA$') => (v == null || isNaN(v)) ? '—' : sym + Math.round(v).toLocaleString('en-US');
 const fmtN = v => v == null ? '—' : Number(v).toLocaleString('en-US');
 const fmtPct = (v, d = 1) => v == null || isNaN(v) ? '—' : (Math.round(v * Math.pow(10, d)) / Math.pow(10, d)) + '%';
+
+// ── Data coverage ─────────────────────────────────────────────────────────────
+// A zero in this data means one of two very different things: the brand really
+// sold/spent nothing, or we never had the data. The table can't distinguish them
+// (0, not NULL), so the renderer must not present one as the other — a report
+// telling a brand they did $0 last year when we simply lack the year is worse
+// than showing nothing at all.
+//
+// d.coverage carries the earliest date we hold each kind of data. Anything
+// before that is unknowable, so say "no data", never "$0".
+
+function coverageState(d, kind, from, to) {
+  const boundary = kind === 'ads' ? d.coverage?.adsFrom : d.coverage?.revenueFrom;
+  if (!boundary) return { state: 'unknown', boundary: null };
+  if (to   <  boundary) return { state: 'none',    boundary };   // entirely before we had data
+  if (from <  boundary) return { state: 'partial', boundary };   // starts before, ends inside
+  return { state: 'full', boundary };
+}
+
+const fmtDay = iso => {
+  if (!iso) return '';
+  const [y, m, dd] = iso.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, dd)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+};
+
+// Prior-year YTD window, mirroring how the server builds ytdSeriesPrev.
+function priorYearWindow(periodTo) {
+  const [y, m, d] = periodTo.split('-').map(Number);
+  const py = y - 1;
+  const pad = n => String(n).padStart(2, '0');
+  return { from: `${py}-01-01`, to: `${py}-${pad(m)}-${pad(d)}` };
+}
+
+// Ad data before the boundary isn't "missing pending a backfill" — Amazon only
+// retains ~95 days of report history, so it aged out before we ever pulled it
+// and is gone for good. Worth saying plainly: someone will otherwise keep
+// trying to recover it (I did, twice).
+function adsNoDataHtml(cov) {
+  return `<div class="rpt-placeholder">
+    <strong>No advertising data for this period.</strong> Our ad records begin
+    ${fmtDay(cov.boundary)}. Amazon retains roughly 95 days of advertising report
+    history, so earlier periods can't be recovered. This is missing data — not
+    evidence that no ads ran.
+  </div>`;
+}
+
+function adsPartialNoteHtml(cov, d) {
+  return `<div class="rpt-note">Advertising figures cover ${fmtDay(cov.boundary)} – ${fmtDay(d.period.to)} only.
+    Ad records don't reach the start of this period, so ad totals understate the full window.</div>`;
+}
 const fmt2 = v => v == null || isNaN(v) ? '—' : (Math.round(v * 100) / 100).toFixed(2);
 
 function pct(curr, prev) {
@@ -432,15 +484,31 @@ const SECTION_RENDERERS = {
     const py = d.ytdSeriesPrev || [];
     const cyTotal = cy.reduce((s, x) => s + (x.revCad + x.revUsd), 0);
     const pyTotal = py.reduce((s, x) => s + (x.revCad + x.revUsd), 0);
-    const delta = pyTotal > 0 ? Math.round((cyTotal - pyTotal) / pyTotal * 1000) / 10 : null;
+
+    // The prior year is the single worst place to render a zero we can't stand
+    // behind: "Prior YTD $0" tells a brand they sold nothing last year. If the
+    // prior-year window sits entirely before our data begins, we don't know
+    // what they did — so say that, and drop the meaningless delta with it.
+    const pw     = priorYearWindow(d.period.to);
+    const pyCov  = coverageState(d, 'revenue', pw.from, pw.to);
+    const pyKnown = pyCov.state === 'full' || pyCov.state === 'partial' || pyCov.state === 'unknown';
+    const delta  = (pyKnown && pyTotal > 0) ? Math.round((cyTotal - pyTotal) / pyTotal * 1000) / 10 : null;
+
+    const pyValue = pyKnown ? fmtC(pyTotal, '$') : 'No data';
+    const pySub   = !pyKnown
+      ? `Our data begins ${fmtDay(pyCov.boundary)}`
+      : (delta != null ? (delta >= 0 ? '+' : '') + delta + '% vs prior'
+                       : (pyCov.state === 'partial' ? `Partial — data begins ${fmtDay(pyCov.boundary)}` : '—'));
+
     return `
       <div style="display:grid;grid-template-columns:1fr 200px;gap:24px;align-items:start;">
         <div class="chart-wrap" style="height:240px"><canvas id="ytdChart"></canvas></div>
         <div>
           <div class="ad-stat" style="margin-bottom:10px"><div class="ad-stat-label">Current YTD</div><div class="ad-stat-value">${fmtC(cyTotal, '$')}</div><div class="ad-stat-sub">${cy.length} days</div></div>
-          <div class="ad-stat"><div class="ad-stat-label">Prior YTD</div><div class="ad-stat-value">${fmtC(pyTotal, '$')}</div><div class="ad-stat-sub">${delta != null ? (delta >= 0 ? '+' : '') + delta + '% vs prior' : '—'}</div></div>
+          <div class="ad-stat"><div class="ad-stat-label">Prior YTD</div><div class="ad-stat-value${pyKnown ? '' : ' ad-stat-nodata'}">${pyValue}</div><div class="ad-stat-sub">${pySub}</div></div>
         </div>
-      </div>`;
+      </div>
+      ${!pyKnown ? `<div class="rpt-note">Prior-year comparison unavailable — our records begin ${fmtDay(pyCov.boundary)}. The chart shows this year only.</div>` : ''}`;
   },
 
   top_sellers: (d) => {
@@ -492,12 +560,17 @@ const SECTION_RENDERERS = {
 
   ad_trend: (d) => {
     const days = d.dailySeries || [];
+    const cov  = coverageState(d, 'ads', d.period.from, d.period.to);
+    if (cov.state === 'none') return adsNoDataHtml(cov);
     const hasAds = days.some(x => (x.spendCad + x.spendUsd) > 0);
     if (!hasAds) return `<div class="rpt-placeholder">No advertising activity in this period.</div>`;
-    return `<div class="chart-wrap" style="height:260px"><canvas id="adTrendChart"></canvas></div>`;
+    return `<div class="chart-wrap" style="height:260px"><canvas id="adTrendChart"></canvas></div>
+      ${cov.state === 'partial' ? adsPartialNoteHtml(cov, d) : ''}`;
   },
 
   ad_summary: (d) => {
+    const cov = coverageState(d, 'ads', d.period.from, d.period.to);
+    if (cov.state === 'none') return adsNoDataHtml(cov);
     const ad = d.summary?.adSummary;
     if (!ad) return `<div class="rpt-placeholder">No advertising activity in this period.</div>`;
     const stat = (label, value, sub) => `<div class="ad-stat"><div class="ad-stat-label">${label}</div><div class="ad-stat-value">${value}</div>${sub ? `<div class="ad-stat-sub">${sub}</div>` : ''}</div>`;
@@ -522,7 +595,8 @@ const SECTION_RENDERERS = {
         ${stat('Ad CVR',         fmtPct(ad.adCvr), 'Orders ÷ clicks')}
         ${stat('CPC',            ad.cpc != null ? '$' + fmt2(ad.cpc) : '—', 'Cost per click')}
         ${stat('CTR',            fmtPct(ad.ctr, 2), 'Clicks ÷ impressions')}
-      </div>`;
+      </div>
+      ${cov.state === 'partial' ? adsPartialNoteHtml(cov, d) : ''}`;
   },
 
   inventory_status: (d) => {

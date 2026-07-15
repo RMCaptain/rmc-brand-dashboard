@@ -3770,6 +3770,43 @@ app.put('/api/brand-report-summary/:brandId', async (req, res) => {
 // Builds the full report dataset for a brand+period. Extracted from the route
 // so the save-report path can freeze a snapshot without an HTTP round-trip.
 // Throws { status, message } on failure so the caller can map it to a response.
+// When did our data actually start?
+//
+// daily_metrics stores 0, not NULL, for revenue and ad spend — so "we never
+// fetched this" and "genuinely sold/spent nothing" are byte-identical in the
+// table. No amount of reading a row tells them apart. That conflation is what
+// let a report announce "Prior YTD $0" to a brand for a year we simply had no
+// data for.
+//
+// What we CAN establish is the boundary: the earliest date any brand has data
+// of each kind. These are account-wide pulls, so the boundary is a property of
+// our collection history, not of any one brand. A period entirely before the
+// boundary is unknowable — say so instead of rendering a confident zero.
+//
+// Known boundaries as of 2026-07: ads start 2026-04-11 (Amazon retains ~95
+// days of report data and the rest aged out before we ever pulled it — gone
+// permanently). Revenue starts 2026-01-01 via Orders API backfill.
+let _coverageCache = { at: 0, val: null };
+const COVERAGE_TTL_MS = 5 * 60 * 1000;
+
+async function getDataCoverage() {
+  if (_coverageCache.val && (Date.now() - _coverageCache.at) < COVERAGE_TTL_MS) return _coverageCache.val;
+  const earliest = async (orFilter) => {
+    const { data, error } = await supabase
+      .from('daily_metrics').select('date').or(orFilter)
+      .order('date', { ascending: true }).limit(1);
+    if (error) { console.warn('[Coverage] query failed:', error.message); return null; }
+    return data?.[0]?.date || null;
+  };
+  const [adsFrom, revenueFrom] = await Promise.all([
+    earliest('ad_clicks.gt.0,ad_impressions.gt.0,spend_cad.gt.0,spend_usd.gt.0'),
+    earliest('revenue_cad.gt.0,revenue_usd.gt.0,units.gt.0'),
+  ]);
+  const val = { adsFrom, revenueFrom };
+  _coverageCache = { at: Date.now(), val };
+  return val;
+}
+
 async function buildBrandReportDataset(brandId, query = {}) {
   const msDay = 86400000;
   const fmtISO  = d => d.toISOString().split('T')[0];
@@ -3913,6 +3950,8 @@ async function buildBrandReportDataset(brandId, query = {}) {
       dailySeriesPrev,
       ytdSeries:     ytd.current,
       ytdSeriesPrev: ytd.prior,
+      // Lets the renderer tell "no data" apart from "zero" — see getDataCoverage.
+      coverage: await getDataCoverage(),
       generatedAt: new Date().toISOString(),
     };
   }
