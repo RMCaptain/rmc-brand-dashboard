@@ -208,6 +208,63 @@
     .stock-chip.warn { background: var(--amber-bg); color: #92400E; }
     .stock-chip.low  { background: var(--red-bg); color: #991B1B; }
 
+    /* ── Section panel (screen only) ──────────────────────────────────────
+       Uses the app's DARK theme tokens — it sits outside #report, on the app
+       chrome, NOT on the report's light paper. Hardcoding light colours here
+       is how the text disappeared last time. */
+    .section-panel {
+      position: fixed; top: 150px; left: 24px; width: 216px; z-index: 40;
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: var(--r); padding: 14px;
+      backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+      max-height: calc(100vh - 190px); overflow-y: auto;
+    }
+    .sp-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+    .sp-title { font-size: 12px; font-weight: 600; color: var(--text); }
+    .sp-status { font-size: 10px; color: var(--text-3); }
+    .sp-status.err { color: var(--neg); }
+    .sp-hint { font-size: 10px; color: var(--text-3); margin: 4px 0 10px; line-height: 1.4; }
+    .sp-list { display: flex; flex-direction: column; gap: 2px; }
+    .sp-row {
+      display: flex; align-items: center; gap: 7px;
+      padding: 6px 6px; border-radius: 6px; border: 1px solid transparent;
+      font-size: 11px; color: var(--text); cursor: grab;
+    }
+    .sp-row:hover { background: var(--bg-card-h); }
+    .sp-row.sp-dragging { opacity: 0.4; cursor: grabbing; }
+    .sp-row.sp-drop-target { border-color: var(--brand); background: var(--bg-card-h); }
+    .sp-grip { color: var(--text-3); font-size: 12px; line-height: 1; flex: none; letter-spacing: -1px; }
+    .sp-name { display: flex; align-items: center; gap: 6px; flex: 1; cursor: inherit; min-width: 0; }
+    .sp-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sp-name input { accent-color: var(--brand); cursor: pointer; flex: none; }
+    /* Pinned: no grip, no checkbox, not draggable — structural, not optional. */
+    .sp-row-pinned { cursor: default; opacity: 0.72; }
+    .sp-row-pinned:hover { background: transparent; }
+    .sp-grip-locked { font-size: 9px; filter: grayscale(1); }
+    .sp-always { font-size: 9px; color: var(--text-3); white-space: nowrap; }
+    /* Panel would overlap the report on narrower screens — drop it inline. */
+    @media (max-width: 1400px) {
+      .section-panel { position: static; width: auto; max-width: 900px;
+        margin: 0 auto 16px; max-height: none; }
+    }
+
+    /* Section grips (screen only) */
+    .rpt-section-draggable .rpt-section-title { display: flex; align-items: center; gap: 8px; }
+    .rpt-grip {
+      color: var(--text-3); font-size: 13px; letter-spacing: -1px; cursor: grab;
+      opacity: 0; transition: opacity 0.15s ease;
+    }
+    .rpt-section-draggable:hover .rpt-grip { opacity: 1; }
+    .rpt-section-dragging { opacity: 0.45; }
+    .rpt-section-drop { outline: 2px dashed var(--green-lt); outline-offset: 4px; }
+
+    /* Nothing interactive reaches the PDF. */
+    body.print-mode .section-panel,
+    body.print-mode .rpt-grip { display: none !important; }
+    @media print {
+      .section-panel, .rpt-grip { display: none !important; }
+    }
+
     /* Revenue share pie */
     .pie-wrap { display: grid; grid-template-columns: 1fr 260px; gap: 24px; align-items: center; }
     .pie-chart-box { height: 300px; position: relative; }
@@ -312,6 +369,17 @@
     <div class="spinner"></div>
     <div>Loading report…</div>
   </div>
+
+  <!-- Screen-only report customiser. Hidden in print-mode (a PDF has no
+       controls) and while viewing a saved report (its layout is frozen). -->
+  <aside id="sectionPanel" class="section-panel" style="display:none;">
+    <div class="sp-head">
+      <span class="sp-title">Report sections</span>
+      <span id="spStatus" class="sp-status"></span>
+    </div>
+    <p class="sp-hint">Toggle sections on or off. Drag to reorder — this becomes the brand's default.</p>
+    <div id="spList" class="sp-list"></div>
+  </aside>
 
   <div id="report">
     <div class="rpt-header">
@@ -723,6 +791,193 @@ const SECTION_RENDERERS = {
       </div>
     </div>`,
 };
+
+// ── Report layout: section toggles + drag-to-reorder ─────────────────────────
+//
+// Pinned sections are fixed in place AND always on (Mike): no checkbox, no grip.
+// The report renders in the brand's own order, and changes persist as that
+// brand's default — a saved report freezes whatever layout was active when it
+// was saved, so old reports never shift when the default later changes.
+//
+// The server is authoritative about what's pinned/movable; these are only the
+// client's defaults for when a payload predates those fields.
+let layout = {
+  brandId: null,
+  hidden: new Set(),
+  order: [],
+  movable: [],
+  pinned: ['executive_summary', 'per_asin_detail'],
+  saving: false,
+  dragKey: null,
+};
+
+function isPinned(key) { return layout.pinned.includes(key); }
+
+function setLayoutStatus(msg, isErr = false) {
+  const el = document.getElementById('spStatus');
+  if (!el) return;
+  el.textContent = msg || '';
+  el.className = 'sp-status' + (isErr ? ' err' : '');
+}
+
+function initLayoutPanel(d) {
+  const panel = document.getElementById('sectionPanel');
+  if (!panel) return;
+
+  // No controls in a PDF, and a saved report's layout is frozen by definition.
+  if (PRINT_MODE || currentSavedId) { panel.style.display = 'none'; return; }
+  panel.style.display = '';
+
+  const cfg = d.config || {};
+  layout.brandId = d.brand.id;
+  layout.hidden  = new Set(cfg.hidden_sections || []);
+  layout.movable = cfg.movable_sections || [];
+  layout.pinned  = cfg.pinned_sections  || layout.pinned;
+  layout.order   = cfg.section_order?.length ? cfg.section_order : layout.movable;
+  renderLayoutPanel();
+}
+
+function renderLayoutPanel() {
+  const list = document.getElementById('spList');
+  if (!list) return;
+
+  // Mirrors the server's render order so the panel reads top-to-bottom like the
+  // report itself — a list in a different order to the thing it controls is a
+  // puzzle, not a control.
+  const rows = [
+    { key: layout.pinned[0], pinned: true },
+    ...layout.order.map(k => ({ key: k, pinned: false })),
+    { key: layout.pinned[1], pinned: true },
+  ].filter(r => r.key);
+
+  list.innerHTML = rows.map(r => {
+    const title = SECTION_TITLES[r.key] || r.key;
+    if (r.pinned) {
+      return `<div class="sp-row sp-row-pinned" data-key="${r.key}" title="Always on — this section is part of the report's structure">
+        <span class="sp-grip sp-grip-locked">🔒</span>
+        <span class="sp-name">${escapeHtml(title)}</span>
+        <span class="sp-always">Always on</span>
+      </div>`;
+    }
+    const on = !layout.hidden.has(r.key);
+    return `<div class="sp-row" draggable="true" data-key="${r.key}">
+      <span class="sp-grip" title="Drag to reorder">⠿</span>
+      <label class="sp-name">
+        <input type="checkbox" data-toggle="${r.key}" ${on ? 'checked' : ''} />
+        <span>${escapeHtml(title)}</span>
+      </label>
+    </div>`;
+  }).join('');
+
+  list.querySelectorAll('input[data-toggle]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const key = cb.dataset.toggle;
+      if (cb.checked) layout.hidden.delete(key); else layout.hidden.add(key);
+      persistLayout();
+    });
+  });
+
+  list.querySelectorAll('.sp-row[draggable="true"]').forEach(row => {
+    row.addEventListener('dragstart', e => {
+      layout.dragKey = row.dataset.key;
+      row.classList.add('sp-dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      // Firefox won't start a drag without payload.
+      e.dataTransfer.setData('text/plain', row.dataset.key);
+    });
+    row.addEventListener('dragend', () => { row.classList.remove('sp-dragging'); layout.dragKey = null; clearDropMarkers(); });
+    row.addEventListener('dragover', e => {
+      if (!layout.dragKey || layout.dragKey === row.dataset.key) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      clearDropMarkers();
+      row.classList.add('sp-drop-target');
+    });
+    row.addEventListener('drop', e => {
+      e.preventDefault();
+      clearDropMarkers();
+      const from = layout.dragKey, to = row.dataset.key;
+      if (!from || from === to) return;
+      reorderSection(from, to);
+    });
+  });
+}
+
+function clearDropMarkers() {
+  document.querySelectorAll('.sp-drop-target, .rpt-section-drop').forEach(el =>
+    el.classList.remove('sp-drop-target', 'rpt-section-drop'));
+}
+
+// Dragging the sections in the report itself. Shares layout.order and
+// persistLayout with the side panel, so the two can't disagree about the order.
+function wireSectionDrag(root) {
+  root.querySelectorAll('.rpt-section-draggable').forEach(sec => {
+    sec.addEventListener('dragstart', e => {
+      layout.dragKey = sec.dataset.section;
+      sec.classList.add('rpt-section-dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', sec.dataset.section);
+    });
+    sec.addEventListener('dragend', () => {
+      sec.classList.remove('rpt-section-dragging');
+      layout.dragKey = null;
+      clearDropMarkers();
+    });
+    sec.addEventListener('dragover', e => {
+      if (!layout.dragKey || layout.dragKey === sec.dataset.section) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      clearDropMarkers();
+      sec.classList.add('rpt-section-drop');
+    });
+    sec.addEventListener('drop', e => {
+      e.preventDefault();
+      clearDropMarkers();
+      const from = layout.dragKey, to = sec.dataset.section;
+      if (!from || from === to) return;
+      reorderSection(from, to);
+    });
+  });
+}
+
+function reorderSection(fromKey, toKey) {
+  const order = [...layout.order];
+  const fi = order.indexOf(fromKey), ti = order.indexOf(toKey);
+  if (fi === -1 || ti === -1) return;      // pinned rows aren't in `order`
+  order.splice(fi, 1);
+  order.splice(ti, 0, fromKey);
+  layout.order = order;
+  renderLayoutPanel();
+  persistLayout();
+}
+
+// Persist, then re-render from the server's response so what's on screen is
+// what's actually stored — not an optimistic guess that might diverge.
+async function persistLayout() {
+  if (!layout.brandId || layout.saving) return;
+  layout.saving = true;
+  setLayoutStatus('Saving…');
+  try {
+    const res = await fetch(`/api/brand-report-config/${encodeURIComponent(layout.brandId)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        hidden_sections: [...layout.hidden],
+        section_order:   layout.order,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    setLayoutStatus('Saved');
+    setTimeout(() => setLayoutStatus(''), 1500);
+    layout.saving = false;
+    await render();   // re-render the report against the stored layout
+  } catch (err) {
+    layout.saving = false;
+    setLayoutStatus('Not saved — ' + err.message, true);
+  }
+}
 
 // ── Revenue share pie ─────────────────────────────────────────────────────────
 
@@ -1213,13 +1468,24 @@ async function render() {
       if (key === 'executive_summary' && PRINT_MODE && !hasSummaryText) return false;
       return true;
     });
+    // Grip dots let a section be dragged in the report itself, not only in the
+    // side panel — pinned sections get none, and neither does print mode.
+    const canDrag = !PRINT_MODE && !currentSavedId;
     const sectionsEl = $('sections');
     sectionsEl.innerHTML = enabled
-      .map(key => `<div class="rpt-section" data-section="${key}">
-          <div class="rpt-section-title">${escapeHtml(SECTION_TITLES[key] || key)}</div>
+      .map(key => {
+        const pinned = (d.config?.pinned_sections || []).includes(key);
+        const drag   = canDrag && !pinned;
+        return `<div class="rpt-section${drag ? ' rpt-section-draggable' : ''}" data-section="${key}"${drag ? ' draggable="true"' : ''}>
+          <div class="rpt-section-title">
+            ${drag ? '<span class="rpt-grip" title="Drag to reorder">⠿</span>' : ''}
+            ${escapeHtml(SECTION_TITLES[key] || key)}
+          </div>
           ${SECTION_RENDERERS[key](d)}
-        </div>`)
+        </div>`;
+      })
       .join('');
+    if (canDrag) wireSectionDrag(sectionsEl);
 
     // Build charts after DOM exists.
     if (enabled.includes('sales_trend')) buildChart(d.dailySeries, d.dailySeriesPrev);
@@ -1227,6 +1493,7 @@ async function render() {
     if (enabled.includes('ad_trend'))    buildAdTrendChart(d.dailySeries);
     if (enabled.includes('revenue_share_pie')) buildRevenuePieChart(d);
     if (enabled.includes('per_asin_detail')) initPerAsinTable(d);
+    initLayoutPanel(d);
 
     // Initialize executive summary section if visible. Never auto-generates —
     // the summary was already fetched above, so this doesn't re-request it.

@@ -3204,6 +3204,38 @@ const REPORT_SECTION_KEYS = [
 // the standard report — turn it on per brand from the report sidebar.
 const DEFAULT_HIDDEN_SECTIONS = ['inventory_status', 'revenue_share_pie'];
 
+// Structural sections. Fixed in place AND always on (Mike, 2026-07-15): they
+// can't be dragged and have no on/off toggle. A report without its summary or
+// its per-ASIN table isn't a variant of the report — it's a different document.
+const PINNED_FIRST_SECTION = 'executive_summary';
+const PINNED_LAST_SECTION  = 'per_asin_detail';
+const PINNED_SECTIONS = [PINNED_FIRST_SECTION, PINNED_LAST_SECTION];
+
+const MOVABLE_SECTION_KEYS = REPORT_SECTION_KEYS.filter(k => !PINNED_SECTIONS.includes(k));
+
+/**
+ * Resolve a brand's stored section order into the real render order.
+ *
+ * Defensive on both ends:
+ * - Drops unknown keys and any pinned section that leaked into the stored array,
+ *   so a stale or hand-edited row can't float the summary into the middle.
+ * - APPENDS any movable section missing from the stored order, so adding a new
+ *   section later doesn't need every brand's row rewritten — and, more
+ *   importantly, a stale order can't make a new section silently invisible.
+ */
+function resolveSectionOrder(storedOrder) {
+  const stored = Array.isArray(storedOrder) ? storedOrder : [];
+  const clean  = stored.filter(k => MOVABLE_SECTION_KEYS.includes(k));
+  const seen   = new Set(clean);
+  const missing = MOVABLE_SECTION_KEYS.filter(k => !seen.has(k));
+  return [...new Set([...clean, ...missing])];
+}
+
+/** Full render order: summary pinned first, per-ASIN pinned last. */
+function fullSectionOrder(storedOrder) {
+  return [PINNED_FIRST_SECTION, ...resolveSectionOrder(storedOrder), PINNED_LAST_SECTION];
+}
+
 function defaultBrandReportConfig(brandId) {
   return { brand_id: brandId, hidden_sections: [...DEFAULT_HIDDEN_SECTIONS], updated_at: null };
 }
@@ -3239,6 +3271,29 @@ app.put('/api/brand-report-config/:brandId', async (req, res) => {
     return res.status(400).json({ error: 'hidden_sections must be an array of strings' });
   }
   const hidden = [...new Set(body.hidden_sections.filter(s => typeof s === 'string'))];
+
+  // Reject rather than silently strip: a caller trying to hide the summary or
+  // the per-ASIN table has a wrong idea about the report, and quietly ignoring
+  // it would let that wrong idea persist while appearing to work.
+  const pinnedHidden = hidden.filter(s => PINNED_SECTIONS.includes(s));
+  if (pinnedHidden.length) {
+    return res.status(400).json({ error: `These sections are always on and cannot be hidden: ${pinnedHidden.join(', ')}` });
+  }
+  const unknown = hidden.filter(s => !REPORT_SECTION_KEYS.includes(s));
+  if (unknown.length) {
+    return res.status(400).json({ error: `Unknown section(s): ${unknown.join(', ')}` });
+  }
+
+  // section_order is optional — a client that only toggles visibility shouldn't
+  // have to send an order, and must not wipe the stored one by omitting it.
+  let orderPatch = {};
+  if (body.section_order !== undefined) {
+    if (!Array.isArray(body.section_order)) {
+      return res.status(400).json({ error: 'section_order must be an array of strings' });
+    }
+    orderPatch = { section_order: resolveSectionOrder(body.section_order) };
+  }
+
   try {
     const { brands } = await loadBrands();
     if (!brands.find(b => b.id === brandId)) {
@@ -3247,13 +3302,23 @@ app.put('/api/brand-report-config/:brandId', async (req, res) => {
     const { data, error } = await supabase
       .from('brand_report_configs')
       .upsert(
-        { brand_id: brandId, hidden_sections: hidden, updated_at: new Date().toISOString() },
+        { brand_id: brandId, hidden_sections: hidden, ...orderPatch, updated_at: new Date().toISOString() },
         { onConflict: 'brand_id' }
       )
       .select()
       .single();
-    if (error) throw new Error(error.message);
-    res.json({ success: true, ...data, available_sections: REPORT_SECTION_KEYS });
+    if (error) {
+      if (/section_order/i.test(String(error.message))) {
+        return res.status(503).json({ error: 'Run sql/brand-report-section-order.sql first — the section_order column is missing.' });
+      }
+      throw new Error(error.message);
+    }
+    res.json({
+      success: true, ...data,
+      available_sections: REPORT_SECTION_KEYS,
+      movable_sections:   MOVABLE_SECTION_KEYS,
+      pinned_sections:    PINNED_SECTIONS,
+    });
   } catch (err) {
     console.error('[BrandReportConfig] PUT error:', err.message);
     res.status(500).json({ error: err.message });
@@ -3889,15 +3954,33 @@ async function buildBrandReportDataset(brandId, query = {}) {
       };
     }
 
-    // ── 4. Per-brand config (hidden_sections). Missing row → empty defaults.
-    const { data: cfgRow } = await supabase
-      .from('brand_report_configs')
-      .select('hidden_sections, updated_at')
-      .eq('brand_id', brandId)
-      .maybeSingle();
+    // ── 4. Per-brand config (hidden_sections + section_order). Missing row →
+    //      empty defaults. Selected defensively: if the section_order migration
+    //      hasn't run, fall back rather than 500 the whole report over a column.
+    let cfgRow = null;
+    {
+      const sel = await supabase
+        .from('brand_report_configs')
+        .select('hidden_sections, section_order, updated_at')
+        .eq('brand_id', brandId)
+        .maybeSingle();
+      if (sel.error && /section_order/i.test(String(sel.error.message))) {
+        const fallback = await supabase
+          .from('brand_report_configs')
+          .select('hidden_sections, updated_at')
+          .eq('brand_id', brandId)
+          .maybeSingle();
+        cfgRow = fallback.data;
+      } else {
+        cfgRow = sel.data;
+      }
+    }
     const hidden = Array.isArray(cfgRow?.hidden_sections) ? cfgRow.hidden_sections : [];
     const hiddenSet = new Set(hidden);
-    const enabledSections = REPORT_SECTION_KEYS.filter(k => !hiddenSet.has(k));
+    // Pinned sections are always on — a stale row that hides one must not win.
+    for (const k of PINNED_SECTIONS) hiddenSet.delete(k);
+    // Enabled in the brand's OWN order, not REPORT_SECTION_KEYS order.
+    const enabledSections = fullSectionOrder(cfgRow?.section_order).filter(k => !hiddenSet.has(k));
 
     // ── 5. Daily series for the chart sections — re-query daily_metrics so
     //      we get per-day breakdown (buildBrandMetricsForRange aggregates).
@@ -3974,7 +4057,10 @@ async function buildBrandReportDataset(brandId, query = {}) {
       config: {
         hidden_sections:    hidden,
         available_sections: REPORT_SECTION_KEYS,
-        enabled_sections:   enabledSections,
+        enabled_sections:   enabledSections,   // already in the brand's order
+        section_order:      resolveSectionOrder(cfgRow?.section_order),
+        movable_sections:   MOVABLE_SECTION_KEYS,
+        pinned_sections:    PINNED_SECTIONS,
         updated_at:         cfgRow?.updated_at || null,
       },
       summary:     curr.summary,
