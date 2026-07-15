@@ -390,7 +390,47 @@ async function computeDayFromOrders(pstDate, token = null) {
 
   await resolveUnpricedItems(target, token);
 
-  return { date: pstDate, byAsin: target.byAsin, orderCount: total, unrecoveredOrders: target.failedOrderIds.size };
+  // orderContrib rides along so callers can derive per-brand order counts for
+  // AOV. It's already built for reversal bookkeeping — returning it costs
+  // nothing, and without it the order->ASIN mapping is unrecoverable once this
+  // function returns (which is why AOV was impossible until now).
+  return {
+    date: pstDate,
+    byAsin: target.byAsin,
+    orderCount: total,
+    orderContrib: target.orderContrib,
+    unrecoveredOrders: target.failedOrderIds.size,
+  };
+}
+
+/**
+ * Distinct order counts per brand for one day, derived from orderContrib.
+ *
+ * Counts each order ONCE per brand it touches, however many of that brand's
+ * ASINs it contains — summing per-ASIN counts would overstate any multi-item
+ * order. An order spanning two brands counts for both, which is correct for a
+ * per-brand report but means these must never be summed across brands.
+ *
+ * @param {object} orderContrib  { orderId: { asin: { units, revenue, isCA } } }
+ * @param {object} asinBrand     { asin: brandId }
+ * @returns {object} { brandId: { order_count, order_count_ca, order_count_us } }
+ */
+function brandOrderCounts(orderContrib, asinBrand) {
+  const sets = {};
+  for (const [orderId, contrib] of Object.entries(orderContrib || {})) {
+    for (const [asin, c] of Object.entries(contrib || {})) {
+      const brand = asinBrand[asin];
+      if (!brand) continue;
+      if (!sets[brand]) sets[brand] = { all: new Set(), ca: new Set(), us: new Set() };
+      sets[brand].all.add(orderId);
+      (c.isCA ? sets[brand].ca : sets[brand].us).add(orderId);
+    }
+  }
+  const out = {};
+  for (const [brand, s] of Object.entries(sets)) {
+    out[brand] = { order_count: s.all.size, order_count_ca: s.ca.size, order_count_us: s.us.size };
+  }
+  return out;
 }
 
 // For each unpriced (asin, sku, units, isCA) entry in target.unpriced, fetch
@@ -445,4 +485,4 @@ function getYesterdayState() {
   };
 }
 
-module.exports = { rebuildToday, rebuildYesterday, poll, getState, getYesterdayState, computeDayFromOrders };
+module.exports = { rebuildToday, rebuildYesterday, poll, getState, getYesterdayState, computeDayFromOrders, brandOrderCounts };

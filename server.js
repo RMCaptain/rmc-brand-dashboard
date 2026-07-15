@@ -2348,10 +2348,38 @@ async function persistOrdersTodayState() {
 // next finalize confirms. Trivial vs the wipe risk.
 //
 // All we do now: bail if empty, otherwise upsert. The "zero" path is gone.
+// Per-brand distinct order counts for one day → daily_brand_orders (AOV needs
+// them; see sql/daily-brand-orders.sql for why they can't live on daily_metrics).
+//
+// Non-fatal by design: if the table is missing or the write fails, the caller's
+// revenue persistence must still stand. AOV degrades to "—", which the report
+// already handles as "no data" rather than inventing a zero.
+async function persistBrandOrderCounts(date, orderContrib) {
+  try {
+    if (!orderContrib) return 0;
+    const { brands } = await loadBrands();
+    const asinBrand = {};
+    for (const b of (brands || [])) for (const a of (b.asins || [])) asinBrand[a] = b.id;
+
+    const counts = ordersPoller.brandOrderCounts(orderContrib, asinBrand);
+    const rows = Object.entries(counts).map(([brand_id, c]) => ({
+      brand_id, date, ...c, updated_at: new Date().toISOString(),
+    }));
+    if (!rows.length) return 0;
+
+    const { error } = await supabase.from('daily_brand_orders').upsert(rows, { onConflict: 'brand_id,date' });
+    if (error) { console.warn(`[Orders] brand order-counts ${date} not stored:`, error.message); return 0; }
+    return rows.length;
+  } catch (e) {
+    console.warn(`[Orders] brand order-counts ${date} failed:`, e.message);
+    return 0;
+  }
+}
+
 async function finalizeYesterdayFromOrders() {
   try {
     const yest = pstSubtractDays(pstDateStr(), 1);
-    const { byAsin, orderCount } = await ordersPoller.computeDayFromOrders(yest);
+    const { byAsin, orderCount, orderContrib } = await ordersPoller.computeDayFromOrders(yest);
 
     const realEntries = Object.values(byAsin || {}).filter(d =>
       (d.units || 0) > 0 || (d.revenueCad || 0) > 0 || (d.revenueUsd || 0) > 0
@@ -2362,7 +2390,8 @@ async function finalizeYesterdayFromOrders() {
     }
 
     const n = await persistOrdersDay(yest, byAsin);
-    console.log(`[Orders] Finalized yesterday ${yest}: ${n} ASIN rows written, ${orderCount} orders`);
+    const o = await persistBrandOrderCounts(yest, orderContrib);
+    console.log(`[Orders] Finalized yesterday ${yest}: ${n} ASIN rows written, ${orderCount} orders, ${o} brand order-counts`);
   } catch (e) {
     console.warn('[Orders] finalize yesterday failed:', e.message);
   }

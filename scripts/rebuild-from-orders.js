@@ -16,7 +16,7 @@
 
 require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 const { createClient } = require('@supabase/supabase-js');
-const { computeDayFromOrders } = require('../sync/orders');
+const { computeDayFromOrders, brandOrderCounts } = require('../sync/orders');
 const { pstDateStr, pstSubtractDays } = require('../sync/dateUtils');
 
 // Usage: node scripts/rebuild-from-orders.js <start> [end]
@@ -56,7 +56,7 @@ function daysBetween(startStr, endStr) {
   for (const date of dates) {
     const t0 = Date.now();
     try {
-      const { byAsin, orderCount } = await computeDayFromOrders(date);
+      const { byAsin, orderCount, orderContrib } = await computeDayFromOrders(date);
 
       const rows = Object.entries(byAsin).map(([asin, d]) => ({
         asin,
@@ -91,8 +91,23 @@ function daysBetween(startStr, endStr) {
         if (upErr) {
           console.warn(`${date}: UPSERT FAILED — ${upErr.message}`);
         } else {
+          // Per-brand order counts for AOV. Separate table, separate grain —
+          // orders are a brand/day fact, not an asin/day one. Non-fatal: a
+          // missing table must not cost us the revenue rebuild above.
+          let orderNote = '';
+          try {
+            const counts = brandOrderCounts(orderContrib, asinBrand);
+            const orderRows = Object.entries(counts).map(([brand_id, c]) => ({ brand_id, date, ...c, updated_at: new Date().toISOString() }));
+            if (orderRows.length) {
+              const { error: oErr } = await supabase
+                .from('daily_brand_orders').upsert(orderRows, { onConflict: 'brand_id,date' });
+              if (oErr) orderNote = ` | orders NOT stored (${oErr.message.slice(0, 40)})`;
+              else      orderNote = ` | ${orderRows.length} brand order-counts`;
+            }
+          } catch (e) { orderNote = ` | order-count error: ${e.message.slice(0, 40)}`; }
+
           const secs = ((Date.now() - t0) / 1000).toFixed(0);
-          console.log(`${date}: ${rows.length} ASINs | ${totUnits} units | CA$${totCad.toFixed(0)} US$${totUsd.toFixed(0)} | ${orderCount} orders | ${secs}s`);
+          console.log(`${date}: ${rows.length} ASINs | ${totUnits} units | CA$${totCad.toFixed(0)} US$${totUsd.toFixed(0)} | ${orderCount} orders | ${secs}s${orderNote}`);
         }
       }
     } catch (e) {
