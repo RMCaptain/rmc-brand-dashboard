@@ -3425,18 +3425,59 @@ app.post('/api/brand-report-config/seed-defaults', async (req, res) => {
 // Default is lastMonth: that's the report RMC actually sends brands.
 const REPORT_ROLLING_DAYS = { last7d: 7, last14d: 14, last30d: 30, last90d: 90 };
 
+// These dates arrive straight from user input, so they're validated rather than
+// trusted. A malformed date silently becoming Invalid Date would produce a
+// report full of confident nonsense — the failure mode this codebase keeps
+// hitting. Throws {status:400} for the route to surface.
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function parseReportDate(value, label) {
+  if (!ISO_DATE_RE.test(String(value || ''))) {
+    const e = new Error(`${label} must be a date in YYYY-MM-DD format`); e.status = 400; throw e;
+  }
+  const d = new Date(`${value}T12:00:00Z`);
+  if (isNaN(d.getTime())) { const e = new Error(`${label} is not a real date`); e.status = 400; throw e; }
+  // Round-trip catches 2026-02-31 and friends, which Date happily rolls over.
+  if (d.toISOString().split('T')[0] !== value) {
+    const e = new Error(`${label} is not a real date (${value})`); e.status = 400; throw e;
+  }
+  return value;
+}
+
 function resolveReportPeriod(query = {}) {
   const msDay  = 86400000;
   const fmtISO = d => d.toISOString().split('T')[0];
   const utc    = (y, m, d) => new Date(Date.UTC(y, m, d));
 
-  // Explicit from/to always wins; comparison is same-length immediately prior.
+  // Explicit from/to always wins.
   if (query.from && query.to) {
-    const from = query.from, to = query.to;
-    const days = Math.round((new Date(to) - new Date(from)) / msDay) + 1;
-    const compTo   = fmtISO(new Date(new Date(from) - msDay));
-    const compFrom = fmtISO(new Date(new Date(compTo) - (days - 1) * msDay));
+    const from = parseReportDate(query.from, 'from');
+    const to   = parseReportDate(query.to,   'to');
+    if (from > to) { const e = new Error('from must be on or before to'); e.status = 400; throw e; }
+
+    let compFrom, compTo;
+    if (query.compFrom || query.compTo) {
+      // A custom comparison needs BOTH ends — half of one would silently fall
+      // back to the default window and compare against something the caller
+      // never asked for.
+      if (!query.compFrom || !query.compTo) {
+        const e = new Error('compFrom and compTo must be provided together'); e.status = 400; throw e;
+      }
+      compFrom = parseReportDate(query.compFrom, 'compFrom');
+      compTo   = parseReportDate(query.compTo,   'compTo');
+      if (compFrom > compTo) { const e = new Error('compFrom must be on or before compTo'); e.status = 400; throw e; }
+    } else {
+      // Default: the same-length window immediately before.
+      const days = Math.round((new Date(to) - new Date(from)) / msDay) + 1;
+      compTo   = fmtISO(new Date(new Date(from) - msDay));
+      compFrom = fmtISO(new Date(new Date(compTo) - (days - 1) * msDay));
+    }
     return { from, to, compFrom, compTo, preset: 'custom' };
+  }
+
+  // from/to only make sense as a pair.
+  if (query.from || query.to) {
+    const e = new Error('from and to must be provided together'); e.status = 400; throw e;
   }
 
   const preset = query.period || 'lastMonth';
@@ -3478,9 +3519,14 @@ function resolveReportPeriod(query = {}) {
 // rendering (window.reportReady flag), then returns the PDF buffer.
 app.get('/api/brand-report-pdf/:brandId', async (req, res) => {
   const { brandId } = req.params;
-  const period = req.query.period || 'last30d';
-  const from   = req.query.from || '';
-  const to     = req.query.to   || '';
+  const from     = req.query.from     || '';
+  const to       = req.query.to       || '';
+  const compFrom = req.query.compFrom || '';
+  const compTo   = req.query.compTo   || '';
+  // Only default the preset when there's no custom range. Setting `period`
+  // alongside from/to makes the page resolve the preset and ignore the dates,
+  // so the PDF would quietly cover a different period than what's on screen.
+  const period = (from && to) ? '' : (req.query.period || 'last30d');
 
   const puppeteer = require('puppeteer');
   let browser;
@@ -3494,9 +3540,12 @@ app.get('/api/brand-report-pdf/:brandId', async (req, res) => {
     // Build the in-app URL Puppeteer will navigate to. We hit localhost
     // (same Node process) so there's no network round-trip; auth bypassed.
     const port = process.env.PORT || 3000;
-    const params = new URLSearchParams({ brand: brandId, period, print: '1' });
-    if (from) params.set('from', from);
-    if (to)   params.set('to',   to);
+    const params = new URLSearchParams({ brand: brandId, print: '1' });
+    if (period) params.set('period', period);
+    if (from)   params.set('from', from);
+    if (to)     params.set('to',   to);
+    if (compFrom) params.set('compFrom', compFrom);
+    if (compTo)   params.set('compTo',   compTo);
     const url = `http://127.0.0.1:${port}/brand-report.html?${params}`;
 
     const execPath = await ensureBrowserInstalled();

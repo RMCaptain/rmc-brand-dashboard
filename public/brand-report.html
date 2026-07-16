@@ -80,6 +80,19 @@
     }
     .rpt-toolbar select:hover  { border-color: var(--border-hi); }
     .rpt-toolbar select:focus  { outline: none; border-color: var(--brand); }
+    /* Custom range controls — app chrome, so DARK theme tokens, not the
+       report's light paper palette. */
+    .tb-dates { display: inline-flex; align-items: center; gap: 8px; }
+    .tb-date {
+      background: var(--bg-input); border: 1px solid var(--border);
+      border-radius: var(--r-sm); padding: 7px 9px; font-size: 12px;
+      color: var(--text); font-family: 'Inter', sans-serif; cursor: pointer;
+      color-scheme: dark;   /* makes the native picker icon legible on dark */
+    }
+    .tb-date:hover { border-color: var(--border-hi); }
+    .tb-date:focus { outline: none; border-color: var(--brand); }
+    .tb-sep { color: var(--text-3); font-size: 12px; }
+    #applyDates:disabled { opacity: 0.45; cursor: default; }
     .rpt-toolbar select option { background: var(--bg-surface); color: var(--text); }
     .rpt-toolbar .spacer { flex: 1; }
     .rpt-toolbar .btn {
@@ -409,7 +422,28 @@
       <option value="last7d">Last 7 Days</option>
       <option value="last30d">Last 30 Days</option>
       <option value="last90d">Last 90 Days</option>
+      <option value="custom">Custom range…</option>
     </select>
+    <!-- Custom controls stay hidden until "Custom range…" is picked, so the
+         toolbar isn't cluttered for the presets that cover most reports. -->
+    <span id="customPeriod" class="tb-dates" style="display:none;">
+      <input type="date" id="fromDate" class="tb-date" />
+      <span class="tb-sep">→</span>
+      <input type="date" id="toDate" class="tb-date" />
+    </span>
+    <span id="compWrap" class="tb-dates" style="display:none;">
+      <label for="compSelect">vs</label>
+      <select id="compSelect">
+        <option value="auto" selected>Previous period</option>
+        <option value="custom">Custom range…</option>
+      </select>
+      <span id="customComp" class="tb-dates" style="display:none;">
+        <input type="date" id="compFromDate" class="tb-date" />
+        <span class="tb-sep">→</span>
+        <input type="date" id="compToDate" class="tb-date" />
+      </span>
+      <button class="btn-secondary" id="applyDates" type="button">Apply</button>
+    </span>
     <label for="savedSelect">History</label>
     <select id="savedSelect" title="Reports previously saved for this brand">
       <option value="" disabled selected>No saved reports</option>
@@ -489,9 +523,56 @@ window.addEventListener('resize', setStickyOffsets);
 const qs = new URLSearchParams(location.search);
 let currentBrand  = qs.get('brand')  || '';
 // Last full calendar month is the default: it's the report RMC actually sends brands.
-let currentPeriod = qs.get('period') || 'lastMonth';
+let currentPeriod = qs.get('period') || (qs.get('from') && qs.get('to') ? 'custom' : 'lastMonth');
 const PRINT_MODE  = qs.get('print') === '1';
 if (PRINT_MODE) document.body.classList.add('print-mode');
+
+// Custom range + custom comparison. Seeded from the URL so a custom report is
+// shareable, survives reload, and reaches the PDF renderer — which loads this
+// same page with ?print=1 and would otherwise silently fall back to a preset.
+let custom = {
+  from:     qs.get('from')     || '',
+  to:       qs.get('to')       || '',
+  compFrom: qs.get('compFrom') || '',
+  compTo:   qs.get('compTo')   || '',
+  compMode: (qs.get('compFrom') && qs.get('compTo')) ? 'custom' : 'auto',
+};
+
+/**
+ * The single source of truth for period params on every request.
+ *
+ * Every fetch used to hand-build `?period=${currentPeriod}`, which is exactly
+ * why the page ignored from/to: the server has accepted custom ranges all
+ * along, but nothing ever sent them. One builder, so a custom range can't reach
+ * some endpoints and quietly not others.
+ */
+function reportQuery(extra = {}) {
+  const p = new URLSearchParams();
+  if (currentPeriod === 'custom' && custom.from && custom.to) {
+    p.set('from', custom.from);
+    p.set('to',   custom.to);
+    if (custom.compMode === 'custom' && custom.compFrom && custom.compTo) {
+      p.set('compFrom', custom.compFrom);
+      p.set('compTo',   custom.compTo);
+    }
+  } else {
+    p.set('period', currentPeriod);
+  }
+  for (const [k, v] of Object.entries(extra)) p.set(k, v);
+  return p;
+}
+
+// A custom range is only usable once both ends are set.
+function customReady() {
+  if (currentPeriod !== 'custom') return true;
+  if (!custom.from || !custom.to) return false;
+  if (custom.from > custom.to) return false;
+  if (custom.compMode === 'custom') {
+    if (!custom.compFrom || !custom.compTo) return false;
+    if (custom.compFrom > custom.compTo) return false;
+  }
+  return true;
+}
 
 // Must track REPORT_SCHEMA_VERSION in server.js. A snapshot stamped with a
 // different version was saved under an older report format.
@@ -1314,8 +1395,15 @@ async function init() {
     periodSel.value = currentPeriod;
     periodSel.addEventListener('change', () => {
       currentPeriod = periodSel.value; currentSavedId = null;
-      $('savedSelect').value = ''; updateUrl(); render();
+      $('savedSelect').value = '';
+      syncCustomControls();
+      // A half-filled custom range would 400 the dataset; wait for Apply.
+      if (currentPeriod === 'custom' && !customReady()) { updateUrl(); return; }
+      updateUrl(); render();
     });
+
+    wireCustomDates();
+    syncCustomControls();
 
     const savedSel = $('savedSelect');
     if (savedSel) savedSel.addEventListener('change', () => {
@@ -1436,7 +1524,7 @@ async function saveReport() {
   const label = btn.textContent;
   btn.disabled = true; btn.textContent = 'Saving…';
   try {
-    const res = await fetch(`/api/brand-report-archives/${encodeURIComponent(currentBrand)}?period=${encodeURIComponent(currentPeriod)}`,
+    const res = await fetch(`/api/brand-report-archives/${encodeURIComponent(currentBrand)}?${reportQuery()}`,
       { method: 'POST', credentials: 'include' });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
@@ -1458,7 +1546,7 @@ async function generatePdf() {
   btn.disabled = true;
   btn.textContent = 'Generating…';
   try {
-    const url = `/api/brand-report-pdf/${encodeURIComponent(currentBrand)}?period=${encodeURIComponent(currentPeriod)}`;
+    const url = `/api/brand-report-pdf/${encodeURIComponent(currentBrand)}?${reportQuery()}`;
     const res = await fetch(url, { credentials: 'include' });
     if (!res.ok) {
       const errBody = await res.json().catch(() => ({}));
@@ -1483,8 +1571,55 @@ async function generatePdf() {
   }
 }
 
+// Show/hide the custom controls to match state, and reflect current values.
+function syncCustomControls() {
+  const isCustom = currentPeriod === 'custom';
+  const cp = $('customPeriod'), cw = $('compWrap'), cc = $('customComp');
+  if (!cp) return;
+  cp.style.display = isCustom ? '' : 'none';
+  cw.style.display = isCustom ? '' : 'none';
+  cc.style.display = (isCustom && custom.compMode === 'custom') ? '' : 'none';
+
+  $('fromDate').value     = custom.from     || '';
+  $('toDate').value       = custom.to       || '';
+  $('compFromDate').value = custom.compFrom || '';
+  $('compToDate').value   = custom.compTo   || '';
+  $('compSelect').value   = custom.compMode;
+
+  const apply = $('applyDates');
+  if (apply) {
+    const ready = customReady();
+    apply.disabled = !ready;
+    apply.title = ready ? 'Render this range' : 'Pick a start and end date (start must be on or before end)';
+  }
+}
+
+function wireCustomDates() {
+  const ids = { fromDate:'from', toDate:'to', compFromDate:'compFrom', compToDate:'compTo' };
+  for (const [id, key] of Object.entries(ids)) {
+    const el = $(id);
+    if (el) el.addEventListener('change', () => { custom[key] = el.value; syncCustomControls(); });
+  }
+  const compSel = $('compSelect');
+  if (compSel) compSel.addEventListener('change', () => {
+    custom.compMode = compSel.value;
+    syncCustomControls();
+    // Switching back to "Previous period" needs no extra input — apply it now.
+    if (custom.compMode === 'auto' && customReady()) { updateUrl(); render(); }
+  });
+  const apply = $('applyDates');
+  // Explicit Apply, not render-on-change: a date input fires mid-typing, and
+  // each render is a full dataset query.
+  if (apply) apply.addEventListener('click', () => {
+    if (!customReady()) return;
+    currentSavedId = null;
+    $('savedSelect').value = '';
+    updateUrl(); render();
+  });
+}
+
 function updateUrl() {
-  const params = new URLSearchParams({ brand: currentBrand, period: currentPeriod });
+  const params = reportQuery({ brand: currentBrand });
   if (currentSavedId) params.set('saved', currentSavedId);
   history.replaceState({}, '', `${location.pathname}?${params}`);
 }
@@ -1494,6 +1629,10 @@ let currentYtdChart = null;
 let currentAdChart  = null;
 let revenuePieChart = null;
 async function render() {
+  // Cleared for the duration: the flag means "this render is complete", and a
+  // stale true lets anything waiting on it read the PREVIOUS report's DOM.
+  // Puppeteer's PDF path waits on this.
+  window.reportReady = false;
   $('loading').style.display = 'flex';
   $('report').style.display = 'none';
 
@@ -1517,7 +1656,7 @@ async function render() {
       $('snapshotBanner').style.display = 'flex';
     } else {
       $('snapshotBanner').style.display = 'none';
-      const res = await fetch(`/api/brand-report-dataset/${encodeURIComponent(currentBrand)}?period=${encodeURIComponent(currentPeriod)}`, { credentials: 'include' });
+      const res = await fetch(`/api/brand-report-dataset/${encodeURIComponent(currentBrand)}?${reportQuery()}`, { credentials: 'include' });
       if (!res.ok) throw new Error(`Endpoint returned ${res.status}`);
       d = await res.json();
     }
