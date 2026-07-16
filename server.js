@@ -2727,6 +2727,41 @@ app.post('/api/ads/sync-structure', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Data Dive (read-only) ────────────────────────────────────────────────────
+// Rank Radar + niche keyword snapshots per brand, synced weekly by
+// sync/datadive.js. Serves the team skills' keyword tiers and rank checks.
+app.get('/api/datadive/:brandId', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('datadive_snapshots')
+      .select('kind,key,asin,meta,payload,pulled_at')
+      .eq('brand_id', req.params.brandId);
+    if (error) throw new Error(error.message);
+    if (!data || data.length === 0) {
+      return res.status(404).json({ error: 'no Data Dive snapshots for this brand — radar ASINs may not map to it, or the sync has not run (POST /api/datadive/sync)' });
+    }
+    res.json({
+      brandId: req.params.brandId,
+      radars: data.filter(d => d.kind === 'radar'),
+      nicheKeywords: data.filter(d => d.kind === 'niche_keywords'),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/datadive/sync', async (req, res) => {
+  if (process.env.SYNC_ENABLED !== 'true') return res.status(403).json({ error: 'SYNC_ENABLED is false' });
+  const { ddEnabled } = require('./sync/datadive');
+  if (!ddEnabled()) return res.status(400).json({ error: 'DATADIVE_API_KEY not set' });
+  res.json({ status: 'started', note: 'Read-only pull. Verify via GET /api/datadive/:brandId.' });
+  setImmediate(async () => {
+    try {
+      const { syncDataDive } = require('./sync/datadive');
+      const { brands } = await loadBrands();
+      const r = await syncDataDive(supabase, brands);
+      console.log('[DataDive] Done:', JSON.stringify(r));
+    } catch (e) { console.error('[DataDive] Manual sync error:', e.message); }
+  });
+});
+
 // Manually trigger refund sync. Returns when complete (can take ~5-15 min depending
 // on how many fresh refund events). For ad-hoc runs after the initial schema migration.
 app.post('/api/refunds/sync', async (req, res) => {
@@ -5310,7 +5345,18 @@ function scheduleDailySync() {
       .catch(err => console.warn('[AdsStructure] cron error:', err.message));
   });
 
-  console.log('[AutoSync] Crons scheduled: sync 6am/9am/12pm UTC, Slack digest 7am UTC, Orders poll */15min, Orders hourly-rebuild :05, Yesterday-finalize 8:30 UTC, Backfill 8am UTC, Audit 9am UTC, AdsDaily 9:10 UTC + */2h :20, Refunds 9:15 UTC, Images backfill 10 UTC + :30 hourly refresh, AdsTerms Mon 11 UTC, AdsStructure 11:15 UTC');
+  // Data Dive snapshots: weekly Monday 11:45am UTC — read-only Rank Radar +
+  // niche keyword pulls per brand (skips cleanly if DATADIVE_API_KEY unset).
+  cron.schedule('45 11 * * 1', () => {
+    if (process.env.SYNC_ENABLED !== 'true') return;
+    const { syncDataDive, ddEnabled } = require('./sync/datadive');
+    if (!ddEnabled()) return;
+    console.log('[DataDive] Monday 11:45 UTC cron fired');
+    loadBrands().then(({ brands }) => syncDataDive(supabase, brands))
+      .catch(err => console.warn('[DataDive] cron error:', err.message));
+  });
+
+  console.log('[AutoSync] Crons scheduled: sync 6am/9am/12pm UTC, Slack digest 7am UTC, Orders poll */15min, Orders hourly-rebuild :05, Yesterday-finalize 8:30 UTC, Backfill 8am UTC, Audit 9am UTC, AdsDaily 9:10 UTC + */2h :20, Refunds 9:15 UTC, Images backfill 10 UTC + :30 hourly refresh, AdsTerms Mon 11 UTC, AdsStructure 11:15 UTC, DataDive Mon 11:45 UTC');
 
   // Load image cache at startup so first requests see images.
   refreshImagesCache().catch(err => console.warn('[Images] Startup load:', err.message));
