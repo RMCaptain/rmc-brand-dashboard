@@ -29,15 +29,18 @@ async function ddGet(path, params = {}) {
   return body;
 }
 
+// Responses arrive in a nested envelope: { data: { currentPage, hasNext, ..., data: [items] } }
+function unwrap(body) { return body && body.data !== undefined ? body.data : body; }
+
 async function listAllRankRadars() {
   const radars = [];
   let page = 1;
   for (;;) {
     const res = await ddGet('/v1/niches/rank-radars', { currentPage: page, pageSize: 100, status: 'ACTIVE' });
-    const items = res.items || res.data || res.rankRadars || (Array.isArray(res) ? res : []);
+    const env = unwrap(res) || {};
+    const items = Array.isArray(env.data) ? env.data : (Array.isArray(env) ? env : []);
     radars.push(...items);
-    const hasNext = res.hasNext ?? res.pagination?.hasNext ?? (items.length === 100);
-    if (!hasNext || items.length === 0) break;
+    if (!env.hasNext || items.length === 0) break;
     page++;
   }
   return radars;
@@ -74,7 +77,7 @@ async function syncDataDive(supabase, brands, { windowDays = 35 } = {}) {
 
     let payload;
     try {
-      payload = await ddGet(`/v1/niches/rank-radars/${encodeURIComponent(radarId)}`, { startDate, endDate });
+      payload = unwrap(await ddGet(`/v1/niches/rank-radars/${encodeURIComponent(radarId)}`, { startDate, endDate }));
     } catch (e) {
       console.warn(`[DataDive] radar ${radarId} (${asin}): ${e.message}`);
       continue;
@@ -95,7 +98,7 @@ async function syncDataDive(supabase, brands, { windowDays = 35 } = {}) {
   let nichesStored = 0;
   for (const [nicheId, brandId] of nicheIds) {
     try {
-      const payload = await ddGet(`/v1/niches/${encodeURIComponent(nicheId)}/keywords`);
+      const payload = unwrap(await ddGet(`/v1/niches/${encodeURIComponent(nicheId)}/keywords`));
       const { error } = await supabase.from('datadive_snapshots').upsert({
         kind: 'niche_keywords',
         key: String(nicheId),
@@ -110,6 +113,25 @@ async function syncDataDive(supabase, brands, { windowDays = 35 } = {}) {
     } catch (e) {
       console.warn(`[DataDive] niche ${nicheId} keywords: ${e.message}`);
     }
+  }
+
+  // Radar list items don't carry a nicheId (confirmed 2026-07-15), so niche
+  // keyword lists can't auto-map to brands yet. Store the raw niche list once
+  // per sync so a manual brand→niche mapping can be added later.
+  try {
+    const nichePage = unwrap(await ddGet('/v1/niches', { currentPage: 1, pageSize: 100 }));
+    const { error } = await supabase.from('datadive_snapshots').upsert({
+      kind: 'niche_list',
+      key: 'all',
+      brand_id: null,
+      asin: null,
+      meta: { total: nichePage?.total ?? null },
+      payload: nichePage,
+      pulled_at: new Date().toISOString(),
+    }, { onConflict: 'kind,key' });
+    if (error) throw new Error(error.message);
+  } catch (e) {
+    console.warn(`[DataDive] niche list: ${e.message}`);
   }
 
   console.log(`[DataDive] Stored ${stored} radar snapshots, ${nichesStored} niche keyword lists`);
