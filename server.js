@@ -464,19 +464,25 @@ app.put('/api/brands/:id/asins/:asin/cogs-marketplace', async (req, res) => {
   res.json({ success: true });
 });
 
-// PUT set COGS (cost per unit) for an ASIN
+// DEPRECATED 2026-07-15. This wrote brand.cogs — a single COGS value per ASIN,
+// with no marketplace dimension. COGS is per-marketplace (CA in CAD, US in
+// USD), so one value can't be right for a brand selling in both.
+//
+// Every reader already prefers brand.cogsPerMarketplace and treats brand.cogs
+// as a fallback (brand.html calls it `legacyCogs`). It's 0/419 account-wide —
+// nothing has ever been written through here.
+//
+// Gone rather than fixed: it was one of two ways to enter COGS, and the wrong
+// one. Its only live caller was cogs.html, an orphaned page nothing linked to.
+// Leaving it would keep a trap where entering 419 values through the wrong
+// screen silently lands them in a deprecated field.
+//
+// Enter COGS via the Products page (per-marketplace inputs) or the bulk CSV.
+// brand.cogs is still READ as a fallback in case legacy data ever appears.
 app.put('/api/brands/:id/asins/:asin/cogs', async (req, res) => {
-  const { cost } = req.body;
-  if (cost == null || isNaN(cost) || cost < 0) return res.status(400).json({ error: 'Invalid cost value' });
-
-  const data = await loadBrands();
-  const brand = data.brands.find(b => b.id === req.params.id);
-  if (!brand) return res.status(404).json({ error: 'Brand not found' });
-
-  brand.cogs = brand.cogs || {};
-  brand.cogs[req.params.asin.toUpperCase()] = Number(cost);
-  await saveBrands(data);
-  res.json({ success: true });
+  res.status(410).json({
+    error: 'Deprecated: COGS is per-marketplace. Use PUT /api/brands/:id/asins/:asin/cogs-marketplace with { marketplace: "CA"|"US", cost }, the Products page, or the bulk CSV.',
+  });
 });
 
 // PUT set buy cost (supplier invoice price) for an ASIN

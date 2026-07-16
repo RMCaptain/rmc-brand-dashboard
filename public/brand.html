@@ -263,17 +263,9 @@
       });
     }
 
-    async function saveCogs(brandId, asin, cost) {
-      await fetch(`/api/brands/${brandId}/asins/${asin}/cogs`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cost: Number(cost) })
-      });
-      if (brandCache) {
-        brandCache.cogs = brandCache.cogs || {};
-        brandCache.cogs[asin] = Number(cost);
-      }
-    }
+    // saveCogs() removed 2026-07-15: wrote the single-value legacy COGS field
+    // and was never wired to anything. COGS is per-marketplace — edit it on the
+    // Products page or via the bulk CSV.
 
     async function saveLeadTime(brandId, asin, days) {
       await fetch(`/api/brands/${brandId}/asins/${asin}/leadtime`, {

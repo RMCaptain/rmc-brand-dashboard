@@ -600,15 +600,9 @@
       }
     }
 
-    async function saveCogs(brandId, asin, value) {
-      const cost = parseFloat(value);
-      if (isNaN(cost) || cost < 0) return;
-      await fetch(`/api/brands/${brandId}/asins/${asin}/cogs`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cost })
-      });
-      patchBrand(brandId, 'cogs', asin, cost);
-    }
+    // saveCogs() removed 2026-07-15: it wrote the single-value legacy COGS
+    // field and was never wired to anything. COGS is per-marketplace — the CA
+    // and US inputs use saveCogsMarketplace above.
 
     async function saveUpc(brandId, asin, upc) {
       await fetch(`/api/brands/${brandId}/asins/${asin}/upc`, {

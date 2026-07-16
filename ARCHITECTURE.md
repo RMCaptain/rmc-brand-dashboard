@@ -22,7 +22,6 @@
 | `products.html` | ASIN-level data, COGS + buy cost entry |
 | `po.html` | PO builder — generates Excel purchase orders |
 | `admin.html` | ASIN remapping / bulk editor |
-| `cogs.html` | COGS management |
 
 ## Data Flow
 
