@@ -387,3 +387,47 @@ input[type=number] { -moz-appearance: textfield; }
 .profit-row .label  { color: #cbd5e1; font-size: 13px; font-weight: 500; }
 .profit-row .value  { font-size: 14px; font-weight: 700; }
 .more-section       { border-top: 1px solid var(--border); margin-top: 8px; padding-top: 8px; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   MOBILE (≤640px). Added 2026-07-16 — the app was desktop-first and every
+   page overflowed horizontally at phone width. Shared here so the nav fix
+   lands on every page at once.
+   ══════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 640px) {
+  /* Never let anything force the page wider than the screen. This is the
+     backstop; the rules below fix the specific offenders so content stays
+     usable rather than just clipped. */
+  html, body { max-width: 100%; overflow-x: hidden; }
+
+  /* ── Nav ──────────────────────────────────────────────────────────────
+     104px logo + 5 links + currency + sync never fit 390px. Shrink the
+     logo, tighten padding, and let the LINK row scroll horizontally within
+     the nav instead of pushing the page wide. */
+  .rmc-nav > div { padding-left: 14px !important; padding-right: 14px !important;
+                   padding-top: 10px !important; padding-bottom: 10px !important;
+                   gap: 10px; }
+  .rmc-nav > div > div { min-width: 0; }              /* allow children to shrink */
+  .nav-logo img { height: 40px; }
+  .rmc-nav .flex.gap-1 {                              /* the nav-link row */
+    overflow-x: auto; -webkit-overflow-scrolling: touch;
+    scrollbar-width: none; flex-wrap: nowrap;
+  }
+  .rmc-nav .flex.gap-1::-webkit-scrollbar { display: none; }
+  .nav-link { padding: 6px 10px; font-size: 13px; }
+
+  /* ── Page content gutters ─────────────────────────────────────────────
+     max-w-screen-2xl containers use px-6/px-8 (up to 2rem each side) —
+     32px of the 390px screen gone to padding. Tighten to 14px. */
+  .max-w-screen-2xl { padding-left: 14px !important; padding-right: 14px !important; }
+
+  /* ── Wide tables ──────────────────────────────────────────────────────
+     Most data tables already sit in .overflow-x-auto wrappers, so they
+     scroll within their own box. Do NOT constrain the table width — that
+     compresses columns to fit instead of scrolling, which is worse. This
+     class is for tables that lack a wrapper (the brand report's do). */
+  .mobile-scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+  /* ── Button / toolbar rows ────────────────────────────────────────────
+     Action rows (Save / PDF / Download …) wrap instead of overflowing. */
+  .mobile-wrap { flex-wrap: wrap !important; }
+}

@@ -389,6 +389,25 @@
     /* Footer */
     .rpt-footer { padding: 16px 24px; font-size: 11px; color: var(--text-3); display: flex; justify-content: space-between; align-items: center; }
     .rpt-footer strong { color: var(--green); }
+
+    /* ── Mobile (≤640px, screen only) ──────────────────────────────────────
+       Report tables (Top Sellers, Per-ASIN) have no scroll wrapper, so on a
+       phone they'd clip. display:block + overflow-x makes each scroll inside
+       itself. Scoped to screen — print renders at page width, so the max-width
+       query never hits the PDF and full tables still print. */
+    @media screen and (max-width: 640px) {
+      .rpt-table, .per-asin-table {
+        display: block; overflow-x: auto; -webkit-overflow-scrolling: touch;
+        white-space: nowrap;
+      }
+      .rpt-header { flex-direction: column; gap: 12px; }
+      .rpt-header-meta { text-align: left; }
+      .rpt-logo { height: 64px; }
+      .tiles { grid-template-columns: 1fr 1fr; }   /* 2-up tiles instead of 3 */
+      .rpt-section { padding: 16px 14px; }
+      /* Toolbar wraps instead of overflowing (period/history/save/PDF row). */
+      .rpt-toolbar { flex-wrap: wrap; gap: 8px; }
+    }
   </style>
 </head>
 <body>
