@@ -646,12 +646,47 @@ function getPresetRanges() {
   // Keep to 5 core presets × 2 markets = 10 S&T reports per sync.
   // Wider ranges (last60d, last90d, ytd) burn API quota fast and rarely add
   // actionable insight over last30d. Add them back if quota allows.
+  //
+  // This cap is about the S&T *API*. Do NOT reuse it for anything reading
+  // daily_metrics — see getAllPresetRanges().
   return {
     yesterday:  r(yest,                          yest,            'Yesterday'),
     last7d:     r(pstSubtractDays(yest, 6),      yest,            'Last 7 Days'),
     last30d:    r(pstSubtractDays(yest, 29),     yest,            'Last 30 Days'),
     mtd:        r(thisMonthStart,                yest,            'Month to Date'),
     lastMonth:  r(lastMonthStart,                lastMonthEndDate,'Last Month'),
+  };
+}
+
+/**
+ * Every preset the UI offers — including the four the S&T sync skips.
+ *
+ * The 5-preset cap above exists to limit S&T API reports per sync. Anything
+ * rebuilding from daily_metrics is a database query: zero API calls, so the cap
+ * doesn't apply and inheriting it just leaves presets stale.
+ *
+ * It did exactly that. last14d/last60d/last90d/ytd are offered in the UI but
+ * were dropped from the sync for quota, and the daily_metrics rebuild reused
+ * getPresetRanges() — so those four were never corrected and sat at $0 for
+ * every brand, permanently, while looking like real reported figures.
+ */
+function getAllPresetRanges() {
+  const todayPst = pstDateStr();
+  const yest     = pstSubtractDays(todayPst, 1);
+  const [ty, tm] = todayPst.split('-').map(Number);
+  const yearStart = `${String(ty).padStart(4, '0')}-01-01`;
+
+  function r(startDate, endDate, label) {
+    const s = startDate > yest ? yest : startDate;
+    return { start: pstMidnightAsUTC(s), end: pstEndOfDayAsUTC(endDate), startDate: s, endDate, label };
+  }
+
+  return {
+    ...getPresetRanges(),
+    last14d: r(pstSubtractDays(yest, 13), yest, 'Last 14 Days'),
+    last60d: r(pstSubtractDays(yest, 59), yest, 'Last 60 Days'),
+    last90d: r(pstSubtractDays(yest, 89), yest, 'Last 90 Days'),
+    ytd:     r(yearStart,                 yest, 'Year to Date'),
   };
 }
 
@@ -1753,4 +1788,4 @@ async function fetchListingPrices(keys, mpId, token, { byType = 'Sku' } = {}) {
   return out;
 }
 
-module.exports = { syncBrandMetrics, importBrandsFromAmazon, fetchUpcsForAsins, fetchFinancialEvents, enrichListingHealth, scrapeSellerNames, fetchStrandedInventory, getAccessToken, spRequest, getMarketplaceIds, MARKETPLACE_CODE, sleep, createReport, waitForReport, downloadReport, fetchListingPrices, getPresetRanges };
+module.exports = { syncBrandMetrics, importBrandsFromAmazon, fetchUpcsForAsins, fetchFinancialEvents, enrichListingHealth, scrapeSellerNames, fetchStrandedInventory, getAccessToken, spRequest, getMarketplaceIds, MARKETPLACE_CODE, sleep, createReport, waitForReport, downloadReport, fetchListingPrices, getPresetRanges, getAllPresetRanges };

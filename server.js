@@ -39,6 +39,10 @@ const supabase = createClient(
 
 // In-memory sync state (resets on redeploy, which is fine)
 let syncState = { status: 'idle', lastSync: null, error: null };
+// Whether the last sync's preset rebuild succeeded. It's the step that makes
+// brand figures correct, so its failure is worth surfacing on /api/sync/status
+// rather than only in a log line.
+let presetRebuildState = { ok: null, at: null, error: null };
 
 app.use(cors());
 
@@ -1905,7 +1909,10 @@ app.post('/api/sync', (req, res) => {
 });
 
 app.get('/api/sync/status', (req, res) => {
-  res.json(syncState);
+  // presetRebuild rides along: a sync can report "done" while the rebuild that
+  // makes the numbers correct failed, which is exactly how every brand card sat
+  // at $0 unnoticed on 2026-07-15.
+  res.json({ ...syncState, presetRebuild: presetRebuildState });
 });
 
 // One-time patch: re-derive preset-level adSpend from brand adSummary already in Supabase
@@ -3059,8 +3066,12 @@ app.get('/api/metrics', async (req, res) => {
 // orders (not yet in daily_metrics) and metadata (titles, image URLs) are
 // preserved from the existing cache.
 async function rebuildPresetSummariesFromDaily(tag = 'PresetRebuild') {
-  const { getPresetRanges } = require('./sync/amazon');
-  const ranges = getPresetRanges();
+  // ALL presets, not getPresetRanges()' five. That cap limits S&T API reports
+  // per sync; this reads daily_metrics, so it costs nothing extra. Reusing the
+  // cap left last14d/last60d/last90d/ytd — all offered in the UI — permanently
+  // at $0 for every brand, looking like real reported figures.
+  const { getAllPresetRanges } = require('./sync/amazon');
+  const ranges = getAllPresetRanges();
 
   const existingPm = await loadPresetMetrics();
   const updatedPresets = { ...(existingPm.presets || {}) };
@@ -4972,10 +4983,29 @@ async function runFullSync(tag = 'Sync') {
     // Overlay corrected per-brand summaries from daily_metrics. The S&T-sourced
     // build above silently fails for many brands (e.g. brand card $0 bug); this
     // rebuild aligns preset_metrics with the live daily_metrics source of truth.
+    //
+    // This is not an enhancement — it is what makes the numbers CORRECT. The
+    // save above has already published the S&T build's zeros, so if this step
+    // fails, every brand card reads $0 until the next sync happens to succeed.
+    // It stayed "non-fatal" with a console.warn nobody reads, and on 2026-07-15
+    // it failed and left all 15 brands at $0 across every preset. A silent
+    // safety net is not a safety net.
     try {
       await rebuildPresetSummariesFromDaily(`${tag}-PresetRebuild`);
+      presetRebuildState = { ok: true, at: new Date().toISOString(), error: null };
     } catch (rebuildErr) {
-      console.warn(`[${tag}] Preset rebuild from daily_metrics failed (non-fatal):`, rebuildErr.message);
+      presetRebuildState = { ok: false, at: new Date().toISOString(), error: rebuildErr.message };
+      console.error(`[${tag}] PRESET REBUILD FAILED — brand cards will read $0 until this succeeds:`, rebuildErr.message);
+      // Surface it where someone will actually see it, rather than in a log.
+      try {
+        if (process.env.SLACK_WEBHOOK_URL) {
+          await fetch(process.env.SLACK_WEBHOOK_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: `:rotating_light: *Preset rebuild failed* during ${tag}.\nBrand cards will show *$0 for all brands* until the next successful sync.\n\`${rebuildErr.message}\`` }),
+          });
+        }
+      } catch (_) { /* alerting must never break the sync */ }
     }
 
     syncState = { status: 'done', lastSync, error: null };
