@@ -4014,13 +4014,58 @@ async function getDataCoverage() {
     if (error) { console.warn('[Coverage] query failed:', error.message); return null; }
     return data?.[0]?.date || null;
   };
-  const [adsFrom, revenueFrom] = await Promise.all([
+  const ordersEarliest = async () => {
+    const { data, error } = await supabase
+      .from('daily_brand_orders').select('date').gt('order_count', 0)
+      .order('date', { ascending: true }).limit(1);
+    if (error) { console.warn('[Coverage] orders query failed:', error.message); return null; }
+    return data?.[0]?.date || null;
+  };
+  const [adsFrom, revenueFrom, ordersFrom] = await Promise.all([
     earliest('ad_clicks.gt.0,ad_impressions.gt.0,spend_cad.gt.0,spend_usd.gt.0'),
     earliest('revenue_cad.gt.0,revenue_usd.gt.0,units.gt.0'),
+    ordersEarliest(),
   ]);
-  const val = { adsFrom, revenueFrom };
+  const val = { adsFrom, revenueFrom, ordersFrom };
   _coverageCache = { at: Date.now(), val };
   return val;
+}
+
+/**
+ * Order counts for one brand over a date range, for AOV.
+ *
+ * Returns null-ish safely if daily_brand_orders is missing or empty, so AOV
+ * degrades to "—" rather than 500ing the report.
+ *
+ * `daysWithOrders` is what makes AOV honest: AOV = period revenue / period
+ * orders, so if orders cover fewer days than revenue does, the ratio inflates —
+ * full-month revenue over part-month orders. Zellies June read $54 mid-backfill
+ * vs $37 complete. The renderer compares this against the revenue day count and
+ * shows "—" when they don't line up. See coverageState() in brand-report.html.
+ */
+async function fetchBrandOrders(brandId, fromStr, toStr) {
+  try {
+    const { data, error } = await supabase
+      .from('daily_brand_orders')
+      .select('date, order_count, order_count_ca, order_count_us')
+      .eq('brand_id', brandId).gte('date', fromStr).lte('date', toStr);
+    if (error) {
+      if (/daily_brand_orders/i.test(String(error.message))) return null; // table not migrated
+      console.warn('[Orders] fetchBrandOrders failed:', error.message);
+      return null;
+    }
+    const days = new Set();
+    let total = 0, ca = 0, us = 0;
+    for (const r of (data || [])) {
+      const n = r.order_count || 0;
+      total += n; ca += r.order_count_ca || 0; us += r.order_count_us || 0;
+      if (n > 0) days.add(r.date);
+    }
+    return { orderCount: total, orderCountCa: ca, orderCountUs: us, daysWithOrders: days.size };
+  } catch (e) {
+    console.warn('[Orders] fetchBrandOrders threw:', e.message);
+    return null;
+  }
 }
 
 async function buildBrandReportDataset(brandId, query = {}) {
@@ -4150,11 +4195,19 @@ async function buildBrandReportDataset(brandId, query = {}) {
     }
 
     const wantYtd = !hiddenSet.has('ytd_chart');
-    const [dailySeries, dailySeriesPrev, ytd] = await Promise.all([
+    const [dailySeries, dailySeriesPrev, ytd, orders, ordersPrev] = await Promise.all([
       fetchDailySeries(fromStr,    toStr),
       fetchDailySeries(compFromStr, compToStr),
       wantYtd ? fetchYtdSeries() : Promise.resolve({ current: [], prior: [] }),
+      fetchBrandOrders(brandId, fromStr,     toStr),
+      fetchBrandOrders(brandId, compFromStr, compToStr),
     ]);
+
+    // Days of revenue in each period — the denominator AOV coverage is checked
+    // against. A day with revenue but no orders (or vice versa) is the mismatch
+    // that inflates AOV, so both are counted the same way (days with activity).
+    const revenueDays     = new Set((dailySeries     || []).filter(d => (d.revCad + d.revUsd) > 0).map(d => d.date)).size;
+    const revenueDaysPrev = new Set((dailySeriesPrev || []).filter(d => (d.revCad + d.revUsd) > 0).map(d => d.date)).size;
 
     // ── 6. Assemble
     return {
@@ -4187,6 +4240,15 @@ async function buildBrandReportDataset(brandId, query = {}) {
       dailySeriesPrev,
       ytdSeries:     ytd.current,
       ytdSeriesPrev: ytd.prior,
+      // Order counts + the day-coverage the renderer needs to decide whether AOV
+      // is honest for this period. revenueDays is the denominator to match.
+      orders: orders ? {
+        count: orders.orderCount, countCa: orders.orderCountCa, countUs: orders.orderCountUs,
+        daysWithOrders: orders.daysWithOrders, revenueDays,
+      } : null,
+      ordersPrev: ordersPrev ? {
+        count: ordersPrev.orderCount, daysWithOrders: ordersPrev.daysWithOrders, revenueDays: revenueDaysPrev,
+      } : null,
       // Lets the renderer tell "no data" apart from "zero" — see getDataCoverage.
       coverage: await getDataCoverage(),
       generatedAt: new Date().toISOString(),

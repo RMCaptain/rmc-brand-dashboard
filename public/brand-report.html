@@ -647,6 +647,56 @@ function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 }
 
+// Average order value — the tile that fills the 6th headline slot.
+//
+// AOV = period revenue / period orders. The trap: if orders cover fewer days
+// than revenue does (a backfill still in flight, or the period predates order
+// tracking), full-period revenue divides by part-period orders and the number
+// inflates — Zellies June read $54 mid-backfill vs $37 complete. So this refuses
+// to show a number unless order-day coverage matches revenue-day coverage, and
+// otherwise renders "—" with a reason. Same discipline as the ad + YTD sections.
+//
+// AOV is blended CAD+USD to match the revenue tiles above it; order_count_ca/us
+// are in the dataset if a per-marketplace split is wanted later.
+function aovTile(d, tile) {
+  const o = d.orders;
+  const revenue = (d.summary?.revenueCad || 0) + (d.summary?.revenueUsd || 0);
+
+  // No order data at all → period predates order tracking, or the table's empty.
+  if (!o || !o.count) {
+    const boundary = d.coverage?.ordersFrom;
+    const sub = (boundary && d.period?.from && d.period.from < boundary)
+      ? `No order data before ${fmtDay(boundary)}`
+      : 'Revenue ÷ orders';
+    return tile('Avg Order Value', '—', null, sub);
+  }
+
+  // Coverage mismatch → the ratio would be inflated. Don't show a wrong number.
+  if (o.daysWithOrders < o.revenueDays) {
+    return tile('Avg Order Value', '—', null,
+      `Partial order data (${o.daysWithOrders}/${o.revenueDays} days)`);
+  }
+
+  // Cents, not whole dollars: fmtC rounds, but $45.72 vs $46 matters for an
+  // order value — and it keeps AOV visibly distinct from the big revenue tiles.
+  const fmtAov = v => v == null || isNaN(v) ? '—'
+    : '$' + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  const aov = revenue / o.count;
+
+  // Prior-period delta only when the comparison period is itself fully covered,
+  // so an inflated prior AOV can't fabricate a swing.
+  const op = d.ordersPrev;
+  let change = null, prevSub = `${fmtN(o.count)} orders`;
+  if (op && op.count && op.daysWithOrders >= op.revenueDays) {
+    const prevRev = (d.summaryPrev?.revenueCad || 0) + (d.summaryPrev?.revenueUsd || 0);
+    const prevAov = prevRev / op.count;
+    change = pct(aov, prevAov);
+    prevSub = `Prior: ${fmtAov(prevAov)}`;
+  }
+  return tile('Avg Order Value', fmtAov(aov), change, prevSub);
+}
+
 // ── Section renderers ─────────────────────────────────────────────────────────
 const SECTION_TITLES = {
   executive_summary:   'Executive Summary',
@@ -723,6 +773,7 @@ const SECTION_RENDERERS = {
       ${tile('Sessions', fmtN(s.sessions), null, null)}
       ${tile('Conversion (CVR)', fmtPct(conv), null, 'Units ÷ sessions')}
       ${tile('Buy Box %', fmtPct(s.buyBox), null, 'Avg across products')}
+      ${aovTile(d, tile)}
     </div>`;
   },
 
