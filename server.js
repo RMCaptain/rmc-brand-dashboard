@@ -293,24 +293,26 @@ app.get('/api/brands/:id', async (req, res) => {
     Object.entries(pm.presets || {}).map(([k, v]) => [k, { label: v.label, startDate: v.startDate, endDate: v.endDate }])
   );
 
-  // Inbound inventory snapshot per ASIN — most recent non-null
-  // inventory_inbound value from daily_metrics. Used by the PO Builder so
-  // auto-suggested quantities subtract what's already on the way to Amazon
-  // (don't over-order what we already have in transit).
+  // Inventory snapshot per ASIN — most recent non-null on-hand + inbound from
+  // daily_metrics. The PO Builder subtracts BOTH from auto-suggested quantities:
+  // don't reorder what's already on the shelf (on-hand) or already in transit
+  // (inbound). On-hand and inbound are read independently — a row can have one
+  // without the other — so each takes its own newest-non-null value.
   const inboundByAsin = {};
+  const onHandByAsin = {};
   if (brand.asins?.length) {
     const todayPst = pstDateStr();
     const since = pstSubtractDays(todayPst, 14); // most recent 2 weeks is enough
     const { data: invRows } = await supabase
       .from('daily_metrics')
-      .select('asin,inventory_inbound,date')
+      .select('asin,inventory_inbound,inventory_on_hand,date')
       .in('asin', brand.asins)
       .gte('date', since)
       .order('date', { ascending: false });
     for (const r of (invRows || [])) {
-      if (r.inventory_inbound == null) continue;
-      // First (newest) non-null per ASIN wins; subsequent rows ignored
-      if (inboundByAsin[r.asin] == null) inboundByAsin[r.asin] = r.inventory_inbound;
+      // First (newest) non-null per ASIN wins; subsequent rows ignored.
+      if (inboundByAsin[r.asin] == null && r.inventory_inbound  != null) inboundByAsin[r.asin] = r.inventory_inbound;
+      if (onHandByAsin[r.asin]  == null && r.inventory_on_hand  != null) onHandByAsin[r.asin]  = r.inventory_on_hand;
     }
   }
 
@@ -320,6 +322,7 @@ app.get('/api/brands/:id', async (req, res) => {
     lastSync: pm.lastSync,
     presets: presetMeta,
     inboundByAsin,
+    onHandByAsin,
   });
 });
 

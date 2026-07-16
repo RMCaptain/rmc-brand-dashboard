@@ -510,17 +510,21 @@
         const reorderBuffer = brand.reorderBuffer ?? 30;
         const velocity = velocityMap[asin] || 0;
         const stockNumber = cfg.stockNumber || '';
-        // Subtract inbound (in-transit to Amazon) from the auto-suggested order qty —
-        // don't reorder what's already on the way.
+        // Order up to a target position of (leadTime + buffer) days of demand,
+        // then subtract what we already have: on-hand (on the shelf) AND inbound
+        // (in transit to Amazon). A product already carrying enough stock
+        // suggests zero. Buffer is in DAYS — velocity × buffer is the safety
+        // cushion you're left holding when a replenishment lands.
         const inbound = Number(brand.inboundByAsin?.[asin] || 0);
+        const onHand  = Number(brand.onHandByAsin?.[asin] || 0);
 
-        const rawQty = Math.max(0, velocity * (leadTime + reorderBuffer) - inbound);
+        const rawQty = Math.max(0, velocity * (leadTime + reorderBuffer) - inbound - onHand);
         let qty = 0;
         if (rawQty > 0 && casePack > 0) qty = Math.ceil(rawQty / casePack) * casePack;
         const cases = casePack > 0 ? Math.ceil(qty / casePack) : 0;
 
         const base = { stockNumber,
-          _velocity: velocity, _leadTime: leadTime, _reorderBuffer: reorderBuffer, _inbound: inbound };
+          _velocity: velocity, _leadTime: leadTime, _reorderBuffer: reorderBuffer, _inbound: inbound, _onHand: onHand };
 
         if (cfg.type === 'bundle' && cfg.components?.length > 0) {
           // Bundle header row — display only, stripped from download
@@ -758,8 +762,10 @@
 
       const total = (Number(line.quantity) || 0) * (Number(line.price) || 0);
       const totalFmt = total > 0 ? '$' + total.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
+      // Show the full working: target demand, then what's subtracted. Makes a
+      // "0" suggestion legible ("you already have enough") rather than a mystery.
       const velocityHint = line._velocity > 0
-        ? `title="${line._velocity.toFixed(2)} u/d × (${line._leadTime}d lead + ${line._reorderBuffer}d buffer)"`
+        ? `title="${line._velocity.toFixed(2)} u/d × (${line._leadTime}d lead + ${line._reorderBuffer}d buffer) − ${line._onHand || 0} on-hand − ${line._inbound || 0} inbound"`
         : '';
 
       const rowBg = line._type === 'bundle-component' ? 'style="background:rgba(79,70,229,0.04)"' : '';
@@ -1762,13 +1768,18 @@
         if (sku) velocity = (sku.units || 0) / days;
       }
 
-      const rawQty = velocity * (leadTime + reorderBuffer);
+      // Same order-up-to-target logic as the main table: subtract on-hand and
+      // inbound so a manually-added ASIN gets the same honest suggestion.
+      const inbound = Number(brand.inboundByAsin?.[asin] || 0);
+      const onHand  = Number(brand.onHandByAsin?.[asin] || 0);
+
+      const rawQty = Math.max(0, velocity * (leadTime + reorderBuffer) - inbound - onHand);
       let qty = 0;
       if (rawQty > 0 && casePack > 0) qty = Math.ceil(rawQty / casePack) * casePack;
       const cases = casePack > 0 ? Math.ceil(qty / casePack) : 0;
 
       const base = { stockNumber, wholesalePrice: '', discountPct: '',
-        _velocity: velocity, _leadTime: leadTime, _reorderBuffer: reorderBuffer };
+        _velocity: velocity, _leadTime: leadTime, _reorderBuffer: reorderBuffer, _inbound: inbound, _onHand: onHand };
 
       if (cfg.type === 'bundle' && cfg.components?.length > 0) {
         lines.push({ ...base, _type: 'bundle-header', asin, description: title,
