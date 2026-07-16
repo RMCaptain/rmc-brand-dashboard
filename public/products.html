@@ -1176,10 +1176,15 @@
           const rows = parseCsv(e.target.result);
           if (rows.length < 2) throw new Error('CSV appears empty');
 
-          // Expected columns: Brand(0) ASIN(1) Title(2) SKU(3) UPC(4) LeadTime(5) CasePack(6) StockNum(7) SupplierName(8)
+          // Columns are matched by substring, not position, so an older
+          // template without Buy Cost still uploads fine.
           const header = rows[0].map(h => h.trim().toLowerCase());
           const col = name => header.findIndex(h => h.includes(name));
           const iAsin = col('asin'), iUpc = col('upc'), iLead = col('lead'), iCase = col('case'), iStock = col('stock'), iSupplier = col('supplier');
+          // 'buy' is unique to "Buy Cost (item only)" — no other header contains
+          // it. Buy Cost is the item cost; COGS is the landed cost (buy + prep,
+          // freight, customs). Different numbers, both needed.
+          const iBuy = col('buy');
           const iCogsCa = header.findIndex(h => h.includes('cogs') && h.includes('ca'));
           const iCogsUs = header.findIndex(h => h.includes('cogs') && h.includes('us'));
           const iCogs = iCogsCa >= 0 ? -1 : col('cogs');
@@ -1206,6 +1211,7 @@
             const newCase      = get(iCase);
             const newStock     = get(iStock);
             const newSupplier  = get(iSupplier);
+            const newBuy       = get(iBuy);
             const newCogsCa    = iCogsCa >= 0 ? get(iCogsCa) : get(iCogs);
             const newCogsUs    = iCogsUs >= 0 ? get(iCogsUs) : '';
 
@@ -1214,11 +1220,12 @@
             const curCase     = brand.casePacks?.[asin] != null ? String(brand.casePacks[asin]) : '';
             const curStock    = cfg.stockNumber || '';
             const curSupplier = cfg.supplierName || '';
+            const curBuy      = brand.buyCost?.[asin] != null ? String(brand.buyCost[asin]) : '';
             const curCogsCa   = brand.cogsPerMarketplace?.[asin]?.CA != null ? String(brand.cogsPerMarketplace[asin].CA) : (brand.cogs?.[asin] != null && brand.marketplace !== 'US' ? String(brand.cogs[asin]) : '');
             const curCogsUs   = brand.cogsPerMarketplace?.[asin]?.US != null ? String(brand.cogsPerMarketplace[asin].US) : (brand.cogs?.[asin] != null && brand.marketplace === 'US' ? String(brand.cogs[asin]) : '');
 
             const changed = (nv, cv) => nv !== '' && nv !== cv;
-            const hasChange = changed(newUpc, curUpc) || changed(newLead, curLead) || changed(newCase, curCase) || changed(newStock, curStock) || changed(newSupplier, curSupplier) || changed(newCogsCa, curCogsCa) || changed(newCogsUs, curCogsUs);
+            const hasChange = changed(newUpc, curUpc) || changed(newLead, curLead) || changed(newCase, curCase) || changed(newStock, curStock) || changed(newSupplier, curSupplier) || changed(newBuy, curBuy) || changed(newCogsCa, curCogsCa) || changed(newCogsUs, curCogsUs);
             if (!hasChange) continue;
 
             changes.push({
@@ -1229,6 +1236,7 @@
               casePack:     changed(newCase, curCase)         ? { old: curCase,     new: newCase }     : null,
               stockNumber:  changed(newStock, curStock)       ? { old: curStock,    new: newStock }    : null,
               supplierName: changed(newSupplier, curSupplier) ? { old: curSupplier, new: newSupplier } : null,
+              buyCost:      changed(newBuy, curBuy)           ? { old: curBuy,      new: newBuy }      : null,
               cogsCa:       changed(newCogsCa, curCogsCa)     ? { old: curCogsCa,   new: newCogsCa }   : null,
               cogsUs:       changed(newCogsUs, curCogsUs)     ? { old: curCogsUs,   new: newCogsUs }   : null,
             });
@@ -1260,7 +1268,7 @@
         return;
       }
 
-      const fieldCount = changes.reduce((n, c) => n + [c.upc, c.leadTime, c.casePack, c.stockNumber, c.supplierName, c.cogsCa, c.cogsUs].filter(Boolean).length, 0);
+      const fieldCount = changes.reduce((n, c) => n + [c.upc, c.leadTime, c.casePack, c.stockNumber, c.supplierName, c.buyCost, c.cogsCa, c.cogsUs].filter(Boolean).length, 0);
       countEl.textContent = `— ${changes.length} ASIN${changes.length !== 1 ? 's' : ''}, ${fieldCount} field${fieldCount !== 1 ? 's' : ''} will be updated`;
 
       const cell = (change) => {
@@ -1280,6 +1288,7 @@
           <td class="px-4 py-2.5 text-center text-xs">${cell(c.casePack)}</td>
           <td class="px-4 py-2.5 text-xs">${cell(c.stockNumber)}</td>
           <td class="px-4 py-2.5 text-xs">${cell(c.supplierName)}</td>
+          <td class="px-4 py-2.5 text-right text-xs">${cell(c.buyCost)}</td>
           <td class="px-4 py-2.5 text-right text-xs">${cell(c.cogsCa)}</td>
           <td class="px-4 py-2.5 text-right text-xs">${cell(c.cogsUs)}</td>
         </tr>`).join('');
@@ -1299,6 +1308,7 @@
           casePack:     c.casePack     ? c.casePack.new     : null,
           stockNumber:  c.stockNumber  ? c.stockNumber.new  : null,
           supplierName: c.supplierName ? c.supplierName.new : null,
+          buyCost:      c.buyCost      ? c.buyCost.new      : null,
           cogsCa:       c.cogsCa       ? c.cogsCa.new       : null,
           cogsUs:       c.cogsUs       ? c.cogsUs.new       : null,
         }));
@@ -1362,7 +1372,7 @@
         <div class="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center flex-shrink-0 mt-0.5">1</div>
         <div class="flex-1">
           <p class="text-sm font-medium mb-1" style="color:var(--text)">Download Template</p>
-          <p class="text-xs mb-3" style="color:var(--text-3)">Pre-filled with all your ASINs. <strong style="color:var(--text-2)">Edit only the last 6 columns</strong> — Brand, ASIN, Title, and SKU are read-only reference columns and will be ignored on upload. COGS (CA) = cost in CAD for Canadian marketplace; COGS (US) = cost in USD for US marketplace.</p>
+          <p class="text-xs mb-3" style="color:var(--text-3)">Pre-filled with all your ASINs. <strong style="color:var(--text-2)">Edit only the last 7 columns</strong> — Brand, ASIN, Title, and SKU are read-only reference columns and will be ignored on upload. <strong style="color:var(--text-2)">Buy Cost</strong> = item cost on the supplier invoice. <strong style="color:var(--text-2)">COGS</strong> = landed cost (buy cost + prep, freight, customs) — CA in CAD, US in USD. Blank cells are left unchanged, so you can fill one column at a time.</p>
           <a href="/api/bulk-template" download class="btn-ghost inline-flex items-center gap-2" style="font-size:12px;padding:6px 14px;text-decoration:none">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
@@ -1406,6 +1416,7 @@
                   <th class="text-center" style="min-width:130px">Case Pack Size (units)</th>
                   <th class="text-left" style="min-width:110px">Stock #</th>
                   <th class="text-left" style="min-width:160px">Supplier Product Name</th>
+                  <th class="text-right" style="min-width:90px">Buy Cost</th>
                   <th class="text-right" style="min-width:80px">COGS (CA)</th>
                   <th class="text-right" style="min-width:80px">COGS (US)</th>
                 </tr>

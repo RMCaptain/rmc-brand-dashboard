@@ -4733,7 +4733,12 @@ app.get('/api/bulk-template', async (req, res) => {
     const preset = pm.presets?.last30d || pm.presets?.[Object.keys(pm.presets || {})[0]];
     const brandMetrics = preset?.brands || {};
 
-    const headers = ['Brand', 'ASIN', 'Title', 'SKU', 'UPC', 'Lead Time (days)', 'Case Pack Size (units)', 'Stock #', 'Supplier Product Name', 'COGS (CA)', 'COGS (US)'];
+    // Buy Cost and COGS are DIFFERENT and both are needed (Mike, 2026-07-15):
+    // Buy Cost is the item cost on the supplier invoice; COGS is the landed
+    // cost — buy cost plus prep, freight, customs. Buy Cost was missing from
+    // this template, so it was the one field of the three that couldn't be
+    // filled from a spreadsheet: 341 ASINs, one at a time.
+    const headers = ['Brand', 'ASIN', 'Title', 'SKU', 'UPC', 'Lead Time (days)', 'Case Pack Size (units)', 'Stock #', 'Supplier Product Name', 'Buy Cost (item only)', 'COGS (CA)', 'COGS (US)'];
     const csvRows = [headers];
 
     for (const brand of brands.filter(b => b.id !== 'unknown-brand').sort((a, b) => a.name.localeCompare(b.name))) {
@@ -4751,6 +4756,7 @@ app.get('/api/bulk-template', async (req, res) => {
           brand.casePacks?.[asin] ?? '',
           cfg.stockNumber || '',
           cfg.supplierName || '',
+          brand.buyCost?.[asin] ?? '',
           brand.cogsPerMarketplace?.[asin]?.CA ?? brand.cogs?.[asin] ?? '',
           brand.cogsPerMarketplace?.[asin]?.US ?? ''
         ]);
@@ -4802,6 +4808,16 @@ app.post('/api/bulk-update', async (req, res) => {
         brand.asinConfig[asin] = brand.asinConfig[asin] || {};
         if (u.stockNumber != null) brand.asinConfig[asin].stockNumber = u.stockNumber;
         if (u.supplierName != null) brand.asinConfig[asin].supplierName = u.supplierName;
+      }
+      // Buy Cost = item cost on the supplier invoice. Distinct from COGS, which
+      // is the landed cost (buy cost + prep, freight, customs). Both are real
+      // and both are needed — do not collapse them.
+      if (u.buyCost !== '' && u.buyCost != null) {
+        const n = Number(u.buyCost);
+        if (!isNaN(n) && n >= 0) {
+          brand.buyCost = brand.buyCost || {};
+          brand.buyCost[asin] = n;
+        }
       }
       if (u.cogsCa !== '' && u.cogsCa != null) {
         brand.cogsPerMarketplace = brand.cogsPerMarketplace || {};
