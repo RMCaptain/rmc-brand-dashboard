@@ -79,8 +79,10 @@ git pull                                                # start on new machine
 Repo: https://github.com/RMCaptain/rmc-brand-dashboard
 
 ## Deploy
-Hosted on **Render** — https://rmc-brand-dashboard-1.onrender.com
+Hosted on **Render**. Primary URL: **https://app.rockymountainco.ca** (custom domain).
+Render origin still active: https://rmc-brand-dashboard-1.onrender.com (old bookmarks keep working).
 Plan: Starter ($7/month). Auto-deploys on push to `main`.
+`DASHBOARD_URL` env var (Render, sync:false) → `https://app.rockymountainco.ca/brands.html` — used for the Slack digest link.
 
 ```bash
 # Deploy = just push to GitHub:
