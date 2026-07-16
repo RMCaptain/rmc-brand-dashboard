@@ -984,6 +984,92 @@ app.get('/api/po-report/spend-by-brand', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Generalized PO spend report — same numbers, grouped by brand / month / PO.
+// spend-by-brand above stays for back-compat; this is what the toggle uses.
+// The three views differ only in the grouping key + label, so one query.
+app.get('/api/po-report/spend', async (req, res) => {
+  try {
+    const { from, to, status } = req.query;
+    const groupBy = ['brand', 'month', 'po'].includes(req.query.groupBy) ? req.query.groupBy : 'brand';
+
+    let pq = supabase
+      .from('purchase_orders')
+      .select('id, po_number, brand_id, brand_name, status, created_at, podate:data->>date')
+      .is('deleted_at', null);
+    if (status) pq = pq.eq('status', status);
+    const { data: pos, error: perr } = await pq;
+    if (perr) throw perr;
+
+    // Prefer the PO's own date; fall back to created_at so a PO with no date
+    // still lands in a month bucket rather than vanishing from the report.
+    const poDateOf = po => po.podate || (po.created_at ? po.created_at.split('T')[0] : null);
+    const inRange = (d) => (!from || (d && d >= from)) && (!to || (d && d <= to));
+    const poMeta = new Map();
+    for (const po of pos) {
+      if (inRange(poDateOf(po))) poMeta.set(po.id, po);
+    }
+
+    const lines = [];
+    for (let off = 0; ; off += 1000) {
+      const { data, error } = await supabase
+        .from('purchase_order_lines')
+        .select('po_id, line_type, extended_cost, quantity')
+        .range(off, off + 999);
+      if (error) throw error;
+      lines.push(...data);
+      if (data.length < 1000) break;
+    }
+
+    const fmtMonth = ym => {
+      const [y, m] = ym.split('-').map(Number);
+      return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' });
+    };
+    const keyOf = (po) => {
+      if (groupBy === 'month') { const d = poDateOf(po); return d ? d.slice(0, 7) : 'no-date'; }
+      if (groupBy === 'po')    return po.id;
+      return po.brand_id || 'unknown';
+    };
+    const labelOf = (po, key) => {
+      if (groupBy === 'month') return key === 'no-date' ? 'No date' : fmtMonth(key);
+      if (groupBy === 'po')    return `PO #${po.po_number ?? '—'}`;
+      return po.brand_name || 'Unknown';
+    };
+    const subOf = (po) => {
+      if (groupBy === 'po')    return `${po.brand_name || 'Unknown'} · ${poDateOf(po) || 'no date'}`;
+      return null;
+    };
+
+    const groups = new Map();
+    for (const ln of lines) {
+      const po = poMeta.get(ln.po_id);
+      if (!po) continue;
+      const key = keyOf(po);
+      if (!groups.has(key)) groups.set(key, { key, label: labelOf(po, key), sublabel: subOf(po), spend: 0, units: 0, poIds: new Set() });
+      const g = groups.get(key);
+      g.spend += Number(ln.extended_cost || 0);
+      if (ln.line_type !== 'bundle-header') g.units += Number(ln.quantity || 0);
+      g.poIds.add(ln.po_id);
+    }
+
+    let rows = [...groups.values()].map(g => ({
+      key: g.key, label: g.label, sublabel: g.sublabel, spend: g.spend, units: g.units, po_count: g.poIds.size,
+    }));
+    // Month reads chronologically (newest first); brand/PO by spend.
+    if (groupBy === 'month') rows.sort((a, b) => (a.key < b.key ? 1 : a.key > b.key ? -1 : 0));
+    else rows.sort((a, b) => b.spend - a.spend || b.units - a.units);
+
+    res.json({
+      groupBy, from: from || null, to: to || null, status: status || null,
+      groups: rows,
+      totals: {
+        spend: rows.reduce((s, r) => s + r.spend, 0),
+        units: rows.reduce((s, r) => s + r.units, 0),
+        po_count: new Set(lines.filter(l => poMeta.has(l.po_id)).map(l => l.po_id)).size,
+      },
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.put('/api/pos/:id', async (req, res) => {
   try {
     const { po_number, brand_id, brand_name, status, data } = req.body;

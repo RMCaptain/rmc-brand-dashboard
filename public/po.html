@@ -367,8 +367,16 @@
   <!-- Spend Report Modal (P3) -->
   <div id="spendModal" class="hidden fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center" onclick="closeSpendReport(event)">
     <div class="bg-slate-800 border border-slate-700 rounded-xl w-full max-w-2xl mx-4 shadow-2xl" onclick="event.stopPropagation()">
-      <div class="px-6 py-4 border-b border-slate-700 flex items-center justify-between gap-3">
-        <h2 class="text-sm font-semibold text-white">PO Spend by Brand</h2>
+      <div class="px-6 py-4 border-b border-slate-700 flex items-center justify-between gap-3 flex-wrap">
+        <div class="flex items-center gap-3">
+          <h2 class="text-sm font-semibold text-white">PO Spend</h2>
+          <!-- View toggle: same numbers, grouped differently. -->
+          <div class="flex items-center gap-0.5 bg-slate-900/60 rounded-lg p-0.5">
+            <button data-spend-group="brand" onclick="setSpendGroup('brand')" class="text-xs px-2.5 py-1 rounded-md transition-colors">Brand</button>
+            <button data-spend-group="month" onclick="setSpendGroup('month')" class="text-xs px-2.5 py-1 rounded-md transition-colors">Month</button>
+            <button data-spend-group="po" onclick="setSpendGroup('po')" class="text-xs px-2.5 py-1 rounded-md transition-colors">PO</button>
+          </div>
+        </div>
         <div class="flex items-center gap-1.5">
           <button data-spend-preset="ytd" onclick="setSpendPreset('ytd')" class="text-xs px-2.5 py-1 rounded-lg border border-slate-600 transition-colors">YTD</button>
           <button data-spend-preset="90d" onclick="setSpendPreset('90d')" class="text-xs px-2.5 py-1 rounded-lg border border-slate-600 transition-colors">90d</button>
@@ -1437,6 +1445,7 @@
 
     // ── Spend Report (P3) ──────────────────────────────────────────────────────
     let _spendPreset = 'ytd';
+    let _spendGroup = 'brand';
     const _ymd = (d) => d.toISOString().split('T')[0];
     function _spendRange(preset) {
       const today = new Date();
@@ -1451,11 +1460,22 @@
 
     function openSpendReport() {
       document.getElementById('spendModal').classList.remove('hidden');
-      setSpendPreset(_spendPreset);
+      setSpendGroup(_spendGroup);   // paints the group toggle + fetches
     }
     function closeSpendReport(e) {
       if (e && e.target !== document.getElementById('spendModal')) return;
       document.getElementById('spendModal').classList.add('hidden');
+    }
+
+    function setSpendGroup(group) {
+      _spendGroup = group;
+      document.querySelectorAll('[data-spend-group]').forEach(b => {
+        const on = b.dataset.spendGroup === group;
+        b.classList.toggle('bg-indigo-600', on);
+        b.classList.toggle('text-white', on);
+        b.classList.toggle('text-slate-400', !on);
+      });
+      setSpendPreset(_spendPreset);   // re-fetch with the new grouping
     }
 
     async function setSpendPreset(preset) {
@@ -1469,11 +1489,11 @@
       const body = document.getElementById('spendBody');
       body.innerHTML = '<div class="px-6 py-8 text-center text-sm text-slate-500">Loading…</div>';
       const { from, to } = _spendRange(preset);
-      const qs = new URLSearchParams();
+      const qs = new URLSearchParams({ groupBy: _spendGroup });
       if (from) qs.set('from', from);
       if (to) qs.set('to', to);
       try {
-        const res = await fetch(`/api/po-report/spend-by-brand?${qs}`);
+        const res = await fetch(`/api/po-report/spend?${qs}`);
         if (!res.ok) throw new Error('Failed to load report');
         renderSpendReport(await res.json());
       } catch (err) {
@@ -1483,16 +1503,19 @@
 
     function renderSpendReport(data) {
       const body = document.getElementById('spendBody');
-      if (!data.brands.length) {
+      const groups = data.groups || [];
+      const colLabel = { brand: 'Brand', month: 'Month', po: 'Purchase Order' }[data.groupBy] || 'Group';
+      if (!groups.length) {
         body.innerHTML = '<div class="px-6 py-8 text-center text-sm text-slate-500">No POs in this period.</div>';
         return;
       }
-      const rows = data.brands.map(b => `
+      const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+      const rows = groups.map(g => `
         <tr class="border-b border-slate-700/40">
-          <td class="px-4 py-2.5 text-sm text-white">${b.brand_name}</td>
-          <td class="px-4 py-2.5 text-sm text-slate-400 text-right">${b.po_count}</td>
-          <td class="px-4 py-2.5 text-sm text-slate-400 text-right">${_num(b.units)}</td>
-          <td class="px-4 py-2.5 text-sm font-medium text-slate-100 text-right">${_money(b.spend)}</td>
+          <td class="px-4 py-2.5 text-sm text-white">${esc(g.label)}${g.sublabel ? `<div class="text-xs text-slate-500">${esc(g.sublabel)}</div>` : ''}</td>
+          <td class="px-4 py-2.5 text-sm text-slate-400 text-right">${g.po_count}</td>
+          <td class="px-4 py-2.5 text-sm text-slate-400 text-right">${_num(g.units)}</td>
+          <td class="px-4 py-2.5 text-sm font-medium text-slate-100 text-right">${_money(g.spend)}</td>
         </tr>`).join('');
       const t = data.totals;
       const zeroHint = t.spend === 0
@@ -1502,7 +1525,7 @@
         <table class="w-full">
           <thead>
             <tr class="text-xs text-slate-500 border-b border-slate-700">
-              <th class="px-4 py-2 text-left font-medium">Brand</th>
+              <th class="px-4 py-2 text-left font-medium">${colLabel}</th>
               <th class="px-4 py-2 text-right font-medium">POs</th>
               <th class="px-4 py-2 text-right font-medium">Units</th>
               <th class="px-4 py-2 text-right font-medium">Spend</th>
