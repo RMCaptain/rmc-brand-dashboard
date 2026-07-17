@@ -46,6 +46,11 @@ let presetRebuildState = { ok: null, at: null, error: null };
 
 app.use(cors());
 
+// Remote MCP connector for claude.ai team chats (read-only dashboard tools).
+// Mounted BEFORE basicAuth: claude.ai can't send Basic Auth, so the secret URL
+// path is the credential. See mcp/mcp-server.js.
+require('./mcp/mcp-server').mountMcp(app);
+
 // HTTP Basic Auth — gates the entire dashboard. Skipped if AUTH_USERNAME / AUTH_PASSWORD
 // are unset (local dev). Temporary measure until Cloudflare Access (internal team) and
 // Supabase Auth (external brand portal) replace it.
