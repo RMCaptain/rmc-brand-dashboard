@@ -7,6 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/style.css" />
+  <script src="/mobile-nav.js" defer></script>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
@@ -407,6 +408,10 @@
       .rpt-section { padding: 16px 14px; }
       /* Toolbar wraps instead of overflowing (period/history/save/PDF row). */
       .rpt-toolbar { flex-wrap: wrap; gap: 8px; }
+      /* Charts already scale to container width (Chart.js responsive); trim the
+         fixed heights so they don't dominate a phone viewport. */
+      .chart-wrap { height: 200px; }
+      .pie-chart-box { height: 260px; }
     }
   </style>
 </head>

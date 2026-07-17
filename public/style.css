@@ -104,6 +104,9 @@ nav, main, div, section, form { position: relative; z-index: 1; }
 .nav-link:hover        { color: var(--text); background: rgba(255,255,255,0.06); }
 .nav-link.active       { color: var(--brand); background: var(--brand-tint); }
 
+/* Hamburger — hidden on desktop, shown ≤640px (see mobile block + mobile-nav.js) */
+.nav-hamburger { display: none; }
+
 /* ── Currency Toggle ───────────────────────────────────────────────────────── */
 .cur-toggle {
   display: flex;
@@ -408,12 +411,34 @@ input[type=number] { -moz-appearance: textfield; }
                    gap: 10px; }
   .rmc-nav > div > div { min-width: 0; }              /* allow children to shrink */
   .nav-logo img { height: 40px; }
-  .rmc-nav .flex.gap-1 {                              /* the nav-link row */
-    overflow-x: auto; -webkit-overflow-scrolling: touch;
-    scrollbar-width: none; flex-wrap: nowrap;
+
+  /* Hamburger button (injected by mobile-nav.js) */
+  .nav-hamburger {
+    display: inline-flex; flex-direction: column; justify-content: center;
+    align-items: stretch; gap: 4px;
+    width: 42px; height: 42px; padding: 11px 9px; flex-shrink: 0;
+    border: 1px solid var(--border); border-radius: var(--r-sm);
+    background: var(--bg-well); cursor: pointer;
   }
-  .rmc-nav .flex.gap-1::-webkit-scrollbar { display: none; }
-  .nav-link { padding: 6px 10px; font-size: 13px; }
+  .nav-hamburger span {
+    display: block; height: 2px; width: 100%; border-radius: 2px;
+    background: var(--text-2); transition: transform .2s ease, opacity .2s ease;
+  }
+  .rmc-nav.nav-open .nav-hamburger span:nth-child(1) { transform: translateY(6px) rotate(45deg); }
+  .rmc-nav.nav-open .nav-hamburger span:nth-child(2) { opacity: 0; }
+  .rmc-nav.nav-open .nav-hamburger span:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
+
+  /* Nav links collapse into a dropdown panel below the bar */
+  .rmc-nav .nav-menu {
+    display: none;
+    position: absolute; top: 100%; left: 0; right: 0;
+    flex-direction: column; gap: 2px;
+    background: var(--bg-surface); border-bottom: 1px solid var(--border);
+    padding: 8px 12px 12px;
+    box-shadow: 0 14px 28px rgba(0,0,0,0.45);
+  }
+  .rmc-nav.nav-open .nav-menu { display: flex; }
+  .rmc-nav .nav-menu .nav-link { padding: 12px 14px; font-size: 15px; border-radius: var(--r-sm); }
 
   /* ── Page content gutters ─────────────────────────────────────────────
      max-w-screen-2xl containers use px-6/px-8 (up to 2rem each side) —
@@ -430,4 +455,51 @@ input[type=number] { -moz-appearance: textfield; }
   /* ── Button / toolbar rows ────────────────────────────────────────────
      Action rows (Save / PDF / Download …) wrap instead of overflowing. */
   .mobile-wrap { flex-wrap: wrap !important; }
+
+  /* ── Touch targets ────────────────────────────────────────────────────
+     Apple/Google both recommend ≥44px. Bump interactive controls so they're
+     tappable without zooming. */
+  .btn-primary, .btn-ghost {
+    min-height: 44px; padding-top: 11px; padding-bottom: 11px; font-size: 14px;
+  }
+  .cur-btn { min-height: 34px; padding: 7px 12px; }
+  .preset-btn, .bp-btn, .view-tab { min-height: 34px; padding: 8px 14px; font-size: 12px; }
+  .rmc-input, .rmc-select { min-height: 44px; font-size: 16px; }  /* 16px stops iOS zoom-on-focus */
+  /* Icon/action buttons inside tables & cards get a real hit area */
+  .rmc-table button, .rmc-table a.btn-ghost { min-height: 36px; }
+
+  /* ── Spacing & density ────────────────────────────────────────────────
+     Desktop uses generous py-6/py-8; reclaim vertical space on phones. */
+  .max-w-screen-2xl, .max-w-screen-xl { padding-top: 12px !important; padding-bottom: 12px !important; }
+  .tile-row { gap: 10px; }
+  .rmc-card { border-radius: var(--r-sm); }
+
+  /* ── Typography floor ─────────────────────────────────────────────────
+     Nothing below 12px on mobile — the 11px table/label text is unreadable
+     at arm's length. */
+  .rmc-table th { font-size: 11px; }             /* headers can stay compact */
+  .rmc-table td { font-size: 13px; padding: 11px 12px; }  /* roomier rows, readable body */
+  .text-xs { font-size: 12px; }
+
+  /* ── Dense tables: pin the identity column, scroll the metrics ─────────
+     The dashboard/products tables carry 11-14 metric columns. Stacking each
+     row into a card makes them unscannable; instead we keep the first column
+     (product / brand) fixed while the numbers scroll horizontally — the
+     pattern Seller Central and Sellerboard use on phones. Every metric stays
+     reachable and you never lose track of which row you're reading. */
+  .rmc-table th:first-child,
+  .rmc-table td:first-child {
+    position: sticky; left: 0; z-index: 2;
+    background: var(--bg-surface);
+    box-shadow: 8px 0 12px -8px rgba(0,0,0,0.6);
+    /* Override desktop min-w-64 (256px) so the pinned column leaves room for
+       the metrics to scroll beside it. Selector beats the .min-w-64 utility. */
+    min-width: 130px; max-width: 172px;
+    white-space: normal;   /* let long product names wrap within the cap */
+  }
+  .rmc-table thead th:first-child { z-index: 3; }
+
+  /* Scroll affordance: a soft fade on the right edge of table scrollers so it
+     reads as "more columns this way". Pseudo sits on the wrapper, not scrolled. */
+  .overflow-x-auto { position: relative; }
 }
