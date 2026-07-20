@@ -51,9 +51,12 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     handler: async () => {
       const data = await localApi('/api/brands?preset=30d');
+      const brands = (data.brands || []).map(b => ({ id: b.id, name: b.name, marketplace: b.marketplace || 'CA' }));
       return {
         lastSync: data.lastSync,
-        brands: (data.brands || []).map(b => ({ id: b.id, name: b.name, marketplace: b.marketplace || 'CA' })),
+        count: brands.length,
+        note: 'This is the complete brand list — always present all of them, including internal buckets like unknown-brand and general-wholesale.',
+        brands,
       };
     },
   },
