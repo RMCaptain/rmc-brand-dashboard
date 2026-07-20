@@ -229,31 +229,50 @@ function parseSalesTrafficReport(jsonStr) {
   return result;
 }
 
+// Returns { byAsin, skus }.
+//
+// byAsin: one display record per ASIN, PREFERRING ACTIVE rows — ASINs commonly
+// carry several SKUs (relaunches, old listings, merged catalog entries) and the
+// old last-row-wins collapse could leave an Inactive SKU representing the ASIN.
+// That was the root of the inventory-shows-0 bug: B004EB5C6I's 417 units sat on
+// its Active SKU while an Inactive sibling SKU won the collapse and got queried
+// instead.
+//
+// skus: EVERY seller SKU in the report. Inventory must be fetched for all of
+// them — the FBA inventory response carries each SKU's true ASIN, so
+// parseInventoryItems aggregates correctly no matter how many SKUs an ASIN has.
 function parseListingsReport(tsvStr) {
   const lines = tsvStr.split('\n').filter(Boolean);
-  if (lines.length < 2) return {};
+  if (lines.length < 2) return { byAsin: {}, skus: [] };
 
   const headers = lines[0].split('\t').map(h => h.trim().toLowerCase());
   const col = name => headers.indexOf(name);
 
-  const result = {};
+  const byAsin = {};
+  const skus = new Set();
   for (const line of lines.slice(1)) {
     const cols = line.split('\t');
+    const sku  = cols[col('seller-sku')]?.trim() || '';
+    if (sku) skus.add(sku);
+
     const asin = cols[col('asin1')]?.trim();
     if (!asin) continue;
+    const status = (cols[col('status')]?.trim() || 'unknown').toLowerCase();
+    // Keep the first row per ASIN, but let an active row replace an inactive one.
+    if (byAsin[asin] && !(status === 'active' && byAsin[asin].status !== 'active')) continue;
     const productId   = cols[col('product-id')]?.trim() || '';
     const productType = cols[col('product-id-type')]?.trim() || '';
     // product-id-type: 1=ASIN, 2=ISBN, 3=UPC, 4=EAN
     const upc = (productType === '3' || productType === '4') ? productId : '';
-    result[asin] = {
+    byAsin[asin] = {
       title: cols[col('item-name')]?.trim() || '',
-      status: (cols[col('status')]?.trim() || 'unknown').toLowerCase(),
-      sellerSku: cols[col('seller-sku')]?.trim() || '',
+      status,
+      sellerSku: sku,
       imageUrl: cols[col('image-url')]?.trim() || '',
       upc
     };
   }
-  return result;
+  return { byAsin, skus: [...skus] };
 }
 
 // ─── Catalog Items API ───────────────────────────────────────────────────────
@@ -372,7 +391,7 @@ async function importBrandsFromAmazon() {
     marketplaceIds.map(mpId => createReport('GET_MERCHANT_LISTINGS_ALL_DATA', [mpId], null, null, token))
   );
   const listingsDocIds = await Promise.all(listingsReportIds.map(id => waitForReport(id, token)));
-  const listingsDatasets = await Promise.all(listingsDocIds.map(docId => downloadReport(docId, token).then(parseListingsReport)));
+  const listingsDatasets = await Promise.all(listingsDocIds.map(docId => downloadReport(docId, token).then(raw => parseListingsReport(raw).byAsin)));
 
   // Merge listings — collect all unique active ASINs
   const allAsins = new Set();
@@ -875,25 +894,27 @@ async function syncBrandMetrics(brands) {
           const listingsDatasets = await Promise.all(
             listingsDocIds.map((docId, i) =>
               downloadReport(docId, token).then(raw => ({
+                mpId: marketplaceIds[i],
                 marketplace: MARKETPLACE_CODE[marketplaceIds[i]] || 'CA',
-                data: parseListingsReport(raw)
+                ...parseListingsReport(raw)   // { byAsin, skus }
               }))
             )
           );
 
           listingsData = {};
-          for (const { marketplace, data } of listingsDatasets) {
-            for (const [asin, d] of Object.entries(data)) {
+          for (const { marketplace, byAsin } of listingsDatasets) {
+            for (const [asin, d] of Object.entries(byAsin)) {
               if (!listingsData[asin] || d.status === 'active') listingsData[asin] = { ...d, marketplace };
             }
           }
 
+          // Query inventory for EVERY SKU in each marketplace's report — not the
+          // one-per-ASIN survivors. The inventory response is keyed by its own
+          // ASIN, so multi-SKU ASINs aggregate correctly and stock parked on
+          // non-primary SKUs is never missed.
           const skusByMarketplace = {};
-          for (const mpId of marketplaceIds) {
-            const mpCode = MARKETPLACE_CODE[mpId] || 'CA';
-            skusByMarketplace[mpId] = Object.values(listingsData)
-              .filter(d => d.marketplace === mpCode && d.sellerSku)
-              .map(d => d.sellerSku);
+          for (const ds of listingsDatasets) {
+            skusByMarketplace[ds.mpId] = ds.skus;
           }
 
           const inventoryResults = await Promise.all(

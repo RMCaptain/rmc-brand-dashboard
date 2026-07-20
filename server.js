@@ -150,6 +150,11 @@ async function saveSyncResults(syncBrands) {
     if (sb.asinSns)   fb.asinSns   = sb.asinSns;
     if (sb.asinSnsRevenue) fb.asinSnsRevenue = sb.asinSnsRevenue;
     if (sb.repeatPurchase) fb.repeatPurchase = sb.repeatPurchase;
+    // SKU + marketplace maps are written by the listings phase of the sync —
+    // they were silently dropped here for months (431/431 ASINs had no stored
+    // SKU), which is what let the inventory bug hide.
+    if (sb.asinSkus && Object.keys(sb.asinSkus).length) fb.asinSkus = sb.asinSkus;
+    if (sb.asinMarketplaces && Object.keys(sb.asinMarketplaces).length) fb.asinMarketplaces = sb.asinMarketplaces;
   }
 
   // Merge unknown-brand: only add ASINs not already tracked anywhere in fresh data
