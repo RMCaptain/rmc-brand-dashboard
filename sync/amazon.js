@@ -1216,15 +1216,21 @@ async function syncBrandMetrics(brands) {
   }
 
   // ── Subscribe & Save subscriber counts ──────────────────────────────────────
+  // null = fetch failed everywhere → keep each brand's previous asinSns rather
+  // than wiping the metric to zero for a transient API failure.
   const asinSns = await fetchSnsSubscriptions(marketplaceIds, token).catch(e => {
     console.log('[Sync] S&S fetch skipped:', e.message);
-    return {};
+    return null;
   });
-  for (const brand of brands) {
-    brand.asinSns = {};
-    for (const asin of brand.asins) {
-      if (asinSns[asin] > 0) brand.asinSns[asin] = asinSns[asin];
+  if (asinSns) {
+    for (const brand of brands) {
+      brand.asinSns = {};
+      for (const asin of brand.asins) {
+        if (asinSns[asin] > 0) brand.asinSns[asin] = asinSns[asin];
+      }
     }
+  } else {
+    console.warn('[Sync] S&S unavailable this run — keeping previous subscription counts');
   }
 
   console.log('[Sync] Complete.');
@@ -1680,44 +1686,72 @@ async function fetchStrandedInventory() {
   return result;
 }
 
+// Subscribe & Save active-subscription counts per ASIN, via the Replenishment
+// API (2022-11-07). History: the original implementation requested the report
+// type GET_FBA_FULFILLMENT_SNSGMC_DATA, which is NOT a valid SP-API report type
+// (InvalidInput on every call — silently caught, so every sync stamped an empty
+// asinSns on every brand and the metric showed 0 forever). The documented S&S
+// report types (GET_FBA_SNS_FORECAST_DATA / GET_FBA_SNS_PERFORMANCE_DATA) get
+// auto-CANCELLED on this account on both marketplaces. The Replenishment API is
+// the path that actually returns data — verified 2026-07-20: 461 active US
+// subscriptions, per-ASIN via offers/metrics/search.
+//
+// Returns { asin: subs } on success (CA+US summed), or NULL if every
+// marketplace failed — callers must treat null as "keep previous data", never
+// as "zero subscriptions".
 async function fetchSnsSubscriptions(marketplaceIds, token) {
   const asinSubs = {};
+  let anySuccess = false;
+
+  // One MONTH aggregation bucket: 1st of the current PST month → today. On the
+  // 1st itself that window is a single day, which still resolves to the
+  // month-to-date bucket. Dedupe below keeps the latest bucket per ASIN anyway.
+  const today      = pstDateStr();
+  const monthStart = today.slice(0, 8) + '01';
+
   for (const mpId of marketplaceIds) {
     try {
-      console.log(`[S&S] Requesting subscriber report for ${mpId}...`);
-      const reportId = await createReport('GET_FBA_FULFILLMENT_SNSGMC_DATA', [mpId], null, null, token);
-      const docId    = await waitForReport(reportId, token, 300000);
-      const raw      = await downloadReport(docId, token);
-
-      const lines   = raw.split('\n');
-      if (lines.length < 2) continue;
-      const headers = lines[0].split('\t').map(h => h.trim().toLowerCase());
-
-      const asinCol = headers.indexOf('asin');
-      const subsCol = ['subscriber-download-count', 'subscribers', 'current-subscribers',
-                       'subscriptions', 'active-subscribers', 'subscriber-count']
-        .map(n => headers.indexOf(n)).find(i => i >= 0) ?? -1;
-
-      if (asinCol < 0 || subsCol < 0) {
-        console.warn(`[S&S] Unrecognised columns (asin:${asinCol}, subs:${subsCol}). Available: ${headers.join(', ')}`);
-        continue;
+      const latestByAsin = {}; // asin → { start, subs } — keep newest bucket
+      const limit = 100;
+      for (let offset = 0; offset < 5000; offset += limit) {
+        const body = {
+          pagination: { limit, offset },
+          filters: {
+            timeInterval:         { startDate: monthStart, endDate: today },
+            timePeriodType:       'PERFORMANCE',
+            aggregationFrequency: 'MONTH',
+            marketplaceId:        mpId,
+            programTypes:         ['SUBSCRIBE_AND_SAVE'],
+          },
+        };
+        const res = await spRequest('POST', '/replenishment/2022-11-07/offers/metrics/search', token, body);
+        if (res.status !== 200) {
+          throw new Error(`offers/metrics ${res.status}: ${JSON.stringify(res.body).slice(0, 160)}`);
+        }
+        const offers = res.body?.offers || [];
+        for (const o of offers) {
+          const asin = (o.asin || '').trim().toUpperCase();
+          const subs = o.activeSubscriptions;
+          if (!asin || subs == null) continue;
+          const start = o.timeInterval?.startDate || '';
+          const prev  = latestByAsin[asin];
+          if (!prev || start > prev.start) latestByAsin[asin] = { start, subs };
+        }
+        if (offers.length < limit) break;
+        await sleep(1100); // Replenishment API is low-throughput — pace pagination
       }
-
-      for (let i = 1; i < lines.length; i++) {
-        const parts = lines[i].split('\t');
-        if (parts.length < 3) continue;
-        const asin  = (parts[asinCol] || '').trim().toUpperCase();
-        const count = parseInt(parts[subsCol] || '0', 10);
-        if (!asin || isNaN(count) || count <= 0) continue;
-        asinSubs[asin] = (asinSubs[asin] || 0) + count;
+      for (const [asin, { subs }] of Object.entries(latestByAsin)) {
+        if (subs > 0) asinSubs[asin] = (asinSubs[asin] || 0) + subs;
       }
-      console.log(`[S&S] ${mpId}: ${Object.keys(asinSubs).length} ASINs with active subscribers`);
+      anySuccess = true;
+      console.log(`[S&S] ${mpId}: ${Object.keys(latestByAsin).length} S&S offers via Replenishment API`);
     } catch (e) {
-      console.log(`[S&S] Report unavailable for ${mpId}: ${e.message}`);
+      console.warn(`[S&S] Replenishment fetch failed for ${mpId}: ${e.message}`);
     }
-    await sleep(2000);
+    await sleep(1100);
   }
-  return asinSubs;
+
+  return anySuccess ? asinSubs : null;
 }
 
 async function fetchActivePromotions(marketplaceIds, token) {
@@ -1788,4 +1822,4 @@ async function fetchListingPrices(keys, mpId, token, { byType = 'Sku' } = {}) {
   return out;
 }
 
-module.exports = { syncBrandMetrics, importBrandsFromAmazon, fetchUpcsForAsins, fetchFinancialEvents, enrichListingHealth, scrapeSellerNames, fetchStrandedInventory, getAccessToken, spRequest, getMarketplaceIds, MARKETPLACE_CODE, sleep, createReport, waitForReport, downloadReport, fetchListingPrices, getPresetRanges, getAllPresetRanges };
+module.exports = { syncBrandMetrics, importBrandsFromAmazon, fetchUpcsForAsins, fetchFinancialEvents, enrichListingHealth, scrapeSellerNames, fetchStrandedInventory, getAccessToken, spRequest, getMarketplaceIds, MARKETPLACE_CODE, sleep, createReport, waitForReport, downloadReport, fetchListingPrices, getPresetRanges, getAllPresetRanges, fetchSnsSubscriptions };
