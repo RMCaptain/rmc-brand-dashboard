@@ -1218,19 +1218,46 @@ async function syncBrandMetrics(brands) {
   // ── Subscribe & Save subscriber counts ──────────────────────────────────────
   // null = fetch failed everywhere → keep each brand's previous asinSns rather
   // than wiping the metric to zero for a transient API failure.
-  const asinSns = await fetchSnsSubscriptions(marketplaceIds, token).catch(e => {
+  const snsData = await fetchSnsSubscriptions(marketplaceIds, token).catch(e => {
     console.log('[Sync] S&S fetch skipped:', e.message);
     return null;
   });
-  if (asinSns) {
+  if (snsData?.complete) {
     for (const brand of brands) {
       brand.asinSns = {};
+      brand.asinSnsRevenue = {};
       for (const asin of brand.asins) {
-        if (asinSns[asin] > 0) brand.asinSns[asin] = asinSns[asin];
+        if (snsData.subs[asin] > 0)  brand.asinSns[asin]        = snsData.subs[asin];
+        if (snsData.revenue[asin])   brand.asinSnsRevenue[asin] = snsData.revenue[asin];
       }
     }
   } else {
-    console.warn('[Sync] S&S unavailable this run — keeping previous subscription counts');
+    console.warn('[Sync] S&S incomplete/unavailable this run — keeping previous subscription counts');
+  }
+
+  // ── Repeat purchase rate ─────────────────────────────────────────────────────
+  // Primary: Brand Analytics (true, Amazon-computed customer matching). Fallback
+  // for brands with no BA coverage: S&S revenue-share ESTIMATE (labeled in UI).
+  // null = fetch failed → keep each brand's previous repeatPurchase.
+  try {
+    const { fetchRepeatPurchase, rollupBrandRepeatPurchase } = require('./repeatPurchase');
+    const rp = await fetchRepeatPurchase(marketplaceIds, token);
+    if (rp) {
+      for (const brand of brands) {
+        const monthRev = result.lastMonth?.brands?.[brand.id]?.summary;
+        const rolled = rollupBrandRepeatPurchase(brand, rp, {
+          cad: monthRev?.revenueCad || 0,
+          usd: monthRev?.revenueUsd || 0,
+        });
+        if (rolled) brand.repeatPurchase = rolled;
+        else delete brand.repeatPurchase;
+      }
+      console.log('[Sync] Repeat purchase rolled up for all brands');
+    } else {
+      console.warn('[Sync] Repeat purchase unavailable this run — keeping previous data');
+    }
+  } catch (e) {
+    console.warn('[Sync] Repeat purchase skipped:', e.message);
   }
 
   console.log('[Sync] Complete.');
@@ -1696,12 +1723,15 @@ async function fetchStrandedInventory() {
 // the path that actually returns data — verified 2026-07-20: 461 active US
 // subscriptions, per-ASIN via offers/metrics/search.
 //
-// Returns { asin: subs } on success (CA+US summed), or NULL if every
+// Returns { subs: { asin: count }, revenue: { asin: { cad, usd } } } on
+// success (CA+US summed; revenue = month-to-date S&S revenue, used by the
+// repeat-purchase estimate for non-Brand-Registry brands), or NULL if every
 // marketplace failed — callers must treat null as "keep previous data", never
 // as "zero subscriptions".
 async function fetchSnsSubscriptions(marketplaceIds, token) {
   const asinSubs = {};
-  let anySuccess = false;
+  const asinRev  = {};
+  let successCount = 0;
 
   // One MONTH aggregation bucket: 1st of the current PST month → today. On the
   // 1st itself that window is a single day, which still resolves to the
@@ -1735,15 +1765,22 @@ async function fetchSnsSubscriptions(marketplaceIds, token) {
           if (!asin || subs == null) continue;
           const start = o.timeInterval?.startDate || '';
           const prev  = latestByAsin[asin];
-          if (!prev || start > prev.start) latestByAsin[asin] = { start, subs };
+          if (!prev || start > prev.start) {
+            latestByAsin[asin] = { start, subs, rev: o.totalSubscriptionsRevenue || 0 };
+          }
         }
         if (offers.length < limit) break;
         await sleep(1100); // Replenishment API is low-throughput — pace pagination
       }
-      for (const [asin, { subs }] of Object.entries(latestByAsin)) {
+      const isCA = mpId === 'A2EUQ1WTGCTBG2';
+      for (const [asin, { subs, rev }] of Object.entries(latestByAsin)) {
         if (subs > 0) asinSubs[asin] = (asinSubs[asin] || 0) + subs;
+        if (rev > 0) {
+          if (!asinRev[asin]) asinRev[asin] = { cad: 0, usd: 0 };
+          if (isCA) asinRev[asin].cad += rev; else asinRev[asin].usd += rev;
+        }
       }
-      anySuccess = true;
+      successCount++;
       console.log(`[S&S] ${mpId}: ${Object.keys(latestByAsin).length} S&S offers via Replenishment API`);
     } catch (e) {
       console.warn(`[S&S] Replenishment fetch failed for ${mpId}: ${e.message}`);
@@ -1751,7 +1788,9 @@ async function fetchSnsSubscriptions(marketplaceIds, token) {
     await sleep(1100);
   }
 
-  return anySuccess ? asinSubs : null;
+  // complete=false means at least one marketplace failed (quota, transient) —
+  // callers must NOT overwrite stored data with a partial (one-marketplace) view.
+  return successCount > 0 ? { subs: asinSubs, revenue: asinRev, complete: successCount === marketplaceIds.length } : null;
 }
 
 async function fetchActivePromotions(marketplaceIds, token) {

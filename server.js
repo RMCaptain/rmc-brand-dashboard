@@ -148,6 +148,8 @@ async function saveSyncResults(syncBrands) {
     }
     if (sb.asinPromos) fb.asinPromos = sb.asinPromos;
     if (sb.asinSns)   fb.asinSns   = sb.asinSns;
+    if (sb.asinSnsRevenue) fb.asinSnsRevenue = sb.asinSnsRevenue;
+    if (sb.repeatPurchase) fb.repeatPurchase = sb.repeatPurchase;
   }
 
   // Merge unknown-brand: only add ASINs not already tracked anywhere in fresh data

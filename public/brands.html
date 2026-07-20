@@ -405,7 +405,21 @@
                 <div class="w-full rounded-full h-1" style="background:rgba(255,255,255,0.08)">
                   <div class="${buyBoxColor} h-1 rounded-full" style="width:${buyBox || 0}%"></div>
                 </div>
-              </div>` : `
+              </div>
+              ${(() => {
+                const rp = brand.repeatPurchase;
+                if (!rp) return '';
+                if (rp.source === 'brand_analytics') {
+                  return `<div class="flex items-center justify-between mt-2" title="Amazon Brand Analytics, ${rp.period?.start || ''} → ${rp.period?.end || ''}: ${rp.repeatCustomers.toLocaleString()} of ${rp.uniqueCustomers.toLocaleString()} customers were repeat buyers">
+                    <span class="text-xs" style="color:var(--text-3)">Repeat Customers</span>
+                    <span class="text-xs font-medium" style="color:var(--text-2)">${rp.repeatCustomersPct}%</span>
+                  </div>`;
+                }
+                return `<div class="flex items-center justify-between mt-2" title="ESTIMATE ONLY — Subscribe &amp; Save revenue share (a floor on true repeat rate). This brand isn't covered by Brand Analytics, so Amazon's real repeat-customer data isn't available.">
+                  <span class="text-xs" style="color:var(--text-3)">Repeat Revenue <span style="color:var(--warn)">(est.)</span></span>
+                  <span class="text-xs font-medium" style="color:var(--text-2)">≥${rp.repeatRevenueSharePct}%</span>
+                </div>`;
+              })()}` : `
               <div class="py-4 text-center">
                 <p class="text-xs" style="color:var(--text-3)">No data — sync pending</p>
               </div>`}
