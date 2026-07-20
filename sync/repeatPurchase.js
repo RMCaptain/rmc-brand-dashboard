@@ -28,20 +28,29 @@ function lastFullMonth() {
   return { start: fmt(firstPrev), end: fmt(lastPrev) };
 }
 
+const MP_CODE = { 'A2EUQ1WTGCTBG2': 'CA', 'ATVPDKIKX0DER': 'US' };
+
 /**
- * Fetch per-ASIN repeat purchase data for the last full month, both
- * marketplaces combined. Returns:
- *   { byAsin: { ASIN: { orders, uniqueCustomers, repeatCustomers,
- *                       repeatRevenueCad, repeatRevenueUsd } },
+ * Fetch per-ASIN repeat purchase data for the last full month, kept SEPARATE
+ * per marketplace. Brand Analytics is brand-scoped per marketplace: it returns
+ * the brand's ENTIRE Amazon business in that marketplace, including sales by
+ * other sellers/the brand owner. Rollups must therefore only consume the
+ * marketplaces a brand actually sells in with us — otherwise we'd report
+ * someone else's sales data as the brand's repeat rate.
+ *
+ * Returns:
+ *   { byMarketplace: { CA: { ASIN: { orders, uniqueCustomers, repeatCustomers,
+ *                                    repeatRevenueCad, repeatRevenueUsd } }, US: {...} },
  *     period: { start, end } }
  * or null if every marketplace failed (callers keep previous data).
  */
 async function fetchRepeatPurchase(marketplaceIds, token) {
   const { start, end } = lastFullMonth();
-  const byAsin = {};
+  const byMarketplace = {};
   let anySuccess = false;
 
   for (const mpId of marketplaceIds) {
+    const mpCode = MP_CODE[mpId] || mpId;
     try {
       const reportId = await createReport(
         'GET_BRAND_ANALYTICS_REPEAT_PURCHASE_REPORT', [mpId],
@@ -53,6 +62,7 @@ async function fetchRepeatPurchase(marketplaceIds, token) {
       const raw   = await downloadReport(docId, token);
       const rows  = JSON.parse(raw).dataByAsin || [];
 
+      const byAsin = {};
       for (const r of rows) {
         const asin = (r.asin || '').trim().toUpperCase();
         if (!asin) continue;
@@ -71,80 +81,67 @@ async function fetchRepeatPurchase(marketplaceIds, token) {
         if (rev.currencyCode === 'CAD') a.repeatRevenueCad += rev.amount || 0;
         else                            a.repeatRevenueUsd += rev.amount || 0;
       }
+      byMarketplace[mpCode] = byAsin;
       anySuccess = true;
-      console.log(`[RepeatPurchase] ${mpId}: ${rows.length} ASINs for ${start} → ${end}`);
+      console.log(`[RepeatPurchase] ${mpCode}: ${rows.length} ASINs for ${start} → ${end}`);
     } catch (e) {
-      console.warn(`[RepeatPurchase] ${mpId} failed: ${e.message.slice(0, 160)}`);
+      console.warn(`[RepeatPurchase] ${mpCode} failed: ${e.message.slice(0, 160)}`);
     }
     await sleep(2000);
   }
 
-  return anySuccess ? { byAsin, period: { start, end } } : null;
+  return anySuccess ? { byMarketplace, period: { start, end } } : null;
+}
+
+// Which marketplaces does this brand actually sell in (with us)?
+// Source of truth: the brand's marketplace field ('CA', 'US', or 'CA,US').
+// Defaults to CA if unset — every current brand sells .ca only.
+function brandMarketplaces(brand) {
+  const raw = (brand.marketplace || 'CA').toUpperCase();
+  return raw.split(',').map(s => s.trim()).filter(s => s === 'CA' || s === 'US');
 }
 
 /**
- * Roll per-ASIN data up to one brand-level record.
+ * Roll per-ASIN data up to one brand-level record — Brand Analytics ONLY,
+ * and ONLY the marketplaces this brand sells in with us (BA is brand-scoped,
+ * so an unsold marketplace's rows are other sellers' business, not ours).
  *
- * Primary (source: 'brand_analytics') — true rate from Amazon's customer
- * matching: repeat customers ÷ unique customers across the brand's ASINs.
- *
- * Fallback (source: 'sns_estimate') — for brands with no BA coverage: S&S
- * subscription revenue as a share of the brand's month revenue. A FLOOR, not
- * the true rate (manual re-orders invisible). Every surface showing it must
- * label it as an estimate.
- *
- * @param brand        brand object (asins, asinSnsRevenue from S&S fetch)
- * @param rp           result of fetchRepeatPurchase (may be null)
- * @param monthRevenue { cad, usd } brand revenue for the same period (for the estimate)
+ * No estimate fallback by design: S&S subscriptions are shown as their own
+ * metric and must not be dressed up as a repeat-purchase rate. Brands without
+ * BA coverage simply have no repeat data (surfaces show nothing).
  */
-function rollupBrandRepeatPurchase(brand, rp, monthRevenue) {
-  const period = rp?.period || null;
+function rollupBrandRepeatPurchase(brand, rp) {
+  if (!rp) return null;
 
-  // ── Primary: Brand Analytics ──
-  if (rp) {
-    let unique = 0, repeat = 0, orders = 0, revCad = 0, revUsd = 0, covered = 0;
+  const allowed = brandMarketplaces(brand);
+  let unique = 0, repeat = 0, orders = 0, revCad = 0, revUsd = 0, covered = 0;
+
+  for (const mpCode of allowed) {
+    const byAsin = rp.byMarketplace[mpCode];
+    if (!byAsin) continue;
     for (const asin of (brand.asins || [])) {
-      const a = rp.byAsin[asin];
+      const a = byAsin[asin];
       if (!a) continue;
       covered++;
       unique += a.uniqueCustomers; repeat += a.repeatCustomers;
       orders += a.orders; revCad += a.repeatRevenueCad; revUsd += a.repeatRevenueUsd;
     }
-    if (covered > 0 && unique > 0) {
-      return {
-        source: 'brand_analytics',
-        period,
-        repeatCustomersPct: Math.round(repeat / unique * 1000) / 10,
-        uniqueCustomers:    unique,
-        repeatCustomers:    repeat,
-        orders,
-        repeatRevenueCad:   Math.round(revCad * 100) / 100,
-        repeatRevenueUsd:   Math.round(revUsd * 100) / 100,
-        coveredAsins:       covered,
-        updatedAt:          new Date().toISOString(),
-      };
-    }
   }
 
-  // ── Fallback: S&S-derived estimate ──
-  const snsRev = brand.asinSnsRevenue || {};
-  let snsCad = 0, snsUsd = 0;
-  for (const v of Object.values(snsRev)) { snsCad += v.cad || 0; snsUsd += v.usd || 0; }
-  const totalRev = (monthRevenue?.cad || 0) + (monthRevenue?.usd || 0);
-  const snsTotal = snsCad + snsUsd;
-  if (snsTotal > 0 && totalRev > 0) {
-    return {
-      source: 'sns_estimate',
-      period,
-      // Share of revenue on subscription — a floor on true repeat behaviour.
-      repeatRevenueSharePct: Math.min(100, Math.round(snsTotal / totalRev * 1000) / 10),
-      snsRevenueCad: Math.round(snsCad * 100) / 100,
-      snsRevenueUsd: Math.round(snsUsd * 100) / 100,
-      updatedAt: new Date().toISOString(),
-    };
-  }
-
-  return null; // no signal at all — surfaces show "—"
+  if (covered === 0 || unique === 0) return null;
+  return {
+    source: 'brand_analytics',
+    period: rp.period,
+    marketplaces: allowed,
+    repeatCustomersPct: Math.round(repeat / unique * 1000) / 10,
+    uniqueCustomers:    unique,
+    repeatCustomers:    repeat,
+    orders,
+    repeatRevenueCad:   Math.round(revCad * 100) / 100,
+    repeatRevenueUsd:   Math.round(revUsd * 100) / 100,
+    coveredAsins:       covered,
+    updatedAt:          new Date().toISOString(),
+  };
 }
 
-module.exports = { fetchRepeatPurchase, rollupBrandRepeatPurchase, lastFullMonth };
+module.exports = { fetchRepeatPurchase, rollupBrandRepeatPurchase, brandMarketplaces, lastFullMonth };

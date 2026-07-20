@@ -113,7 +113,6 @@
       grid.innerHTML = brands.map(b => {
         const s = b.metrics?.summary || {};
         const color = b.color || '#537D30';
-        const conv = cvr(s.units, s.sessions);
         const href = `/brand-report.html?brand=${encodeURIComponent(b.id)}&period=${preset}`;
         return `
           <a href="${href}" class="brand-tile" style="border-top:3px solid ${color}">
@@ -126,7 +125,7 @@
               <div class="bt-stat"><div class="bt-stat-label">Revenue USD</div><div class="bt-stat-value">${fmtC(s.revenueUsd, 'US$')}</div></div>
               <div class="bt-stat"><div class="bt-stat-label">Units</div><div class="bt-stat-value">${fmtN(s.units)}</div></div>
               <div class="bt-stat"><div class="bt-stat-label">Sessions</div><div class="bt-stat-value">${fmtN(s.sessions)}</div></div>
-              <div class="bt-stat"><div class="bt-stat-label">CVR</div><div class="bt-stat-value">${fmtP(conv)}</div></div>
+              <div class="bt-stat"><div class="bt-stat-label">S&amp;S Subs</div><div class="bt-stat-value">${(() => { const n = Object.values(b.asinSns || {}).reduce((a, x) => a + x, 0); return n > 0 ? fmtN(n) : '—'; })()}</div></div>
               <div class="bt-stat"><div class="bt-stat-label">Buy Box</div><div class="bt-stat-value">${fmtP(s.buyBox)}</div></div>
             </div>
           </a>

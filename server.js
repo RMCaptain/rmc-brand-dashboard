@@ -4308,6 +4308,11 @@ async function buildBrandReportDataset(brandId, query = {}) {
     // ── 6. Assemble
     return {
       brand: { id: brand.id, name: brand.name, marketplace: brand.marketplace || 'CA' },
+      // Subscribe & Save (seller-scoped, current) and repeat purchase (Brand
+      // Analytics, last full month, marketplace-scoped — null when the brand
+      // has no BA coverage). Distinct metrics: never derive one from the other.
+      snsSubs:        Object.values(brand.asinSns || {}).reduce((a, x) => a + x, 0) || null,
+      repeatPurchase: brand.repeatPurchase || null,
       period:     { from: fromStr,    to: toStr,    label: `${fmtLabel(fromStr)} – ${fmtLabel(toStr)}` },
       comparison: { from: compFromStr, to: compToStr, label: `${fmtLabel(compFromStr)} – ${fmtLabel(compToStr)}` },
       config: {

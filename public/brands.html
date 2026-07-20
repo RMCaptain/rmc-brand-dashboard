@@ -408,16 +408,11 @@
               </div>
               ${(() => {
                 const rp = brand.repeatPurchase;
-                if (!rp) return '';
-                if (rp.source === 'brand_analytics') {
-                  return `<div class="flex items-center justify-between mt-2" title="Amazon Brand Analytics, ${rp.period?.start || ''} → ${rp.period?.end || ''}: ${rp.repeatCustomers.toLocaleString()} of ${rp.uniqueCustomers.toLocaleString()} customers were repeat buyers">
-                    <span class="text-xs" style="color:var(--text-3)">Repeat Customers</span>
-                    <span class="text-xs font-medium" style="color:var(--text-2)">${rp.repeatCustomersPct}%</span>
-                  </div>`;
-                }
-                return `<div class="flex items-center justify-between mt-2" title="ESTIMATE ONLY — Subscribe &amp; Save revenue share (a floor on true repeat rate). This brand isn't covered by Brand Analytics, so Amazon's real repeat-customer data isn't available.">
-                  <span class="text-xs" style="color:var(--text-3)">Repeat Revenue <span style="color:var(--warn)">(est.)</span></span>
-                  <span class="text-xs font-medium" style="color:var(--text-2)">≥${rp.repeatRevenueSharePct}%</span>
+                if (!rp || rp.source !== 'brand_analytics') return '';
+                const mps = (rp.marketplaces || []).join('+');
+                return `<div class="flex items-center justify-between mt-2" title="Amazon Brand Analytics (${mps}), ${rp.period?.start || ''} → ${rp.period?.end || ''}: ${rp.repeatCustomers.toLocaleString()} of ${rp.uniqueCustomers.toLocaleString()} customers were repeat buyers. Brand-wide Amazon data for this marketplace.">
+                  <span class="text-xs" style="color:var(--text-3)">Repeat Customers</span>
+                  <span class="text-xs font-medium" style="color:var(--text-2)">${rp.repeatCustomersPct}%</span>
                 </div>`;
               })()}` : `
               <div class="py-4 text-center">

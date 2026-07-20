@@ -1236,23 +1236,20 @@ async function syncBrandMetrics(brands) {
   }
 
   // ── Repeat purchase rate ─────────────────────────────────────────────────────
-  // Primary: Brand Analytics (true, Amazon-computed customer matching). Fallback
-  // for brands with no BA coverage: S&S revenue-share ESTIMATE (labeled in UI).
+  // Brand Analytics only (Amazon's real customer matching), scoped to each
+  // brand's own selling marketplaces — no estimates, no S&S conflation.
+  // Brands without BA coverage carry no repeatPurchase at all.
   // null = fetch failed → keep each brand's previous repeatPurchase.
   try {
     const { fetchRepeatPurchase, rollupBrandRepeatPurchase } = require('./repeatPurchase');
     const rp = await fetchRepeatPurchase(marketplaceIds, token);
     if (rp) {
       for (const brand of brands) {
-        const monthRev = result.lastMonth?.brands?.[brand.id]?.summary;
-        const rolled = rollupBrandRepeatPurchase(brand, rp, {
-          cad: monthRev?.revenueCad || 0,
-          usd: monthRev?.revenueUsd || 0,
-        });
+        const rolled = rollupBrandRepeatPurchase(brand, rp);
         if (rolled) brand.repeatPurchase = rolled;
         else delete brand.repeatPurchase;
       }
-      console.log('[Sync] Repeat purchase rolled up for all brands');
+      console.log('[Sync] Repeat purchase rolled up (marketplace-scoped, BA only)');
     } else {
       console.warn('[Sync] Repeat purchase unavailable this run — keeping previous data');
     }

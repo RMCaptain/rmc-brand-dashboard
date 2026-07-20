@@ -791,6 +791,21 @@ const SECTION_RENDERERS = {
       tile(mp.label, fmtC(mp.cur, mp.sym), pct(mp.cur, mp.prev), 'Prior: ' + fmtC(mp.prev, mp.sym))
     ).join('');
 
+    // S&S subs (seller-scoped, live count) and repeat customers (Brand
+    // Analytics, last full month, brand-wide for the brand's own marketplaces).
+    // Rendered only when the data exists — never estimated, never conflated.
+    const snsTile = d.snsSubs > 0
+      ? tile('S&amp;S Subscriptions', fmtN(d.snsSubs), null, 'Active Subscribe &amp; Save')
+      : '';
+    const rp = d.repeatPurchase;
+    const rpMonth = rp?.period?.start
+      ? new Date(rp.period.start + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+      : '';
+    const rpTile = (rp && rp.source === 'brand_analytics')
+      ? tile('Repeat Customers', fmtPct(rp.repeatCustomersPct), null,
+             `Brand Analytics — ${rpMonth} (brand-wide, ${(rp.marketplaces || []).join('+')})`)
+      : '';
+
     return `<div class="tiles">
       ${revTiles}
       ${tile('Units Sold', fmtN(s.units), pct(s.units, sp.units), 'Prior: ' + fmtN(sp.units))}
@@ -798,6 +813,8 @@ const SECTION_RENDERERS = {
       ${tile('Conversion (CVR)', fmtPct(conv), null, 'Units ÷ sessions')}
       ${tile('Buy Box %', fmtPct(s.buyBox), null, 'Avg across products')}
       ${aovTile(d, tile)}
+      ${snsTile}
+      ${rpTile}
     </div>`;
   },
 
