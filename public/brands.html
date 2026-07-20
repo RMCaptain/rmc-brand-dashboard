@@ -395,7 +395,7 @@
                 <div><p class="text-xs mb-0.5" style="color:var(--text-3)">Revenue</p><p class="text-lg font-bold" style="color:var(--text)">${fmt(m.revenueCad, m.revenueUsd)}</p></div>
                 <div><p class="text-xs mb-0.5" style="color:var(--text-3)">Units Sold</p><p class="text-lg font-bold" style="color:var(--text)">${(m.units || 0).toLocaleString()}</p></div>
                 <div><p class="text-xs mb-0.5" style="color:var(--text-3)">Sessions</p><p class="text-lg font-bold" style="color:var(--text)">${m.sessions != null ? (m.sessions).toLocaleString() : '—'}</p></div>
-                <div><p class="text-xs mb-0.5" style="color:var(--text-3)">Avg CVR</p><p class="text-lg font-bold" style="color:var(--text)">${m.avgCvr != null ? m.avgCvr.toFixed(2) + '%' : '—'}</p></div>
+                <div><p class="text-xs mb-0.5" style="color:var(--text-3)">S&amp;S Subs</p><p class="text-lg font-bold" style="color:var(--text)">${(() => { const n = Object.values(brand.asinSns || {}).reduce((a, x) => a + x, 0); return n > 0 ? n.toLocaleString() : '—'; })()}</p></div>
               </div>
               <div>
                 <div class="flex items-center justify-between mb-1">
