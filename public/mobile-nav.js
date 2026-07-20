@@ -48,4 +48,4 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
 })();
-// deploy-marker: inventory-sku-fix
+// deploy-marker: inventory-retry-hardening

@@ -463,14 +463,18 @@ async function getInventoryBySkus(marketplaceId, sellerSkus, token) {
     const skuParam = `sellerSkus=${encodeURIComponent(batch.join(','))}`;
     const path = `${base}&${skuParam}`;
 
+    // A skipped batch silently zeroes ~50 SKUs' inventory in the app — exactly
+    // the false-stockout class of bug. Retry hard before giving up: sustained
+    // 429s happen when anything else shares the FBA quota during a sync.
     let res = await spRequest('GET', path, token);
-    if (res.status === 429) {
-      console.warn(`[Inventory] Rate limited — waiting 10s and retrying`);
-      await sleep(10000);
+    for (const backoffMs of [10000, 30000, 60000]) {
+      if (res.status === 200) break;
+      console.warn(`[Inventory] HTTP ${res.status} on SKU batch ${Math.floor(i/batchSize)+1} — retrying in ${backoffMs/1000}s`);
+      await sleep(backoffMs);
       res = await spRequest('GET', path, token);
     }
     if (res.status !== 200) {
-      console.warn(`[Inventory] HTTP ${res.status} for SKU batch ${Math.floor(i/batchSize)+1}`);
+      console.warn(`[Inventory] SKU batch ${Math.floor(i/batchSize)+1} FAILED after retries (HTTP ${res.status}) — ${batch.length} SKUs will show stale/zero inventory this sync`);
       continue;
     }
     parseInventoryItems(res.body.payload?.inventorySummaries, inventory);
