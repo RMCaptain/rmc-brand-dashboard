@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Your Reports — Rocky Mountain Co.</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    /* Brand-facing light palette — matches the report and the login page. */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Inter', sans-serif; background: #faf8f2; color: #33392c; min-height: 100vh; }
+    header {
+      background: #fff; border-bottom: 1px solid #e4e1d5;
+      padding: 14px 20px; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    }
+    header img { height: 48px; }
+    .who { text-align: right; min-width: 0; }
+    .who .brand { font-family: 'Poppins', sans-serif; font-weight: 600; font-size: 15px; color: #2c3a20;
+                  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .who button { background: none; border: none; color: #6e7567; font-size: 12px; cursor: pointer;
+                  font-family: 'Inter', sans-serif; text-decoration: underline; padding: 4px 0 0; }
+    main { max-width: 720px; margin: 0 auto; padding: 24px 16px 60px; }
+    h1 { font-family: 'Poppins', sans-serif; font-size: 22px; color: #2c3a20; margin: 10px 0 4px; }
+    .sub { font-size: 13px; color: #6e7567; margin-bottom: 24px; }
+    .card { background: #fff; border: 1px solid #e4e1d5; border-radius: 12px; padding: 20px; margin-bottom: 18px; }
+    .card h2 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
+               color: #9aa093; margin-bottom: 14px; }
+    .dl-row { display: flex; gap: 10px; flex-wrap: wrap; }
+    .dl-btn {
+      flex: 1; min-width: 160px; min-height: 52px;
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      background: #2c3a20; color: #fff; border: none; border-radius: 8px;
+      font-family: 'Inter', sans-serif; font-size: 14px; font-weight: 600; cursor: pointer;
+      padding: 12px 16px;
+    }
+    .dl-btn.secondary { background: #fff; color: #2c3a20; border: 1px solid #cfd8c3; }
+    .dl-btn:hover { opacity: 0.92; }
+    .dl-btn:disabled { opacity: 0.55; cursor: default; }
+    .archive { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+               padding: 13px 2px; border-bottom: 1px solid #f0ede2; }
+    .archive:last-child { border-bottom: none; }
+    .archive .label { font-size: 14px; font-weight: 500; }
+    .archive .when  { font-size: 11px; color: #9aa093; margin-top: 2px; }
+    .archive button {
+      background: #fff; border: 1px solid #cfd8c3; color: #2c3a20; border-radius: 8px;
+      font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 600; cursor: pointer;
+      padding: 10px 16px; min-height: 42px; white-space: nowrap;
+    }
+    .archive button:hover { border-color: #9db47e; }
+    .empty { font-size: 13px; color: #9aa093; padding: 8px 2px; }
+    .note { font-size: 12px; color: #6e7567; margin-top: 10px; line-height: 1.5; }
+    #status { display: none; margin: 0 0 14px; font-size: 13px; background: #eef2e8; color: #2c3a20;
+              border-radius: 8px; padding: 11px 14px; }
+  </style>
+</head>
+<body>
+  <header>
+    <img src="/portal/logo.png" alt="Rocky Mountain Co." />
+    <div class="who">
+      <div class="brand" id="brandName">&nbsp;</div>
+      <button id="signout" type="button">Sign out</button>
+    </div>
+  </header>
+
+  <main>
+    <h1>Your Reports</h1>
+    <p class="sub" id="hello">Performance reporting from Rocky Mountain Co.</p>
+
+    <div id="status"></div>
+
+    <div class="card">
+      <h2>Download a report</h2>
+      <div class="dl-row">
+        <button class="dl-btn" data-period="lastMonth">Last month</button>
+        <button class="dl-btn secondary" data-period="mtd">This month so far</button>
+      </div>
+      <p class="note">Reports are generated fresh from live data — this can take 10–20 seconds.</p>
+    </div>
+
+    <div class="card">
+      <h2>Saved monthly reports</h2>
+      <div id="archives"><p class="empty">Loading…</p></div>
+    </div>
+  </main>
+
+  <script>
+    const status = document.getElementById('status');
+    function say(text) { status.style.display = text ? 'block' : 'none'; status.textContent = text || ''; }
+
+    // Session check + identity. A dead session bounces to login.
+    (async () => {
+      try {
+        const res = await fetch('/api/portal/me');
+        if (res.status === 401) { location.href = '/portal/login'; return; }
+        const me = await res.json();
+        document.getElementById('brandName').textContent = me.brandName;
+        document.getElementById('hello').textContent =
+          `Performance reporting for ${me.brandName}, prepared by Rocky Mountain Co.`;
+      } catch { location.href = '/portal/login'; }
+    })();
+
+    // PDF downloads — fetch as blob so we can show progress and keep the page.
+    async function download(params, label) {
+      say(`Preparing your ${label} report — this can take up to 20 seconds…`);
+      document.querySelectorAll('button').forEach(b => b.disabled = true);
+      try {
+        const res = await fetch('/api/portal/report.pdf?' + params);
+        if (!res.ok) throw new Error();
+        const blob = await res.blob();
+        const cd = res.headers.get('Content-Disposition') || '';
+        const name = (cd.match(/filename="([^"]+)"/) || [])[1] || 'RMC_report.pdf';
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = name;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        say('');
+      } catch {
+        say('Sorry — the report couldn’t be generated just now. Please try again in a minute.');
+      }
+      document.querySelectorAll('button').forEach(b => b.disabled = false);
+    }
+
+    document.querySelectorAll('.dl-btn').forEach(btn =>
+      btn.addEventListener('click', () =>
+        download('period=' + btn.dataset.period, btn.textContent.trim().toLowerCase())));
+
+    // Saved report history — each row downloads the PDF for its exact period.
+    (async () => {
+      const box = document.getElementById('archives');
+      try {
+        const res = await fetch('/api/portal/archives');
+        const { archives } = await res.json();
+        if (!archives || !archives.length) {
+          box.innerHTML = '<p class="empty">No saved reports yet — your monthly reports will appear here.</p>';
+          return;
+        }
+        box.innerHTML = archives.map(a => `
+          <div class="archive">
+            <div>
+              <div class="label">${a.period_label || (a.period_from + ' – ' + a.period_to)}</div>
+              <div class="when">Saved ${new Date(a.generated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</div>
+            </div>
+            <button data-from="${a.period_from}" data-to="${a.period_to}" data-label="${(a.period_label || '').replace(/"/g, '')}">Download PDF</button>
+          </div>`).join('');
+        box.querySelectorAll('button').forEach(btn =>
+          btn.addEventListener('click', () =>
+            download(`from=${btn.dataset.from}&to=${btn.dataset.to}`, btn.dataset.label || 'saved')));
+      } catch {
+        box.innerHTML = '<p class="empty">Couldn’t load saved reports.</p>';
+      }
+    })();
+
+    document.getElementById('signout').addEventListener('click', async () => {
+      try { await fetch('/api/portal/logout', { method: 'POST' }); } catch {}
+      location.href = '/portal/login';
+    });
+  </script>
+</body>
+</html>

@@ -51,6 +51,19 @@ app.use(cors());
 // path is the credential. See mcp/mcp-server.js.
 require('./mcp/mcp-server').mountMcp(app);
 
+// Brand portal — PUBLIC surface (login page, magic-link endpoints, and the
+// session-guarded portal pages/APIs). Mounted BEFORE basicAuth because brands
+// don't have team credentials; identity here is the magic-link session cookie,
+// and every data route scopes to the session's brand_id (no brand parameter
+// exists to tamper with). Admin management routes mount after basicAuth below.
+// loadBrands/generateBrandReportPdf are hoisted function declarations, so
+// referencing them here is safe.
+require('./portal/routes').mountPublic(app, {
+  supabase, express,
+  loadBrands: (...a) => loadBrands(...a),
+  generateBrandReportPdf: (...a) => generateBrandReportPdf(...a),
+});
+
 // HTTP Basic Auth — gates the entire dashboard. Skipped if AUTH_USERNAME / AUTH_PASSWORD
 // are unset (local dev). Temporary measure until Cloudflare Access (internal team) and
 // Supabase Auth (external brand portal) replace it.
@@ -91,6 +104,13 @@ app.use(basicAuth);
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Brand portal — ADMIN surface (create/list/revoke portal users, mint invite
+// links). Team-only: sits behind basicAuth like every other management route.
+require('./portal/routes').mountAdmin(app, {
+  supabase,
+  loadBrands: (...a) => loadBrands(...a),
+});
 
 // --- Data helpers (Supabase) ---
 
@@ -3624,16 +3644,16 @@ function resolveReportPeriod(query = {}) {
 // path). Navigates headless Chrome to the brand-report page with ?print=1
 // (which hides nav + toolbar via CSS), waits for charts + summary to finish
 // rendering (window.reportReady flag), then returns the PDF buffer.
-app.get('/api/brand-report-pdf/:brandId', async (req, res) => {
-  const { brandId } = req.params;
-  const from     = req.query.from     || '';
-  const to       = req.query.to       || '';
-  const compFrom = req.query.compFrom || '';
-  const compTo   = req.query.compTo   || '';
+// Core PDF generation, shared by the team route below and the brand portal
+// (portal/routes.js) — extracted so the portal reuses the exact pipeline
+// rather than a parallel one that could drift.
+async function generateBrandReportPdf({ brandId, period, from, to, compFrom, compTo }) {
+  from = from || ''; to = to || '';
+  compFrom = compFrom || ''; compTo = compTo || '';
   // Only default the preset when there's no custom range. Setting `period`
   // alongside from/to makes the page resolve the preset and ignore the dates,
   // so the PDF would quietly cover a different period than what's on screen.
-  const period = (from && to) ? '' : (req.query.period || 'last30d');
+  const effPeriod = (from && to) ? '' : (period || 'last30d');
 
   const puppeteer = require('puppeteer');
   let browser;
@@ -3648,7 +3668,7 @@ app.get('/api/brand-report-pdf/:brandId', async (req, res) => {
     // (same Node process) so there's no network round-trip; auth bypassed.
     const port = process.env.PORT || 3000;
     const params = new URLSearchParams({ brand: brandId, print: '1' });
-    if (period) params.set('period', period);
+    if (effPeriod) params.set('period', effPeriod);
     if (from)   params.set('from', from);
     if (to)     params.set('to',   to);
     if (compFrom) params.set('compFrom', compFrom);
@@ -3689,7 +3709,24 @@ app.get('/api/brand-report-pdf/:brandId', async (req, res) => {
 
     const dateStamp = new Date().toISOString().split('T')[0];
     const safeName  = String(brandName).replace(/[^a-z0-9\-_]+/gi, '_');
-    const filename  = `RMC_${safeName}_${period}_${dateStamp}.pdf`;
+    const label     = effPeriod || `${from}_${to}`;
+    const filename  = `RMC_${safeName}_${label}_${dateStamp}.pdf`;
+
+    return { pdfData: Buffer.isBuffer(pdfData) ? pdfData : Buffer.from(pdfData), filename };
+  } catch (err) {
+    if (browser) { try { await browser.close(); } catch {} }
+    throw err;
+  }
+}
+
+app.get('/api/brand-report-pdf/:brandId', async (req, res) => {
+  try {
+    const { pdfData, filename } = await generateBrandReportPdf({
+      brandId: req.params.brandId,
+      period: req.query.period,
+      from: req.query.from, to: req.query.to,
+      compFrom: req.query.compFrom, compTo: req.query.compTo,
+    });
 
     // NOTE: generating a PDF no longer creates a history row. Saving is now an
     // explicit action (POST /api/brand-report-archives/:brandId) so the history
@@ -3698,10 +3735,9 @@ app.get('/api/brand-report-pdf/:brandId', async (req, res) => {
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.send(Buffer.isBuffer(pdfData) ? pdfData : Buffer.from(pdfData));
+    res.send(pdfData);
   } catch (err) {
     console.error('[BrandReportPDF] error:', err.message);
-    if (browser) { try { await browser.close(); } catch {} }
     res.status(500).json({ error: err.message });
   }
 });

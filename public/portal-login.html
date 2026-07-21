@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sign in — Rocky Mountain Co. Brand Portal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    /* Brand-facing = the report's light paper palette (Poppins/Inter, RMC
+       greens), NOT the team dashboard's dark theme. Self-contained styles:
+       this page renders before any identity exists, so it can't depend on
+       assets behind team auth. */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Inter', sans-serif;
+      background: #faf8f2;
+      color: #33392c;
+      min-height: 100vh;
+      display: flex; align-items: center; justify-content: center;
+      padding: 20px;
+    }
+    .card {
+      background: #fff;
+      border: 1px solid #e4e1d5;
+      border-top: 3px solid #2c3a20;
+      border-radius: 14px;
+      box-shadow: 0 10px 40px rgba(44, 58, 32, 0.08);
+      width: 100%; max-width: 420px;
+      padding: 36px 32px;
+    }
+    .logo { height: 72px; display: block; margin: 0 auto 18px; }
+    h1 {
+      font-family: 'Poppins', 'Inter', sans-serif;
+      font-size: 20px; font-weight: 600; color: #2c3a20;
+      text-align: center; margin-bottom: 6px;
+    }
+    .sub { font-size: 13px; color: #6e7567; text-align: center; margin-bottom: 26px; line-height: 1.5; }
+    label { display: block; font-size: 12px; font-weight: 600; color: #33392c; margin-bottom: 6px; }
+    input[type=email] {
+      width: 100%; padding: 13px 14px; font-size: 16px;   /* 16px stops iOS zoom */
+      font-family: 'Inter', sans-serif;
+      border: 1px solid #e4e1d5; border-radius: 8px; outline: none;
+      color: #33392c; background: #fff;
+    }
+    input[type=email]:focus { border-color: #9db47e; box-shadow: 0 0 0 3px rgba(157, 180, 126, 0.25); }
+    button {
+      width: 100%; margin-top: 14px; padding: 13px;
+      background: #2c3a20; color: #fff; border: none; border-radius: 8px;
+      font-family: 'Inter', sans-serif; font-size: 15px; font-weight: 600; cursor: pointer;
+      min-height: 48px;
+    }
+    button:hover { background: #3a4c2b; }
+    button:disabled { opacity: 0.6; cursor: default; }
+    .msg { margin-top: 16px; font-size: 13px; line-height: 1.55; border-radius: 8px; padding: 12px 14px; display: none; }
+    .msg.ok   { display: block; background: #eef2e8; color: #2c3a20; }
+    .msg.err  { display: block; background: #fdecec; color: #a63d40; }
+    .foot { margin-top: 26px; text-align: center; font-size: 11px; color: #9aa093; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <img class="logo" src="/portal/logo.png" alt="Rocky Mountain Co." />
+    <h1>Brand Portal</h1>
+    <p class="sub">Enter your email and we'll send you a secure sign-in link.<br />No password needed.</p>
+
+    <form id="form">
+      <label for="email">Email address</label>
+      <input type="email" id="email" name="email" autocomplete="email" required
+             placeholder="you@yourbrand.com" />
+      <button type="submit" id="btn">Email me a sign-in link</button>
+    </form>
+
+    <div class="msg" id="msg"></div>
+    <p class="foot">Rocky Mountain Co. — brand performance reporting</p>
+  </div>
+
+  <script>
+    const form = document.getElementById('form');
+    const btn  = document.getElementById('btn');
+    const msg  = document.getElementById('msg');
+
+    // Arriving from a dead link (?error=expired) or pre-setup (?error=setup).
+    const err = new URLSearchParams(location.search).get('error');
+    if (err === 'expired') {
+      msg.className = 'msg err';
+      msg.textContent = 'That sign-in link has expired or was already used. Request a fresh one below — links are single-use and last 15 minutes.';
+    } else if (err === 'setup') {
+      msg.className = 'msg err';
+      msg.textContent = 'The portal isn’t quite ready yet. Please contact your Rocky Mountain Co. account manager.';
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      btn.disabled = true; btn.textContent = 'Sending…';
+      msg.className = 'msg';
+      try {
+        const res = await fetch('/api/portal/request-link', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: document.getElementById('email').value }),
+        });
+        const data = await res.json();
+        if (res.status === 429) {
+          msg.className = 'msg err';
+          msg.textContent = data.error || 'Too many requests — try again in a few minutes.';
+        } else {
+          msg.className = 'msg ok';
+          msg.textContent = 'If that email has portal access, a sign-in link is on its way. It expires in 15 minutes — check spam if you don’t see it.';
+          form.reset();
+        }
+      } catch {
+        msg.className = 'msg err';
+        msg.textContent = 'Something went wrong — please try again.';
+      }
+      btn.disabled = false; btn.textContent = 'Email me a sign-in link';
+    });
+  </script>
+</body>
+</html>
