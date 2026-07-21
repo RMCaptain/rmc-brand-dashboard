@@ -51,6 +51,13 @@ app.use(cors());
 // path is the credential. See mcp/mcp-server.js.
 require('./mcp/mcp-server').mountMcp(app);
 
+// OAuth discovery probes from claude.ai's connector setup must get a clean 404,
+// not basicAuth's 401 — a 401 here makes claude.ai assume the MCP server is
+// OAuth-protected and attempt dynamic client registration, which fails with
+// "Couldn't register with sign-in service". No auth exists on /mcp beyond the
+// secret path, so declare "no OAuth metadata" explicitly.
+app.use('/.well-known', (req, res) => res.status(404).end());
+
 // Brand portal — PUBLIC surface (login page, magic-link endpoints, and the
 // session-guarded portal pages/APIs). Mounted BEFORE basicAuth because brands
 // don't have team credentials; identity here is the magic-link session cookie,
