@@ -304,6 +304,21 @@
     .sp-row-pinned:hover { background: transparent; }
     .sp-row-pinned .sp-name { color: var(--text-2); }
     .sp-grip-locked { font-size: 11px; opacity: 0.5; }
+    /* Up/down reorder buttons. Hidden on desktop (drag handles that); shown on
+       touch, where drag doesn't work. */
+    .sp-move { display: none; margin-left: auto; gap: 2px; flex: none; }
+    .sp-move-btn {
+      border: 1px solid var(--border); background: var(--bg-card);
+      color: var(--text-2); border-radius: 6px; cursor: pointer;
+      font-size: 10px; line-height: 1; padding: 0;
+      width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center;
+    }
+    .sp-move-btn:hover { color: var(--text); border-color: var(--green-lt); }
+    @media (hover: none), (max-width: 640px) {
+      .sp-move { display: inline-flex; }
+      .sp-grip { display: none; }               /* drag handle is meaningless on touch */
+      .sp-move-btn { width: 36px; height: 36px; font-size: 11px; }
+    }
     /* Sits under the name, so a long title keeps the full row width to itself
        instead of being squeezed onto two lines by this label. */
     .sp-always {
@@ -1119,8 +1134,21 @@ function renderLayoutPanel() {
         <input type="checkbox" data-toggle="${r.key}" ${on ? 'checked' : ''} />
         <span>${escapeHtml(title)}</span>
       </label>
+      <!-- Click reorder — works on touch, where HTML5 drag doesn't. Also a
+           keyboard/precision path on desktop. -->
+      <span class="sp-move">
+        <button type="button" class="sp-move-btn" data-move="up"   data-key="${r.key}" title="Move up" aria-label="Move up">▲</button>
+        <button type="button" class="sp-move-btn" data-move="down" data-key="${r.key}" title="Move down" aria-label="Move down">▼</button>
+      </span>
     </div>`;
   }).join('');
+
+  list.querySelectorAll('.sp-move-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.preventDefault(); e.stopPropagation();
+      moveSection(btn.dataset.key, btn.dataset.move);
+    });
+  });
 
   list.querySelectorAll('input[data-toggle]').forEach(cb => {
     cb.addEventListener('change', () => {
@@ -1199,6 +1227,21 @@ function reorderSection(fromKey, toKey) {
   if (fi === -1 || ti === -1) return;      // pinned rows aren't in `order`
   order.splice(fi, 1);
   order.splice(ti, 0, fromKey);
+  layout.order = order;
+  renderLayoutPanel();
+  persistLayout();
+}
+
+// Click-reorder for the up/down buttons — the touch-friendly path (HTML5 drag
+// doesn't fire on touch). Swaps with the adjacent movable section; no-ops at
+// the ends.
+function moveSection(key, dir) {
+  const i = layout.order.indexOf(key);
+  if (i === -1) return;
+  const j = dir === 'up' ? i - 1 : i + 1;
+  if (j < 0 || j >= layout.order.length) return;   // already at an end
+  const order = [...layout.order];
+  [order[i], order[j]] = [order[j], order[i]];
   layout.order = order;
   renderLayoutPanel();
   persistLayout();
