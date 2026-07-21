@@ -502,4 +502,21 @@ input[type=number] { -moz-appearance: textfield; }
   /* Scroll affordance: a soft fade on the right edge of table scrollers so it
      reads as "more columns this way". Pseudo sits on the wrapper, not scrolled. */
   .overflow-x-auto { position: relative; }
+
+  /* ── Modals ───────────────────────────────────────────────────────────
+     Centred modals with tall content (a long saved-POs list, the bulk-edit
+     diff table, a form with the keyboard open) can spill off the top AND
+     bottom of a phone with no way to scroll to what's clipped. Cap every
+     modal panel to the viewport and let it scroll inside. Scoped under the
+     .fixed.inset-0 overlay so only modal panels are touched.
+     The extra bottom padding on the backdrop keeps the panel clear of the
+     home-indicator / URL bar. */
+  .fixed.inset-0 { padding-bottom: env(safe-area-inset-bottom, 0px); }
+  .rmc-modal,
+  .fixed.inset-0 > [class*="max-w-"] {
+    max-height: 88vh; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  }
+  /* A modal that pins its own inner scroll region (PO modals) shouldn't
+     double-scroll — let the inner body own it. */
+  .rmc-modal:has(.overflow-y-auto) { overflow-y: visible; }
 }

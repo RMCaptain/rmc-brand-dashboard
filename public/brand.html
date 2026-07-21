@@ -767,6 +767,36 @@
       setTimeout(() => { popup.style.display = 'none'; }, 100);
     }
 
+    // ── Touch support for the sales/inventory detail popups ──────────────────
+    // These cells reveal detail on HOVER (onmouseenter), which doesn't exist on
+    // a phone — so on touch the detail was unreachable. Delegate taps: tapping a
+    // trigger cell toggles its popup (positioned at the tap point); tapping
+    // elsewhere or scrolling dismisses it. Runs only on touch devices, so the
+    // desktop hover behaviour is untouched.
+    if (window.matchMedia && window.matchMedia('(hover: none)').matches) {
+      let pinnedCell = null;
+      const triggerSel = '[onmouseenter*="showSalesPopup"], [onmouseenter*="showInventoryPopup"]';
+      const dismiss = () => { hideSalesPopup(); hideInventoryPopup(); pinnedCell = null; };
+      document.addEventListener('click', (ev) => {
+        const cell = ev.target.closest(triggerSel);
+        if (cell) {
+          ev.preventDefault(); ev.stopPropagation();
+          if (pinnedCell === cell) return dismiss();        // tap again to close
+          dismiss();
+          const r = cell.getBoundingClientRect();
+          // Re-fire the cell's OWN inline onmouseenter (with its baked-in args),
+          // positioned at the cell instead of a mouse cursor.
+          cell.dispatchEvent(new MouseEvent('mouseenter', {
+            clientX: r.right, clientY: r.top + r.height / 2, bubbles: false,
+          }));
+          pinnedCell = cell;
+        } else if (pinnedCell) {
+          dismiss();
+        }
+      }, true);
+      window.addEventListener('scroll', () => { if (pinnedCell) dismiss(); }, true);
+    }
+
     async function scrapeUpcs() {
       const btn = document.getElementById('scrapeUpcBtn');
       btn.textContent = 'Scraping…';
