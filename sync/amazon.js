@@ -1247,17 +1247,41 @@ async function syncBrandMetrics(brands) {
     console.log('[Sync] S&S fetch skipped:', e.message);
     return null;
   });
-  if (snsData?.complete) {
+  if (snsData?.byMp && Object.keys(snsData.byMp).length) {
+    // Merge PER MARKETPLACE: overwrite a marketplace's contribution only when
+    // that marketplace's fetch succeeded; keep the stored value otherwise.
+    // The old gate required BOTH marketplaces or stored NOTHING — and since the
+    // Replenishment API 429s one of them routinely, that meant real data (559
+    // CA subs on 2026-07-22) was discarded every sync and the metric sat null.
     for (const brand of brands) {
+      brand.asinSnsByMp = brand.asinSnsByMp || {};
+      for (const [mpId, mp] of Object.entries(snsData.byMp)) {
+        const store = { subs: {}, revenue: {}, isCA: mp.isCA, fetchedAt: new Date().toISOString() };
+        for (const asin of brand.asins) {
+          if (mp.subs[asin] > 0)  store.subs[asin]    = mp.subs[asin];
+          if (mp.revenue[asin])   store.revenue[asin] = mp.revenue[asin];
+        }
+        brand.asinSnsByMp[mpId] = store;
+      }
+      // Derive the summed views every consumer already reads (asinSns,
+      // asinSnsRevenue) from the per-marketplace store — freshest-per-mp.
       brand.asinSns = {};
       brand.asinSnsRevenue = {};
-      for (const asin of brand.asins) {
-        if (snsData.subs[asin] > 0)  brand.asinSns[asin]        = snsData.subs[asin];
-        if (snsData.revenue[asin])   brand.asinSnsRevenue[asin] = snsData.revenue[asin];
+      for (const mp of Object.values(brand.asinSnsByMp)) {
+        for (const [asin, n] of Object.entries(mp.subs || {})) {
+          brand.asinSns[asin] = (brand.asinSns[asin] || 0) + n;
+        }
+        for (const [asin, rev] of Object.entries(mp.revenue || {})) {
+          if (!brand.asinSnsRevenue[asin]) brand.asinSnsRevenue[asin] = { cad: 0, usd: 0 };
+          if (mp.isCA) brand.asinSnsRevenue[asin].cad += rev;
+          else         brand.asinSnsRevenue[asin].usd += rev;
+        }
       }
     }
+    const got = Object.keys(snsData.byMp).join('+');
+    if (!snsData.complete) console.warn(`[Sync] S&S partial: stored ${got}; kept previous data for the marketplace(s) that failed`);
   } else {
-    console.warn('[Sync] S&S incomplete/unavailable this run — keeping previous subscription counts');
+    console.warn('[Sync] S&S unavailable this run — keeping previous subscription counts');
   }
 
   // ── Repeat purchase rate ─────────────────────────────────────────────────────
@@ -1751,6 +1775,10 @@ async function fetchStrandedInventory() {
 // marketplace failed — callers must treat null as "keep previous data", never
 // as "zero subscriptions".
 async function fetchSnsSubscriptions(marketplaceIds, token) {
+  // Per-marketplace results, so ONE throttled marketplace no longer discards
+  // the other's real data. byMp only contains marketplaces that SUCCEEDED —
+  // callers keep their previous stored values for anything absent.
+  const byMp = {};
   const asinSubs = {};
   const asinRev  = {};
   let successCount = 0;
@@ -1776,7 +1804,19 @@ async function fetchSnsSubscriptions(marketplaceIds, token) {
             programTypes:         ['SUBSCRIBE_AND_SAVE'],
           },
         };
-        const res = await spRequest('POST', '/replenishment/2022-11-07/offers/metrics/search', token, body);
+        // The Replenishment API's quota is TINY — a 429 on the first call is
+        // normal when another marketplace's pagination just ran. Verified
+        // 2026-07-22: CA succeeded while US 429'd on call one, and the old
+        // all-or-nothing gate then discarded CA's 559 real subscriptions.
+        // Back off and retry before declaring the marketplace failed.
+        let res;
+        for (let attempt = 1; ; attempt++) {
+          res = await spRequest('POST', '/replenishment/2022-11-07/offers/metrics/search', token, body);
+          if (res.status !== 429 || attempt >= 4) break;
+          const waitMs = attempt * 8000;   // 8s, 16s, 24s — quota restores slowly
+          console.log(`[S&S] ${mpId} throttled (429) — retry ${attempt}/3 in ${waitMs / 1000}s`);
+          await sleep(waitMs);
+        }
         if (res.status !== 200) {
           throw new Error(`offers/metrics ${res.status}: ${JSON.stringify(res.body).slice(0, 160)}`);
         }
@@ -1795,13 +1835,16 @@ async function fetchSnsSubscriptions(marketplaceIds, token) {
         await sleep(1100); // Replenishment API is low-throughput — pace pagination
       }
       const isCA = mpId === 'A2EUQ1WTGCTBG2';
+      const mpSubs = {}, mpRev = {};
       for (const [asin, { subs, rev }] of Object.entries(latestByAsin)) {
-        if (subs > 0) asinSubs[asin] = (asinSubs[asin] || 0) + subs;
+        if (subs > 0) { asinSubs[asin] = (asinSubs[asin] || 0) + subs; mpSubs[asin] = subs; }
         if (rev > 0) {
           if (!asinRev[asin]) asinRev[asin] = { cad: 0, usd: 0 };
           if (isCA) asinRev[asin].cad += rev; else asinRev[asin].usd += rev;
+          mpRev[asin] = rev;
         }
       }
+      byMp[mpId] = { subs: mpSubs, revenue: mpRev, isCA };
       successCount++;
       console.log(`[S&S] ${mpId}: ${Object.keys(latestByAsin).length} S&S offers via Replenishment API`);
     } catch (e) {
@@ -1810,9 +1853,12 @@ async function fetchSnsSubscriptions(marketplaceIds, token) {
     await sleep(1100);
   }
 
-  // complete=false means at least one marketplace failed (quota, transient) —
-  // callers must NOT overwrite stored data with a partial (one-marketplace) view.
-  return successCount > 0 ? { subs: asinSubs, revenue: asinRev, complete: successCount === marketplaceIds.length } : null;
+  // byMp holds only the marketplaces that succeeded; callers merge per
+  // marketplace and keep previous values for the ones that failed. `complete`
+  // retained for logging/back-compat.
+  return successCount > 0
+    ? { subs: asinSubs, revenue: asinRev, byMp, complete: successCount === marketplaceIds.length }
+    : null;
 }
 
 async function fetchActivePromotions(marketplaceIds, token) {
