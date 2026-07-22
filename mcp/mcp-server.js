@@ -118,7 +118,7 @@ const TOOLS = [
   },
   {
     name: 'get_datadive',
-    description: 'Data Dive keyword data for a brand: Rank Radar keyword-rank histories and niche keyword lists with volume/relevancy. Refreshed Mondays. First stop for keyword tiers (Defend/Strike/Index gap/Long shot) in listing copy and campaign design.',
+    description: 'ORGANIC keyword data for a brand from Data Dive: per-keyword current rank, 30d-ago rank, trend, search volume, relevancy, and SQP where present. Contains NO advertising metrics by design — ads data comes only from get_brand_report, get_ads_campaigns, and get_search_terms (Amazon-direct). Refreshed Mondays. First stop for keyword tiers (Defend/Strike/Index gap/Long shot) and rank-movement tables.',
     inputSchema: {
       type: 'object',
       properties: { brandId: { type: 'string' } },

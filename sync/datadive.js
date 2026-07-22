@@ -82,6 +82,13 @@ async function syncDataDive(supabase, brands, { windowDays = 35 } = {}) {
       console.warn(`[DataDive] radar ${radarId} (${asin}): ${e.message}`);
       continue;
     }
+    // Policy (Mike, 2026-07-21): Data Dive supplies ORGANIC data only — ranks,
+    // volume, relevancy, SQP. Advertising metrics come exclusively from
+    // Amazon-direct sources (Ads API via this dashboard). Strip adData so no
+    // consumer can cite third-party ad numbers; drop highlights (bulk, unused).
+    if (Array.isArray(payload)) {
+      for (const kw of payload) { delete kw.adData; delete kw.highlights; }
+    }
     const { error } = await supabase.from('datadive_snapshots').upsert({
       kind: 'radar',
       key: String(radarId),

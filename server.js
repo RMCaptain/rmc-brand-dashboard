@@ -2866,6 +2866,10 @@ app.post('/api/ads/sync-structure', async (req, res) => {
 // ── Data Dive (read-only) ────────────────────────────────────────────────────
 // Rank Radar + niche keyword snapshots per brand, synced weekly by
 // sync/datadive.js. Serves the team skills' keyword tiers and rank checks.
+// Compact by default: one row per keyword (latest rank + 30d-ago + trend),
+// which is what the skills' tier logic needs. ?full=1 returns stored payloads
+// (daily rank arrays). Data Dive data is ORGANIC ONLY by policy — adData is
+// stripped at sync; ads metrics come from the Amazon-direct endpoints.
 app.get('/api/datadive/:brandId', async (req, res) => {
   try {
     const { data, error } = await supabase.from('datadive_snapshots')
@@ -2875,10 +2879,40 @@ app.get('/api/datadive/:brandId', async (req, res) => {
     if (!data || data.length === 0) {
       return res.status(404).json({ error: 'no Data Dive snapshots for this brand — radar ASINs may not map to it, or the sync has not run (POST /api/datadive/sync)' });
     }
+    const radars = data.filter(d => d.kind === 'radar');
+    const nicheKeywords = data.filter(d => d.kind === 'niche_keywords');
+    if (req.query.full === '1') {
+      return res.json({ brandId: req.params.brandId, radars, nicheKeywords });
+    }
+    const condense = (kw) => {
+      const ranks = (kw.ranks || []).filter(r => r.organicRank != null);
+      const latest = ranks[ranks.length - 1] || null;
+      const first = ranks[0] || null;
+      const out = {
+        keyword: kw.keyword,
+        vol: kw.searchVolume ?? null,
+        rel: kw.relevancy ?? null,
+        rank: latest ? latest.organicRank : null,
+        rankDate: latest ? latest.date : null,
+        rank30dAgo: first ? first.organicRank : null,
+      };
+      if (out.rank != null && out.rank30dAgo != null) {
+        out.trend = out.rank < out.rank30dAgo ? 'up' : out.rank > out.rank30dAgo ? 'down' : 'flat';
+      }
+      if (kw.sqpData) out.sqp = kw.sqpData; // organic search-query performance — keep when present
+      return out;
+    };
     res.json({
       brandId: req.params.brandId,
-      radars: data.filter(d => d.kind === 'radar'),
-      nicheKeywords: data.filter(d => d.kind === 'niche_keywords'),
+      note: 'organic keyword data only (ranks/volume/relevancy/SQP) — ads metrics come from the Amazon-direct endpoints. ?full=1 for daily rank histories.',
+      radars: radars.map(r => ({
+        asin: r.asin,
+        title: r.meta?.title,
+        window: r.meta?.window,
+        pulledAt: r.pulled_at,
+        keywords: (Array.isArray(r.payload) ? r.payload : []).map(condense),
+      })),
+      nicheKeywords,
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
