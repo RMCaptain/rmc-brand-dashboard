@@ -69,6 +69,8 @@ require('./portal/routes').mountPublic(app, {
   supabase, express,
   loadBrands: (...a) => loadBrands(...a),
   generateBrandReportPdf: (...a) => generateBrandReportPdf(...a),
+  buildBrandReportDataset: (...a) => buildBrandReportDataset(...a),
+  trySelectSummary: (...a) => trySelectSummary(...a),
 });
 
 // HTTP Basic Auth — gates the entire dashboard. Skipped if AUTH_USERNAME / AUTH_PASSWORD

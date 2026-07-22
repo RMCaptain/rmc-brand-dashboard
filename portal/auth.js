@@ -136,7 +136,7 @@ async function getSession(supabase, rawSession) {
 
   const { data: user, error: uErr } = await supabase
     .from('portal_users')
-    .select('id, email, brand_id, display_name, revoked_at')
+    .select('id, email, username, brand_id, display_name, revoked_at, password_set_at')
     .eq('id', s.user_id)
     .maybeSingle();
   if (uErr) throw new Error(uErr.message);
@@ -170,9 +170,73 @@ function rateLimited(key, max, windowMs) {
   return false;
 }
 
+// ── Passwords (slice 2) ───────────────────────────────────────────────────────
+// scrypt: built into node, memory-hard (unlike sha/bcrypt-less setups), zero
+// new dependencies. Per-user random salt; parameters recorded in the stored
+// string so they can be raised later without breaking existing hashes.
+const SCRYPT = { N: 16384, r: 8, p: 1, keylen: 64 };
+
+function hashPassword(password) {
+  return new Promise((resolve, reject) => {
+    const salt = crypto.randomBytes(16);
+    crypto.scrypt(password, salt, SCRYPT.keylen, { N: SCRYPT.N, r: SCRYPT.r, p: SCRYPT.p }, (err, dk) => {
+      if (err) return reject(err);
+      resolve(`scrypt$${SCRYPT.N}$${SCRYPT.r}$${SCRYPT.p}$${salt.toString('base64')}$${dk.toString('base64')}`);
+    });
+  });
+}
+
+function verifyPassword(password, stored) {
+  return new Promise((resolve) => {
+    try {
+      const [scheme, N, r, p, saltB64, hashB64] = String(stored || '').split('$');
+      if (scheme !== 'scrypt') return resolve(false);
+      const salt = Buffer.from(saltB64, 'base64');
+      const expected = Buffer.from(hashB64, 'base64');
+      crypto.scrypt(password, salt, expected.length, { N: +N, r: +r, p: +p }, (err, dk) => {
+        if (err) return resolve(false);
+        resolve(crypto.timingSafeEqual(dk, expected));
+      });
+    } catch { resolve(false); }
+  });
+}
+
+/**
+ * Password sign-in: identifier is username OR email (both stored lowercase).
+ * Returns { rawSession, user } or null — one null for every failure mode, so
+ * the endpoint can only ever say "invalid credentials" (no probing which part
+ * was wrong, no revealing that an account exists but has no password yet).
+ */
+async function passwordLogin(supabase, identifier, password) {
+  const ident = String(identifier || '').trim().toLowerCase();
+  if (!ident || !password) return null;
+  const field = ident.includes('@') ? 'email' : 'username';
+  const { data: user, error } = await supabase
+    .from('portal_users')
+    .select('id, email, username, brand_id, display_name, password_hash, revoked_at')
+    .eq(field, ident)
+    .maybeSingle();
+  if (error) { if (isMigrationError(error)) return null; throw new Error(error.message); }
+  if (!user || user.revoked_at || !user.password_hash) return null;
+  if (!(await verifyPassword(password, user.password_hash))) return null;
+
+  const now = new Date().toISOString();
+  const rawSession = newToken();
+  const { error: sErr } = await supabase.from('portal_sessions').insert({
+    user_id: user.id,
+    token_hash: hashToken(rawSession),
+    expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+    last_seen_at: now,
+  });
+  if (sErr) throw new Error(sErr.message);
+  await supabase.from('portal_users').update({ last_login_at: now }).eq('id', user.id);
+  return { rawSession, user };
+}
+
 module.exports = {
   COOKIE_NAME, LOGIN_TOKEN_TTL_MS, SESSION_TTL_MS,
   newToken, hashToken, readSessionCookie, sessionCookie,
   createLoginToken, redeemLoginToken, getSession, revokeSession,
   rateLimited, isMigrationError, migrationError,
+  hashPassword, verifyPassword, passwordLogin,
 };

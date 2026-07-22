@@ -32,7 +32,7 @@ function baseUrl(req) {
   return `${proto}://${req.get('host')}`;
 }
 
-function mountPublic(app, { supabase, loadBrands, generateBrandReportPdf, express }) {
+function mountPublic(app, { supabase, loadBrands, generateBrandReportPdf, buildBrandReportDataset, trySelectSummary, express }) {
   const json = express.json();
 
   // Session middleware for portal-only routes. Never falls through to team
@@ -61,6 +61,77 @@ function mountPublic(app, { supabase, loadBrands, generateBrandReportPdf, expres
 
   app.get('/portal', requireSession, (req, res) =>
     res.sendFile(path.join(__dirname, '..', 'public', 'portal.html')));
+
+  // First-login password setup (also reachable later = change password).
+  app.get('/portal/setup', requireSession, (req, res) =>
+    res.sendFile(path.join(__dirname, '..', 'public', 'portal-setup.html')));
+
+  // The live report — slice 2's headline. Read-only, scoped by session.
+  app.get('/portal/report', requireSession, (req, res) =>
+    res.sendFile(path.join(__dirname, '..', 'public', 'portal-report.html')));
+
+  // ── Password sign-in (public, rate-limited) ────────────────────────────────
+  // Identifier = username OR email. One generic failure message for every
+  // failure mode — wrong user, wrong password, revoked, or no password set yet.
+  app.post('/api/portal/login', json, async (req, res) => {
+    try {
+      const ident = String(req.body?.identifier || '').trim().toLowerCase();
+      const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || 'unknown';
+      if (auth.rateLimited(`pw:${ident}`, 10, 15 * 60 * 1000) ||
+          auth.rateLimited(`pwip:${ip}`, 30, 15 * 60 * 1000)) {
+        return res.status(429).json({ error: 'Too many attempts — try again in a few minutes.' });
+      }
+      const result = await auth.passwordLogin(supabase, ident, String(req.body?.password || ''));
+      if (!result) return res.status(401).json({ error: 'Invalid username or password.' });
+      res.setHeader('Set-Cookie', auth.sessionCookie(result.rawSession, req));
+      res.json({ ok: true });
+    } catch (err) {
+      console.error('[Portal] login failed:', err.message);
+      res.status(500).json({ error: 'Sign-in failed — please try again.' });
+    }
+  });
+
+  // Set (or change) password. Requires a live session — reached either from an
+  // invite-link session (first login) or an existing signed-in session.
+  app.post('/api/portal/set-password', json, requireSession, async (req, res) => {
+    try {
+      const pw = String(req.body?.password || '');
+      if (pw.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+      const hash = await auth.hashPassword(pw);
+      const { error } = await supabase.from('portal_users')
+        .update({ password_hash: hash, password_set_at: new Date().toISOString() })
+        .eq('id', req.portalUser.id);
+      if (error) throw new Error(error.message);
+      res.json({ ok: true });
+    } catch (err) {
+      console.error('[Portal] set-password failed:', err.message);
+      res.status(500).json({ error: 'Could not save the password — please try again.' });
+    }
+  });
+
+  // Live report dataset — the EXACT same builder the team report uses, with the
+  // brand forced from the session and the saved summary bundled in so the
+  // portal renders in one fetch. Read-only by construction: this route only
+  // reads, and no portal route writes report data.
+  app.get('/api/portal/report-dataset', requireSession, async (req, res) => {
+    try {
+      const q = {};
+      const { from, to, period } = req.query;
+      if (from && to && ISO_DATE.test(from) && ISO_DATE.test(to)) { q.from = from; q.to = to; }
+      else q.period = PORTAL_PERIODS.has(period) ? period : 'lastMonth';
+
+      const dataset = await buildBrandReportDataset(req.portalUser.brand_id, q);
+      let summaryText = null;
+      try {
+        const row = await trySelectSummary(req.portalUser.brand_id, dataset.period.from, dataset.period.to);
+        summaryText = row?.summary_text || null;
+      } catch {}
+      res.json({ ...dataset, portalSummaryText: summaryText });
+    } catch (err) {
+      console.error('[Portal] report-dataset failed:', err.message);
+      res.status(err.status || 500).json({ error: 'Could not load the report.' });
+    }
+  });
 
   // ── Magic-link request (public, rate-limited, no user enumeration) ─────────
   app.post('/api/portal/request-link', json, async (req, res) => {
@@ -130,9 +201,12 @@ function mountPublic(app, { supabase, loadBrands, generateBrandReportPdf, expres
     } catch {}
     res.json({
       email: req.portalUser.email,
+      username: req.portalUser.username || null,
       displayName: req.portalUser.display_name || null,
       brandId: req.portalUser.brand_id,
       brandName,
+      // false → portal front-end forces /portal/setup before anything else.
+      passwordSet: !!req.portalUser.password_set_at,
     });
   });
 
@@ -187,6 +261,11 @@ function mountPublic(app, { supabase, loadBrands, generateBrandReportPdf, expres
 function mountAdmin(app, { supabase, loadBrands }) {
   // Everything here sits behind team Basic Auth (mounted after it in server.js).
 
+  const dupUsernameMsg = (error) =>
+    /username/i.test(String(error.message)) && /duplicate|unique/i.test(String(error.message))
+      ? 'That username is taken — pick another.'
+      : error.message;
+
   async function freshInviteLink(req, userId) {
     const raw = await auth.createLoginToken(supabase, userId);
     return `${baseUrl(req)}/api/portal/auth?token=${raw}`;
@@ -200,6 +279,12 @@ function mountAdmin(app, { supabase, loadBrands }) {
       const brandId = String(req.body?.brand_id || '').trim();
       const displayName = String(req.body?.display_name || '').trim() || null;
       if (!emailAddr.includes('@')) return res.status(400).json({ error: 'Valid email required' });
+      // Username the team hands the brand ("I generate a username for them").
+      // Defaults to the brand id. Stored lowercase; login accepts it or email.
+      const username = (String(req.body?.username || '').trim() || brandId).toLowerCase();
+      if (!/^[a-z0-9][a-z0-9._-]{1,30}$/.test(username)) {
+        return res.status(400).json({ error: 'Username must be 2-31 chars: letters, numbers, dots, dashes.' });
+      }
 
       const { brands } = await loadBrands();
       if (!brands.find(b => b.id === brandId)) {
@@ -216,21 +301,21 @@ function mountAdmin(app, { supabase, loadBrands }) {
           return res.status(409).json({ error: 'That email already has portal access. Use invite-link to resend, or revoke first.' });
         }
         const { error } = await supabase.from('portal_users')
-          .update({ revoked_at: null, brand_id: brandId, display_name: displayName })
+          .update({ revoked_at: null, brand_id: brandId, display_name: displayName, username })
           .eq('id', existing.id);
-        if (error) throw new Error(error.message);
+        if (error) throw new Error(dupUsernameMsg(error));
         userId = existing.id;
       } else {
         const { data, error } = await supabase.from('portal_users')
-          .insert({ email: emailAddr, brand_id: brandId, display_name: displayName, invited_by: 'team' })
+          .insert({ email: emailAddr, brand_id: brandId, display_name: displayName, username, invited_by: 'team' })
           .select('id').single();
-        if (error) throw new Error(error.message);
+        if (error) throw new Error(dupUsernameMsg(error));
         userId = data.id;
       }
 
       const invite_link = await freshInviteLink(req, userId);
       res.json({
-        ok: true, user_id: userId, email: emailAddr, brand_id: brandId, invite_link,
+        ok: true, user_id: userId, email: emailAddr, username, brand_id: brandId, invite_link,
         note: email.isConfigured()
           ? 'Link also usable directly; brand can self-serve via the login page.'
           : `Email sending is not configured — copy this link and send it to the brand. It expires in ${EXPIRES_MINUTES} minutes; mint a fresh one anytime with invite-link.`,
@@ -244,7 +329,7 @@ function mountAdmin(app, { supabase, loadBrands }) {
     try {
       const { data, error } = await supabase
         .from('portal_users')
-        .select('id, email, brand_id, display_name, created_at, last_login_at, revoked_at')
+        .select('id, email, username, brand_id, display_name, created_at, last_login_at, revoked_at, password_set_at')
         .order('created_at', { ascending: false });
       if (error) throw auth.isMigrationError(error) ? auth.migrationError() : new Error(error.message);
       const { brands } = await loadBrands();

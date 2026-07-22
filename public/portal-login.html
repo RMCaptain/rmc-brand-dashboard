@@ -62,13 +62,30 @@
   <div class="card">
     <img class="logo" src="/portal/logo.png" alt="Rocky Mountain Co." />
     <h1>Brand Portal</h1>
-    <p class="sub">Enter your email and we'll send you a secure sign-in link.<br />No password needed.</p>
+    <p class="sub">Sign in with the username Rocky Mountain Co. gave you.</p>
 
-    <form id="form">
+    <!-- Password sign-in — the everyday path. -->
+    <form id="pwForm">
+      <label for="ident">Username or email</label>
+      <input type="text" id="ident" autocomplete="username" required placeholder="yourbrand" />
+      <label for="pw" style="margin-top:12px;display:block">Password</label>
+      <input type="password" id="pw" autocomplete="current-password" required />
+      <button type="submit" id="pwBtn">Sign in</button>
+    </form>
+
+    <div style="text-align:center;margin-top:16px">
+      <button type="button" id="linkToggle"
+        style="background:none;border:none;color:#6e7567;font-size:12px;cursor:pointer;font-family:'Inter',sans-serif;text-decoration:underline;min-height:auto;width:auto;padding:4px;margin:0">
+        Forgot password? Email me a sign-in link
+      </button>
+    </div>
+
+    <!-- Magic link — first-time access + password recovery. Hidden until asked. -->
+    <form id="linkForm" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid #f0ede2">
       <label for="email">Email address</label>
       <input type="email" id="email" name="email" autocomplete="email" required
              placeholder="you@yourbrand.com" />
-      <button type="submit" id="btn">Email me a sign-in link</button>
+      <button type="submit" id="linkBtn">Email me a sign-in link</button>
     </form>
 
     <div class="msg" id="msg"></div>
@@ -76,43 +93,60 @@
   </div>
 
   <script>
-    const form = document.getElementById('form');
-    const btn  = document.getElementById('btn');
-    const msg  = document.getElementById('msg');
+    const msg = document.getElementById('msg');
+    const say = (cls, text) => { msg.className = 'msg ' + cls; msg.textContent = text; };
 
     // Arriving from a dead link (?error=expired) or pre-setup (?error=setup).
     const err = new URLSearchParams(location.search).get('error');
     if (err === 'expired') {
-      msg.className = 'msg err';
-      msg.textContent = 'That sign-in link has expired or was already used. Request a fresh one below — links are single-use and last 15 minutes.';
+      say('err', 'That sign-in link has expired or was already used. Sign in with your password, or request a fresh link below.');
+      document.getElementById('linkForm').style.display = 'block';
     } else if (err === 'setup') {
-      msg.className = 'msg err';
-      msg.textContent = 'The portal isn’t quite ready yet. Please contact your Rocky Mountain Co. account manager.';
+      say('err', 'The portal isn’t quite ready yet. Please contact your Rocky Mountain Co. account manager.');
     }
 
-    form.addEventListener('submit', async (e) => {
+    document.getElementById('linkToggle').addEventListener('click', () => {
+      const f = document.getElementById('linkForm');
+      f.style.display = f.style.display === 'none' ? 'block' : 'none';
+    });
+
+    // Password sign-in
+    document.getElementById('pwForm').addEventListener('submit', async (e) => {
       e.preventDefault();
-      btn.disabled = true; btn.textContent = 'Sending…';
-      msg.className = 'msg';
+      const btn = document.getElementById('pwBtn');
+      btn.disabled = true; btn.textContent = 'Signing in…'; msg.className = 'msg';
+      try {
+        const res = await fetch('/api/portal/login', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            identifier: document.getElementById('ident').value,
+            password: document.getElementById('pw').value,
+          }),
+        });
+        const data = await res.json();
+        if (res.ok) { location.href = '/portal'; return; }
+        say('err', data.error || 'Invalid username or password.');
+      } catch { say('err', 'Something went wrong — please try again.'); }
+      btn.disabled = false; btn.textContent = 'Sign in';
+    });
+
+    // Magic link (recovery / first-time)
+    document.getElementById('linkForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById('linkBtn');
+      btn.disabled = true; btn.textContent = 'Sending…'; msg.className = 'msg';
       try {
         const res = await fetch('/api/portal/request-link', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email: document.getElementById('email').value }),
         });
         const data = await res.json();
-        if (res.status === 429) {
-          msg.className = 'msg err';
-          msg.textContent = data.error || 'Too many requests — try again in a few minutes.';
-        } else {
-          msg.className = 'msg ok';
-          msg.textContent = 'If that email has portal access, a sign-in link is on its way. It expires in 15 minutes — check spam if you don’t see it.';
-          form.reset();
+        if (res.status === 429) say('err', data.error || 'Too many requests — try again in a few minutes.');
+        else {
+          say('ok', 'If that email has portal access, a sign-in link is on its way. It expires in 15 minutes — check spam if you don’t see it.');
+          document.getElementById('linkForm').reset();
         }
-      } catch {
-        msg.className = 'msg err';
-        msg.textContent = 'Something went wrong — please try again.';
-      }
+      } catch { say('err', 'Something went wrong — please try again.'); }
       btn.disabled = false; btn.textContent = 'Email me a sign-in link';
     });
   </script>

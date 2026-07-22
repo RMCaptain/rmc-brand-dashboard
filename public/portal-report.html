@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Live Report — Rocky Mountain Co.</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    /* Brand-facing live report — the team report's light paper aesthetic,
+       stripped of every team control. READ-ONLY by construction: this page
+       calls only /api/portal/* routes, which are scoped to the session's brand
+       and contain no write paths for report data.
+       KNOWN DUPLICATION: section renderers are adapted copies of
+       brand-report.html's (extraction into a shared module is deliberate debt —
+       tracked in Notion — after a prior scripted-edit corruption of that file
+       made minimal-touch the safer call). If a section changes there, mirror it
+       here. */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --green: #2c3a20; --green-lt: #9db47e; --text: #33392c; --text-2: #6e7567;
+      --text-3: #9aa093; --border: #e4e1d5; --bg: #faf8f2;
+      --pos: #16A34A; --neg: #DC2626; --amber: #F59E0B; --amber-bg: #FEF3C7; --red-bg: #FEE2E2;
+    }
+    body { font-family: 'Inter', sans-serif; font-size: 13px; background: var(--bg); color: var(--text); min-height: 100vh; line-height: 1.5; }
+    h1, .rpt-section-title, .tile-value, .ad-stat-value { font-family: 'Poppins', 'Inter', sans-serif; }
+
+    header.bar {
+      background: #fff; border-bottom: 1px solid var(--border);
+      padding: 12px 18px; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      position: sticky; top: 0; z-index: 20;
+    }
+    header.bar img { height: 44px; }
+    .bar-right { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: flex-end; }
+    .bar-right a, .bar-right button {
+      background: none; border: none; color: var(--text-2); font-size: 12px; cursor: pointer;
+      font-family: 'Inter', sans-serif; text-decoration: underline; padding: 6px 2px;
+    }
+    select.period {
+      background: #fff; border: 1px solid var(--border); border-radius: 8px;
+      padding: 9px 12px; font-size: 14px; color: var(--text); font-family: 'Inter', sans-serif; cursor: pointer;
+    }
+    .pdf-btn {
+      background: var(--green); color: #fff !important; border: none; border-radius: 8px;
+      padding: 9px 14px; font-size: 13px; font-weight: 600; cursor: pointer;
+      font-family: 'Inter', sans-serif; text-decoration: none !important;
+    }
+    main { max-width: 1040px; margin: 0 auto; padding: 20px 16px 60px; }
+
+    /* Report banner (matches the team report's white header) */
+    .rpt-header {
+      background: #fff; color: var(--text); border: 1px solid var(--border); border-top: 3px solid var(--green);
+      padding: 22px 26px; border-radius: 12px; margin-bottom: 20px;
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; flex-wrap: wrap;
+    }
+    .rpt-header h1 { font-size: 20px; font-weight: 600; color: var(--green); margin-bottom: 4px; }
+    .rpt-header p { font-size: 12px; color: var(--text-2); }
+    .rpt-header-meta { text-align: right; font-size: 12px; color: var(--text-2); line-height: 1.8; }
+    .rpt-header-meta strong { color: var(--text); font-weight: 600; }
+
+    .rpt-section { margin-bottom: 22px; background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; }
+    .rpt-section-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-3); border-bottom: 1px solid var(--border); padding-bottom: 9px; margin-bottom: 14px; }
+    .rpt-note { font-size: 11px; color: var(--text-3); margin-top: 10px; }
+    .rpt-placeholder { padding: 14px 0; color: var(--text-3); font-size: 12px; }
+    .rpt-placeholder strong { color: var(--text-2); font-weight: 600; }
+
+    .exec-text { font-size: 13.5px; line-height: 1.7; white-space: pre-wrap; color: var(--text); }
+
+    .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .tile { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+    .tile-label { font-size: 11px; color: var(--text-2); margin-bottom: 6px; }
+    .tile-value { font-size: 21px; font-weight: 700; letter-spacing: -0.5px; }
+    .tile-change { font-size: 11px; font-weight: 500; margin-top: 4px; }
+    .tile-change.pos { color: var(--pos); } .tile-change.neg { color: var(--neg); } .tile-change.neu { color: var(--text-3); }
+    .tile-prev { font-size: 10.5px; color: var(--text-3); margin-top: 2px; }
+
+    .chart-wrap { height: 280px; position: relative; }
+
+    .rpt-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .rpt-table th { text-align: left; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-3); padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    .rpt-table th.r, .rpt-table td.r { text-align: right; }
+    .rpt-table td { padding: 9px 10px; border-bottom: 1px solid #F1F5F9; vertical-align: middle; }
+    .product-title { font-weight: 500; color: var(--text); max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+    .product-asin { font-size: 10px; color: var(--text-3); margin-top: 1px; font-family: ui-monospace, monospace; }
+    .delta { font-size: 10px; font-weight: 500; padding: 2px 5px; border-radius: 4px; white-space: nowrap; }
+    .delta.pos { color: var(--pos); background: #F0FDF4; } .delta.neg { color: var(--neg); background: #FEF2F2; } .delta.neu { color: var(--text-3); }
+    .stock-chip { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 10px; font-weight: 600; }
+    .stock-chip.good { background: #DCFCE7; color: #166534; }
+    .stock-chip.warn { background: var(--amber-bg); color: #92400E; }
+    .stock-chip.low  { background: var(--red-bg); color: #991B1B; }
+
+    .ad-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 4px; }
+    .ad-stat { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+    .ad-stat-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-3); margin-bottom: 4px; }
+    .ad-stat-value { font-size: 18px; font-weight: 700; }
+    .ad-stat-value.ad-stat-nodata { color: var(--text-3); font-weight: 500; }
+    .ad-stat-sub { font-size: 10px; color: var(--text-3); margin-top: 2px; }
+    .ad-section-sub { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-3); margin: 12px 0 8px; }
+
+    .pie-wrap { display: grid; grid-template-columns: 1fr 260px; gap: 24px; align-items: center; }
+    .pie-chart-box { height: 300px; position: relative; }
+    .pie-legend { display: flex; flex-direction: column; gap: 7px; }
+    .pie-legend-row { display: flex; align-items: baseline; gap: 8px; font-size: 11px; }
+    .pie-swatch { width: 10px; height: 10px; border-radius: 2px; flex: none; transform: translateY(1px); }
+    .pie-legend-name { flex: 1; color: var(--text); line-height: 1.3; min-width: 0; }
+    .pie-legend-asin { display: block; font-size: 9px; color: var(--text-3); font-family: ui-monospace, monospace; margin-top: 1px; }
+    .pie-legend-pct { font-weight: 600; color: var(--text); white-space: nowrap; }
+
+    #loading { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 80px 0; color: var(--text-2); }
+    .spinner { width: 28px; height: 28px; border: 3px solid var(--border); border-top-color: var(--green); border-radius: 50%; animation: spin 0.9s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .foot { text-align: center; font-size: 11px; color: var(--text-3); padding: 20px 0; }
+
+    /* Mobile — brands live on phones. */
+    @media (max-width: 640px) {
+      main { padding: 14px 12px 50px; }
+      .rpt-header { flex-direction: column; gap: 10px; padding: 16px; }
+      .rpt-header-meta { text-align: left; }
+      .tiles { grid-template-columns: 1fr 1fr; }
+      .rpt-section { padding: 14px 12px; }
+      .rpt-table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; white-space: nowrap; }
+      .pie-wrap { grid-template-columns: 1fr; }
+      header.bar { flex-wrap: wrap; }
+    }
+  </style>
+</head>
+<body>
+  <header class="bar">
+    <img src="/portal/logo.png" alt="Rocky Mountain Co." />
+    <div class="bar-right">
+      <select class="period" id="periodSel">
+        <option value="lastMonth" selected>Last Month</option>
+        <option value="mtd">Month to Date</option>
+        <option value="last7d">Last 7 Days</option>
+        <option value="last30d">Last 30 Days</option>
+        <option value="last90d">Last 90 Days</option>
+      </select>
+      <a class="pdf-btn" id="pdfBtn" href="#">Download PDF</a>
+      <a href="/portal">← Portal home</a>
+    </div>
+  </header>
+
+  <main>
+    <div id="loading"><div class="spinner"></div><div>Loading your report…</div></div>
+    <div id="report" style="display:none">
+      <div class="rpt-header">
+        <div>
+          <h1 id="brandName">Performance Report</h1>
+          <p id="periodLabel"></p>
+        </div>
+        <div class="rpt-header-meta">
+          <div><strong>Period</strong> <span id="metaPeriod"></span></div>
+          <div><strong>Comparison</strong> <span id="metaComparison"></span></div>
+        </div>
+      </div>
+      <div id="sections"></div>
+      <p class="foot">Prepared by <strong>Rocky Mountain Co.</strong> — live data, updated with every sync.</p>
+    </div>
+  </main>
+
+  <script>
+    const $ = id => document.getElementById(id);
+    let currentPeriod = 'lastMonth';
+    let charts = {};   // id → Chart instance
+
+    // ── Formatters + coverage (mirrors brand-report.html) ────────────────────
+    const fmtC = (v, sym = 'CA$') => (v == null || isNaN(v)) ? '—' : sym + Math.round(v).toLocaleString('en-US');
+    const fmtN = v => v == null ? '—' : Number(v).toLocaleString('en-US');
+    const fmtPct = (v, d = 1) => v == null || isNaN(v) ? '—' : (Math.round(v * Math.pow(10, d)) / Math.pow(10, d)) + '%';
+    const fmt2 = v => v == null || isNaN(v) ? '—' : (Math.round(v * 100) / 100).toFixed(2);
+    function pct(curr, prev) { if (!prev || prev === 0) return null; return Math.round((curr - prev) / prev * 1000) / 10; }
+    function deltaHtml(curr, prev) {
+      const p = pct(curr, prev);
+      if (p === null) return '<span class="delta neu">—</span>';
+      return `<span class="delta ${p >= 0 ? 'pos' : 'neg'}">${p >= 0 ? '+' : ''}${p}%</span>`;
+    }
+    function escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+    function coverageState(d, kind, from, to) {
+      const boundary = kind === 'ads' ? d.coverage?.adsFrom : d.coverage?.revenueFrom;
+      if (!boundary) return { state: 'unknown', boundary: null };
+      if (to < boundary) return { state: 'none', boundary };
+      if (from < boundary) return { state: 'partial', boundary };
+      return { state: 'full', boundary };
+    }
+    const fmtDay = iso => {
+      if (!iso) return '';
+      const [y, m, dd] = iso.split('-').map(Number);
+      return new Date(Date.UTC(y, m - 1, dd)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+    };
+    function priorYearWindow(periodTo) {
+      const [y, m, d] = periodTo.split('-').map(Number);
+      const pad = n => String(n).padStart(2, '0');
+      return { from: `${y - 1}-01-01`, to: `${y - 1}-${pad(m)}-${pad(d)}` };
+    }
+    function adsNoDataHtml(cov) {
+      return `<div class="rpt-placeholder"><strong>No advertising data for this period.</strong> Our ad records begin
+        ${fmtDay(cov.boundary)}. Amazon retains roughly 95 days of advertising report history, so earlier periods
+        can't be recovered. This is missing data — not evidence that no ads ran.</div>`;
+    }
+    function adsPartialNoteHtml(cov, d) {
+      return `<div class="rpt-note">Advertising figures cover ${fmtDay(cov.boundary)} – ${fmtDay(d.period.to)} only.
+        Ad records don't reach the start of this period, so ad totals understate the full window.</div>`;
+    }
+    function adSpendOf(p) {
+      const spend = (p.spendCad || 0) + (p.spendUsd || 0);
+      if (spend > 0) return spend;
+      const touched = (p.adClicks || 0) > 0 || (p.adImpressions || 0) > 0 || (p.adOrders || 0) > 0;
+      return touched ? 0 : null;
+    }
+    function aovTile(d, tile) {
+      const o = d.orders;
+      const revenue = (d.summary?.revenueCad || 0) + (d.summary?.revenueUsd || 0);
+      if (!o || !o.count) {
+        const boundary = d.coverage?.ordersFrom;
+        const sub = (boundary && d.period?.from && d.period.from < boundary)
+          ? `No order data before ${fmtDay(boundary)}` : 'Revenue ÷ orders';
+        return tile('Avg Order Value', '—', null, sub);
+      }
+      if (o.daysWithOrders < o.revenueDays) {
+        return tile('Avg Order Value', '—', null, `Partial order data (${o.daysWithOrders}/${o.revenueDays} days)`);
+      }
+      const fmtAov = v => v == null || isNaN(v) ? '—' : '$' + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const aov = revenue / o.count;
+      const op = d.ordersPrev;
+      let change = null, prevSub = `${fmtN(o.count)} orders`;
+      if (op && op.count && op.daysWithOrders >= op.revenueDays) {
+        const prevRev = (d.summaryPrev?.revenueCad || 0) + (d.summaryPrev?.revenueUsd || 0);
+        const prevAov = prevRev / op.count;
+        change = pct(aov, prevAov);
+        prevSub = `Prior: ${fmtAov(prevAov)}`;
+      }
+      return tile('Avg Order Value', fmtAov(aov), change, prevSub);
+    }
+
+    // ── Pie helpers ──────────────────────────────────────────────────────────
+    const PIE_TOP_N = 10;
+    const PIE_COLORS = ['#2c3a20','#4a7c1f','#9db47e','#c9a227','#e08a3c','#a63d40','#6b4e8f','#3b7ea1','#5f9ea0','#8c6d4f'];
+    const PIE_OTHER_COLOR = '#c8c6bc';
+    function revenueShareSlices(d) {
+      const products = (d.products || [])
+        .map(p => ({ asin: p.asin, revenue: (p.revenueCad || 0) + (p.revenueUsd || 0),
+                     supplierName: (p.supplierName || '').trim(), amazonTitle: (p.amazonTitle || p.title || '').trim() }))
+        .filter(p => p.revenue > 0).sort((a, b) => b.revenue - a.revenue);
+      if (!products.length) return [];
+      const top = products.slice(0, PIE_TOP_N).map(p => {
+        const named = !!p.supplierName;
+        let label = p.supplierName || p.amazonTitle || p.asin;
+        if (!named && label.length > 34) label = label.slice(0, 34) + '…';
+        return { asin: p.asin, label, revenue: p.revenue, named };
+      });
+      const rest = products.slice(PIE_TOP_N);
+      if (rest.length) top.push({ asin: null, label: `All others (${rest.length})`, revenue: rest.reduce((s, p) => s + p.revenue, 0), named: true });
+      return top;
+    }
+
+    // ── Section renderers (read-only) ────────────────────────────────────────
+    const SECTION_TITLES = {
+      executive_summary: 'Executive Summary', headline_tiles: 'Performance Highlights',
+      sales_trend: 'Revenue Trend', ytd_chart: 'Year to Date', top_sellers: 'Top Sellers',
+      revenue_share_pie: 'Revenue Share by Product', ad_trend: 'Advertising Trend',
+      ad_summary: 'Advertising Performance', inventory_status: 'Inventory Status', per_asin_detail: 'Per-ASIN Detail',
+    };
+
+    const RENDERERS = {
+      // Read-only: the saved narrative if one exists. No editor, no generation —
+      // the section is skipped entirely when there's no summary for the period.
+      executive_summary: (d) => `<div class="exec-text">${escapeHtml(d.portalSummaryText)}</div>`,
+
+      headline_tiles: (d) => {
+        const s = d.summary, sp = d.summaryPrev || {};
+        const conv = s.sessions ? s.units / s.sessions * 100 : null;
+        const tile = (label, value, change, prev) => {
+          const cls = change == null ? 'neu' : change >= 0 ? 'pos' : 'neg';
+          const chg = change == null ? '' : `<div class="tile-change ${cls}">${change >= 0 ? '+' : ''}${change}% vs prior</div>`;
+          const prv = prev ? `<div class="tile-prev">${prev}</div>` : '';
+          return `<div class="tile"><div class="tile-label">${label}</div><div class="tile-value">${value}</div>${chg}${prv}</div>`;
+        };
+        const marketplaces = [
+          { label: 'Revenue — Amazon.ca (CA$)', sym: 'CA$', cur: s.revenueCad, prev: sp.revenueCad },
+          { label: 'Revenue — Amazon.com (US$)', sym: 'US$', cur: s.revenueUsd, prev: sp.revenueUsd },
+        ].filter(mp => (mp.cur || 0) > 0 || (mp.prev || 0) > 0);
+        const revTiles = marketplaces.map(mp =>
+          tile(mp.label, fmtC(mp.cur, mp.sym), pct(mp.cur, mp.prev), 'Prior: ' + fmtC(mp.prev, mp.sym))).join('');
+        const snsTile = d.snsSubs > 0 ? tile('S&amp;S Subscriptions', fmtN(d.snsSubs), null, 'Active Subscribe &amp; Save') : '';
+        const rp = d.repeatPurchase;
+        const rpMonth = rp?.period?.start
+          ? new Date(rp.period.start + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : '';
+        const rpTile = (rp && rp.source === 'brand_analytics')
+          ? tile('Repeat Customers', fmtPct(rp.repeatCustomersPct), null, `Brand Analytics — ${rpMonth}`) : '';
+        return `<div class="tiles">
+          ${revTiles}
+          ${tile('Units Sold', fmtN(s.units), pct(s.units, sp.units), 'Prior: ' + fmtN(sp.units))}
+          ${tile('Sessions', fmtN(s.sessions), null, null)}
+          ${tile('Conversion (CVR)', fmtPct(conv), null, 'Units ÷ sessions')}
+          ${tile('Buy Box %', fmtPct(s.buyBox), null, 'Avg across products')}
+          ${aovTile(d, tile)}
+          ${snsTile}
+          ${rpTile}
+        </div>`;
+      },
+
+      sales_trend: () => `<div class="chart-wrap"><canvas id="salesChart"></canvas></div>`,
+
+      ytd_chart: (d) => {
+        const cy = d.ytdSeries || [], py = d.ytdSeriesPrev || [];
+        const cyTotal = cy.reduce((s, x) => s + (x.revCad + x.revUsd), 0);
+        const pyTotal = py.reduce((s, x) => s + (x.revCad + x.revUsd), 0);
+        const pw = priorYearWindow(d.period.to);
+        const pyCov = coverageState(d, 'revenue', pw.from, pw.to);
+        const pyKnown = pyCov.state === 'full' || pyCov.state === 'partial' || pyCov.state === 'unknown';
+        const delta = (pyKnown && pyTotal > 0) ? Math.round((cyTotal - pyTotal) / pyTotal * 1000) / 10 : null;
+        const pyValue = pyKnown ? fmtC(pyTotal, '$') : 'No data';
+        const pySub = !pyKnown ? `Our data begins ${fmtDay(pyCov.boundary)}`
+          : (delta != null ? (delta >= 0 ? '+' : '') + delta + '% vs prior'
+            : (pyCov.state === 'partial' ? `Partial — data begins ${fmtDay(pyCov.boundary)}` : '—'));
+        return `
+          <div style="display:grid;grid-template-columns:1fr 200px;gap:24px;align-items:start;">
+            <div class="chart-wrap" style="height:240px"><canvas id="ytdChart"></canvas></div>
+            <div>
+              <div class="ad-stat" style="margin-bottom:10px"><div class="ad-stat-label">Current YTD</div><div class="ad-stat-value">${fmtC(cyTotal, '$')}</div><div class="ad-stat-sub">${cy.length} days</div></div>
+              <div class="ad-stat"><div class="ad-stat-label">Prior YTD</div><div class="ad-stat-value${pyKnown ? '' : ' ad-stat-nodata'}">${pyValue}</div><div class="ad-stat-sub">${pySub}</div></div>
+            </div>
+          </div>
+          ${!pyKnown ? `<div class="rpt-note">Prior-year comparison unavailable — our records begin ${fmtDay(pyCov.boundary)}. The chart shows this year only.</div>` : ''}`;
+      },
+
+      top_sellers: (d) => {
+        const TOP_N = 10;
+        const active = (d.products || []).filter(p => (p.revenueCad + p.revenueUsd + p.units) > 0);
+        const ranked = [...active].sort((a, b) => (b.revenueCad + b.revenueUsd) - (a.revenueCad + a.revenueUsd)).slice(0, TOP_N);
+        const showCad = ranked.some(p => (p.revenueCad || 0) > 0);
+        const showUsd = ranked.some(p => (p.revenueUsd || 0) > 0);
+        const rows = ranked.map(p => {
+          const full = p.title || p.asin;
+          const titleShort = full.length > 60 ? full.slice(0, 60) + '…' : full;
+          return `<tr>
+            <td><span class="product-title" title="${escapeHtml(full)}">${escapeHtml(titleShort)}</span><div class="product-asin">${escapeHtml(p.asin)}</div></td>
+            ${showCad ? `<td class="r">${fmtC(p.revenueCad)}</td>` : ''}
+            ${showUsd ? `<td class="r">${fmtC(p.revenueUsd, 'US$')}</td>` : ''}
+            <td class="r">${fmtN(p.units)}</td>
+            <td class="r">${fmtN(p.sessions)}</td>
+            <td class="r">${fmtPct(p.buyBox)}</td>
+            <td class="r">${deltaHtml(p.units, p.prev?.units)}</td>
+          </tr>`;
+        }).join('');
+        const cols = 5 + (showCad ? 1 : 0) + (showUsd ? 1 : 0);
+        const more = active.length > TOP_N ? `<div class="rpt-note">Showing top ${TOP_N} of ${active.length} products by revenue.</div>` : '';
+        return `<table class="rpt-table">
+          <thead><tr><th>Product</th>
+            ${showCad ? '<th class="r">Rev CA$</th>' : ''}${showUsd ? '<th class="r">Rev US$</th>' : ''}
+            <th class="r">Units</th><th class="r">Sessions</th><th class="r">Buy Box</th><th class="r">Δ Units</th>
+          </tr></thead>
+          <tbody>${rows || `<tr><td colspan="${cols}" style="text-align:center;color:var(--text-3)">No products with activity in this period.</td></tr>`}</tbody>
+        </table>${more}`;
+      },
+
+      revenue_share_pie: (d) => {
+        const slices = revenueShareSlices(d);
+        if (!slices.length) return `<div class="rpt-placeholder">No product revenue in this period.</div>`;
+        const total = slices.reduce((s, x) => s + x.revenue, 0);
+        const legend = slices.map((s, i) => `
+          <div class="pie-legend-row">
+            <span class="pie-swatch" style="background:${s.asin === null ? PIE_OTHER_COLOR : PIE_COLORS[i % PIE_COLORS.length]}"></span>
+            <span class="pie-legend-name">${escapeHtml(s.label)}
+              ${s.asin ? `<span class="pie-legend-asin">${escapeHtml(s.asin)}</span>` : ''}</span>
+            <span class="pie-legend-pct">${(s.revenue / total * 100).toFixed(1)}%</span>
+          </div>`).join('');
+        return `<div class="pie-wrap">
+          <div class="pie-chart-box"><canvas id="revenueShareChart"></canvas></div>
+          <div class="pie-legend">${legend}</div>
+        </div>`;
+      },
+
+      ad_trend: (d) => {
+        const days = d.dailySeries || [];
+        const cov = coverageState(d, 'ads', d.period.from, d.period.to);
+        if (cov.state === 'none') return adsNoDataHtml(cov);
+        const hasAds = days.some(x => (x.spendCad + x.spendUsd) > 0);
+        if (!hasAds) return `<div class="rpt-placeholder">No advertising activity in this period.</div>`;
+        return `<div class="chart-wrap" style="height:260px"><canvas id="adTrendChart"></canvas></div>
+          ${cov.state === 'partial' ? adsPartialNoteHtml(cov, d) : ''}`;
+      },
+
+      ad_summary: (d) => {
+        const cov = coverageState(d, 'ads', d.period.from, d.period.to);
+        if (cov.state === 'none') return adsNoDataHtml(cov);
+        const ad = d.summary?.adSummary;
+        if (!ad) return `<div class="rpt-placeholder">No advertising activity in this period.</div>`;
+        const stat = (label, value, sub) => `<div class="ad-stat"><div class="ad-stat-label">${label}</div><div class="ad-stat-value">${value}</div>${sub ? `<div class="ad-stat-sub">${sub}</div>` : ''}</div>`;
+        const totalSpend = (ad.spendCad || 0) + (ad.spendUsd || 0);
+        const totalAttr = (ad.attributedSalesCad || 0) + (ad.attributedSalesUsd || 0);
+        return `
+          <div class="ad-grid">
+            ${stat('Total Ad Sales', fmtC(totalAttr, '$'), `CAD ${fmtC(ad.attributedSalesCad)} · USD ${fmtC(ad.attributedSalesUsd, 'US$')}`)}
+            ${stat('Total Spend', fmtC(totalSpend, '$'), `CAD ${fmtC(ad.spendCad)} · USD ${fmtC(ad.spendUsd, 'US$')}`)}
+            ${stat('ACOS', fmtPct(ad.acos), 'Spend ÷ ad sales')}
+            ${stat('ROAS', ad.roas != null ? ad.roas.toFixed(2) + 'x' : '—', 'Ad sales ÷ spend')}
+          </div>
+          <div class="ad-section-sub">Vs total business</div>
+          <div class="ad-grid">
+            ${stat('TACOS', fmtPct(ad.tacos), 'Spend ÷ total revenue')}
+            ${stat('Impressions', fmtN(ad.impressions))}
+            ${stat('Clicks', fmtN(ad.clicks), `CTR ${fmtPct(ad.ctr, 2)} · CPC $${fmt2(ad.cpc)}`)}
+          </div>
+          ${cov.state === 'partial' ? adsPartialNoteHtml(cov, d) : ''}`;
+      },
+
+      inventory_status: (d) => {
+        const products = d.products || [];
+        const periodDays = Math.max(1, Math.round((new Date(d.period.to) - new Date(d.period.from)) / 86400000) + 1);
+        let low = 0, warn = 0, good = 0, missing = 0;
+        const rows = [];
+        for (const p of products) {
+          const stock = p.inventory?.onHand;
+          if (stock == null) { missing++; continue; }
+          const velocity = (p.units || 0) / periodDays;
+          const days = velocity > 0 ? Math.round(stock / velocity) : null;
+          if (stock <= 0) low++; else if (stock < 30) low++; else if (stock < 100) warn++; else good++;
+          rows.push({ asin: p.asin, title: p.title || p.asin, stock, velocity, days });
+        }
+        rows.sort((a, b) => (a.days ?? 1e9) - (b.days ?? 1e9));
+        const top = rows.slice(0, 10);
+        const tableRows = top.map(r => {
+          const titleShort = (r.title.length > 50 ? r.title.slice(0, 50) + '…' : r.title);
+          let cls = 'good';
+          if (r.days == null) cls = ''; else if (r.days < 14) cls = 'low'; else if (r.days < 30) cls = 'warn';
+          const daysLabel = r.days == null ? '— (no velocity)' : (r.days + ' days');
+          return `<tr>
+            <td><span class="product-title">${escapeHtml(titleShort)}</span><div class="product-asin">${escapeHtml(r.asin)}</div></td>
+            <td class="r">${fmtN(r.stock)}</td>
+            <td class="r">${r.velocity > 0 ? r.velocity.toFixed(1) + '/day' : '—'}</td>
+            <td class="r">${cls ? `<span class="stock-chip ${cls}">${daysLabel}</span>` : daysLabel}</td>
+          </tr>`;
+        }).join('');
+        return `
+          <div class="ad-grid">
+            <div class="ad-stat"><div class="ad-stat-label">Healthy stock</div><div class="ad-stat-value" style="color:var(--pos)">${good}</div><div class="ad-stat-sub">100+ units on hand</div></div>
+            <div class="ad-stat"><div class="ad-stat-label">Warning</div><div class="ad-stat-value" style="color:var(--amber)">${warn}</div><div class="ad-stat-sub">30–99 units</div></div>
+            <div class="ad-stat"><div class="ad-stat-label">Low / out</div><div class="ad-stat-value" style="color:var(--neg)">${low}</div><div class="ad-stat-sub">Under 30 units</div></div>
+            <div class="ad-stat"><div class="ad-stat-label">No data</div><div class="ad-stat-value" style="color:var(--text-3)">${missing}</div><div class="ad-stat-sub">Inventory not synced</div></div>
+          </div>
+          ${top.length ? `<div class="ad-section-sub">Lowest days of cover</div>
+          <table class="rpt-table">
+            <thead><tr><th>Product</th><th class="r">On hand</th><th class="r">Velocity</th><th class="r">Days of cover</th></tr></thead>
+            <tbody>${tableRows}</tbody>
+          </table>` : ''}`;
+      },
+
+      // Every ASIN with activity, all rows — a brand's catalogue is small
+      // enough that pagination hides more than it helps here.
+      per_asin_detail: (d) => {
+        const rows = (d.products || []).filter(p =>
+          (p.units || 0) > 0 || (p.revenueCad || 0) > 0 || (p.revenueUsd || 0) > 0 ||
+          (p.sessions || 0) > 0 || ((p.spendCad || 0) + (p.spendUsd || 0)) > 0)
+          .sort((a, b) => ((b.revenueCad || 0) + (b.revenueUsd || 0)) - ((a.revenueCad || 0) + (a.revenueUsd || 0)));
+        if (!rows.length) return `<div class="rpt-placeholder">No products with activity in this period.</div>`;
+        const showCad = rows.some(p => (p.revenueCad || 0) > 0);
+        const showUsd = rows.some(p => (p.revenueUsd || 0) > 0);
+        const body = rows.map(p => {
+          const full = p.title || p.asin;
+          const short = full.length > 52 ? full.slice(0, 52) + '…' : full;
+          const spend = adSpendOf(p);
+          return `<tr>
+            <td><span class="product-title" title="${escapeHtml(full)}">${escapeHtml(short)}</span><div class="product-asin">${escapeHtml(p.asin)}</div></td>
+            ${showCad ? `<td class="r">${fmtC(p.revenueCad)}</td>` : ''}
+            ${showUsd ? `<td class="r">${fmtC(p.revenueUsd, 'US$')}</td>` : ''}
+            <td class="r">${fmtN(p.units)}</td>
+            <td class="r">${fmtN(p.sessions)}</td>
+            <td class="r">${fmtPct(p.cvr)}</td>
+            <td class="r">${fmtPct(p.buyBox)}</td>
+            <td class="r">${spend == null ? '—' : fmtC(spend)}</td>
+            <td class="r">${fmtPct(p.acos)}</td>
+            <td class="r">${p.roas == null ? '—' : p.roas.toFixed(2) + 'x'}</td>
+          </tr>`;
+        }).join('');
+        return `<table class="rpt-table">
+          <thead><tr><th>Product</th>
+            ${showCad ? '<th class="r">Rev CA$</th>' : ''}${showUsd ? '<th class="r">Rev US$</th>' : ''}
+            <th class="r">Units</th><th class="r">Sessions</th><th class="r">CVR</th><th class="r">Buy Box</th>
+            <th class="r">Ad Spend</th><th class="r">ACOS</th><th class="r">ROAS</th>
+          </tr></thead><tbody>${body}</tbody></table>
+          <div class="rpt-note">${rows.length} product${rows.length === 1 ? '' : 's'} with activity in this period.</div>`;
+      },
+    };
+
+    // ── Charts (configs mirror brand-report.html) ────────────────────────────
+    function killChart(id) { if (charts[id]) { charts[id].destroy(); delete charts[id]; } }
+    function buildSalesChart(daily, dailyPrev) {
+      const el = $('salesChart'); if (!el) return;
+      killChart('sales');
+      const labels = (daily || []).map(d => d.date);
+      const curr = (daily || []).map(d => Math.round((d.revCad + d.revUsd) * 100) / 100);
+      const prevByIdx = (dailyPrev || []).map(d => Math.round((d.revCad + d.revUsd) * 100) / 100);
+      charts.sales = new Chart(el, {
+        type: 'line',
+        data: { labels, datasets: [
+          { label: 'Current period', data: curr, borderColor: '#537D30', backgroundColor: 'rgba(83,125,48,0.10)', fill: true, tension: 0.3, borderWidth: 2, pointRadius: 0 },
+          { label: 'Prior period', data: prevByIdx, borderColor: '#9AAABB', backgroundColor: 'transparent', fill: false, tension: 0.3, borderWidth: 2, pointRadius: 0, borderDash: [4, 4] },
+        ] },
+        options: { responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { position: 'top', align: 'end', labels: { font: { size: 11 }, color: '#5A6A82', usePointStyle: true } }, tooltip: { mode: 'index', intersect: false } },
+          scales: { x: { grid: { display: false }, ticks: { font: { size: 10 }, color: '#9AAABB', maxRotation: 0, autoSkip: true } },
+                    y: { grid: { color: '#F1F5F9' }, ticks: { font: { size: 10 }, color: '#9AAABB', callback: v => '$' + v.toLocaleString() }, beginAtZero: true } } },
+      });
+    }
+    function buildYtd(curr, prior) {
+      const el = $('ytdChart'); if (!el) return;
+      killChart('ytd');
+      function cumulative(rows) { let acc = 0; return (rows || []).map(r => { acc += (r.revCad + r.revUsd); return Math.round(acc * 100) / 100; }); }
+      charts.ytd = new Chart(el, {
+        type: 'line',
+        data: { labels: (curr || []).map(r => r.date), datasets: [
+          { label: 'Current YTD', data: cumulative(curr), borderColor: '#537D30', backgroundColor: 'rgba(83,125,48,0.10)', fill: true, tension: 0.2, borderWidth: 2, pointRadius: 0 },
+          { label: 'Prior YTD', data: cumulative(prior), borderColor: '#9AAABB', backgroundColor: 'transparent', fill: false, tension: 0.2, borderWidth: 2, pointRadius: 0, borderDash: [4, 4] },
+        ] },
+        options: { responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { position: 'top', align: 'end', labels: { font: { size: 11 }, color: '#5A6A82', usePointStyle: true } },
+                     tooltip: { mode: 'index', intersect: false, callbacks: { label: ctx => ctx.dataset.label + ': $' + Number(ctx.parsed.y).toLocaleString() } } },
+          scales: { x: { grid: { display: false }, ticks: { font: { size: 10 }, color: '#9AAABB', maxRotation: 0, autoSkip: true, maxTicksLimit: 12 } },
+                    y: { grid: { color: '#F1F5F9' }, ticks: { font: { size: 10 }, color: '#9AAABB', callback: v => '$' + Math.round(v).toLocaleString() }, beginAtZero: true } } },
+      });
+    }
+    function buildAdTrend(daily) {
+      const el = $('adTrendChart'); if (!el) return;
+      killChart('ad');
+      const labels = (daily || []).map(d => d.date);
+      const adSales = (daily || []).map(d => Math.round((d.adSalesCad + d.adSalesUsd) * 100) / 100);
+      const totalRev = (daily || []).map(d => Math.round((d.revCad + d.revUsd) * 100) / 100);
+      const organic = totalRev.map((tot, i) => Math.max(0, Math.round((tot - adSales[i]) * 100) / 100));
+      const roas = (daily || []).map(d => { const sp = (d.spendCad + d.spendUsd); const sa = (d.adSalesCad + d.adSalesUsd); return sp > 0 ? Math.round(sa / sp * 100) / 100 : null; });
+      charts.ad = new Chart(el, {
+        type: 'bar',
+        data: { labels, datasets: [
+          { label: 'Ad sales', data: adSales, backgroundColor: '#537D30', stack: 'sales', borderWidth: 0, yAxisID: 'y' },
+          { label: 'Organic sales', data: organic, backgroundColor: '#CBD5E1', stack: 'sales', borderWidth: 0, yAxisID: 'y' },
+          { label: 'ROAS', data: roas, type: 'line', borderColor: '#1A2332', backgroundColor: 'transparent', borderWidth: 2, pointRadius: 0, tension: 0.3, yAxisID: 'y1' },
+        ] },
+        options: { responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { position: 'top', align: 'end', labels: { font: { size: 11 }, color: '#5A6A82', usePointStyle: true } }, tooltip: { mode: 'index', intersect: false } },
+          scales: { x: { stacked: true, grid: { display: false }, ticks: { font: { size: 10 }, color: '#9AAABB', maxRotation: 0, autoSkip: true } },
+                    y: { stacked: true, grid: { color: '#F1F5F9' }, ticks: { font: { size: 10 }, color: '#9AAABB', callback: v => '$' + v.toLocaleString() }, beginAtZero: true, position: 'left' },
+                    y1: { grid: { display: false }, ticks: { font: { size: 10 }, color: '#9AAABB', callback: v => v + 'x' }, beginAtZero: true, position: 'right' } } },
+      });
+    }
+    function buildPie(d) {
+      const el = $('revenueShareChart'); if (!el) return;
+      killChart('pie');
+      const slices = revenueShareSlices(d);
+      if (!slices.length) return;
+      const total = slices.reduce((s, x) => s + x.revenue, 0);
+      charts.pie = new Chart(el, {
+        type: 'pie',
+        data: { labels: slices.map(s => s.label), datasets: [{
+          data: slices.map(s => Math.round(s.revenue * 100) / 100),
+          backgroundColor: slices.map((s, i) => s.asin === null ? PIE_OTHER_COLOR : PIE_COLORS[i % PIE_COLORS.length]),
+          borderColor: '#fff', borderWidth: 1.5 }] },
+        options: { responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => {
+            const v = ctx.parsed; const p = (v / total * 100).toFixed(1); return `${slices[ctx.dataIndex].label}: ${fmtC(v, '$')} (${p}%)`; } } } } },
+      });
+    }
+
+    // ── Boot ────────────────────────────────────────────────────────────────
+    async function render() {
+      // Cleared for the duration — a stale true lets anything waiting on it
+      // (tests, future PDF paths) read the PREVIOUS period's DOM.
+      window.reportReady = false;
+      $('loading').style.display = 'flex';
+      $('report').style.display = 'none';
+      try {
+        const res = await fetch('/api/portal/report-dataset?period=' + encodeURIComponent(currentPeriod));
+        if (res.status === 401) { location.href = '/portal/login'; return; }
+        if (!res.ok) throw new Error('Could not load the report.');
+        const d = await res.json();
+
+        $('brandName').textContent = `${d.brand.name} — Performance Report`;
+        $('periodLabel').textContent = d.period.label;
+        $('metaPeriod').textContent = d.period.label;
+        $('metaComparison').textContent = d.comparison.label;
+
+        // Their brand's configured sections, in their configured order — with
+        // the summary skipped when there's nothing to show (never an editor).
+        const enabled = (d.config?.enabled_sections || Object.keys(RENDERERS))
+          .filter(key => RENDERERS[key])
+          .filter(key => key !== 'executive_summary' || (d.portalSummaryText || '').trim());
+
+        $('sections').innerHTML = enabled.map(key => `
+          <div class="rpt-section" data-section="${key}">
+            <div class="rpt-section-title">${escapeHtml(SECTION_TITLES[key] || key)}</div>
+            ${RENDERERS[key](d)}
+          </div>`).join('');
+
+        if (enabled.includes('sales_trend')) buildSalesChart(d.dailySeries, d.dailySeriesPrev);
+        if (enabled.includes('ytd_chart')) buildYtd(d.ytdSeries, d.ytdSeriesPrev);
+        if (enabled.includes('ad_trend')) buildAdTrend(d.dailySeries);
+        if (enabled.includes('revenue_share_pie')) buildPie(d);
+
+        $('pdfBtn').href = '/api/portal/report.pdf?period=' + encodeURIComponent(currentPeriod);
+        $('loading').style.display = 'none';
+        $('report').style.display = 'block';
+        window.reportReady = true;
+      } catch (err) {
+        $('loading').innerHTML = `<div style="color:var(--neg)">${escapeHtml(err.message)} — <a href="/portal">back to portal</a></div>`;
+      }
+    }
+
+    $('periodSel').addEventListener('change', () => { currentPeriod = $('periodSel').value; render(); });
+    render();
+  </script>
+</body>
+</html>

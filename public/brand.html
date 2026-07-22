@@ -147,6 +147,31 @@
       </div>
     </div>
 
+    <!-- Portal Access — team-side management of this brand's portal logins.
+         Create a contact → copy the one-time invite link → send it; the brand
+         sets their own password on first visit. -->
+    <div class="rmc-card mt-6" id="portalCard">
+      <div class="px-5 py-4 flex items-center justify-between" style="border-bottom:1px solid var(--border)">
+        <h2 class="text-sm font-semibold" style="color:var(--text)">Portal Access</h2>
+        <span class="text-xs" style="color:var(--text-3)">Brand logins for the client portal</span>
+      </div>
+      <div class="px-5 py-4">
+        <div id="portalUsers" class="text-sm" style="color:var(--text-2)">Loading…</div>
+        <div class="mt-4 flex items-end gap-2 flex-wrap">
+          <div>
+            <label class="block text-xs mb-1" style="color:var(--text-3)">Contact email</label>
+            <input id="puEmail" type="email" class="rmc-input" placeholder="contact@brand.com" style="width:220px" />
+          </div>
+          <div>
+            <label class="block text-xs mb-1" style="color:var(--text-3)">Username</label>
+            <input id="puUsername" type="text" class="rmc-input" placeholder="(defaults to brand id)" style="width:160px" />
+          </div>
+          <button onclick="createPortalUser()" class="btn-primary" style="font-size:12px">Create + get invite link</button>
+        </div>
+        <div id="puResult" class="mt-3 text-xs" style="color:var(--text-2);display:none"></div>
+      </div>
+    </div>
+
   </div>
 
   <script>
@@ -832,7 +857,79 @@
       }
     }
 
+    // ── Portal Access (team-side) ─────────────────────────────────────────────
+    async function loadPortalUsers() {
+      const box = document.getElementById('portalUsers');
+      try {
+        const res = await fetch('/api/portal/users');
+        const data = await res.json();
+        if (!res.ok) { box.textContent = data.error || 'Portal not set up yet.'; return; }
+        const users = (data.users || []).filter(u => u.brand_id === brandId);
+        if (!users.length) { box.textContent = 'No portal logins for this brand yet.'; return; }
+        box.innerHTML = users.map(u => `
+          <div class="flex items-center justify-between gap-3 py-2 flex-wrap" style="border-bottom:1px solid rgba(255,255,255,0.05)">
+            <div>
+              <span style="color:var(--text)">${u.username || '—'}</span>
+              <span class="text-xs" style="color:var(--text-3)"> · ${u.email}</span>
+              <span class="text-xs" style="color:var(--text-3)"> · ${u.revoked_at ? 'REVOKED' : (u.password_set_at ? 'password set' : 'awaiting first login')}${u.last_login_at ? ' · last login ' + new Date(u.last_login_at).toLocaleDateString() : ''}</span>
+            </div>
+            <div class="flex gap-2">
+              ${u.revoked_at
+                ? `<button onclick="portalUserAction('${u.id}','restore')" class="btn-ghost" style="font-size:11px;padding:4px 10px">Restore</button>`
+                : `<button onclick="portalInviteLink('${u.id}')" class="btn-ghost" style="font-size:11px;padding:4px 10px">Copy invite link</button>
+                   <button onclick="portalUserAction('${u.id}','revoke')" class="btn-ghost" style="font-size:11px;padding:4px 10px;color:var(--neg)">Revoke</button>`}
+            </div>
+          </div>`).join('');
+      } catch { box.textContent = 'Could not load portal users.'; }
+    }
+
+    function puSay(html) {
+      const el = document.getElementById('puResult');
+      el.style.display = 'block'; el.innerHTML = html;
+    }
+
+    async function createPortalUser() {
+      const email = document.getElementById('puEmail').value.trim();
+      const username = document.getElementById('puUsername').value.trim();
+      if (!email) { puSay('Enter an email.'); return; }
+      try {
+        const res = await fetch('/api/portal/users', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, username: username || undefined, brand_id: brandId }),
+        });
+        const data = await res.json();
+        if (!res.ok) { puSay('Error: ' + (data.error || res.status)); return; }
+        puSay(`Created <strong>${data.username}</strong>. One-time invite link (15 min):<br>
+          <input class="rmc-input mt-1" style="width:100%" readonly value="${data.invite_link}" onclick="this.select()" />
+          <span style="color:var(--text-3)">Send this to the brand — they'll set their own password on first visit.</span>`);
+        document.getElementById('puEmail').value = ''; document.getElementById('puUsername').value = '';
+        loadPortalUsers();
+      } catch (e) { puSay('Error: ' + e.message); }
+    }
+
+    async function portalInviteLink(id) {
+      try {
+        const res = await fetch(`/api/portal/users/${id}/invite-link`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) { puSay('Error: ' + (data.error || res.status)); return; }
+        puSay(`Fresh invite link (15 min):<br>
+          <input class="rmc-input mt-1" style="width:100%" readonly value="${data.invite_link}" onclick="this.select()" />`);
+      } catch (e) { puSay('Error: ' + e.message); }
+    }
+
+    async function portalUserAction(id, action) {
+      if (action === 'revoke' && !confirm('Revoke this login? Their sessions end immediately.')) return;
+      try {
+        const res = await fetch(`/api/portal/users/${id}/${action}`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) { puSay('Error: ' + (data.error || res.status)); return; }
+        puSay(action === 'revoke' ? 'Revoked — sessions killed.' : 'Restored.');
+        loadPortalUsers();
+      } catch (e) { puSay('Error: ' + e.message); }
+    }
+
     loadBrand();
+    loadPortalUsers();
   </script>
 
   <!-- Sales popup -->

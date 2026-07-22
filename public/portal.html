@@ -60,6 +60,7 @@
     <div class="who">
       <div class="brand" id="brandName">&nbsp;</div>
       <button id="signout" type="button">Sign out</button>
+      <a href="/portal/setup" style="display:block;color:#9aa093;font-size:11px;text-decoration:underline;margin-top:2px">Change password</a>
     </div>
   </header>
 
@@ -68,6 +69,12 @@
     <p class="sub" id="hello">Performance reporting from Rocky Mountain Co.</p>
 
     <div id="status"></div>
+
+    <div class="card">
+      <h2>Live report</h2>
+      <a href="/portal/report" class="dl-btn" style="text-decoration:none">View your live report →</a>
+      <p class="note">Always current — your numbers as of the latest sync.</p>
+    </div>
 
     <div class="card">
       <h2>Download a report</h2>
@@ -94,6 +101,8 @@
         const res = await fetch('/api/portal/me');
         if (res.status === 401) { location.href = '/portal/login'; return; }
         const me = await res.json();
+        // First login: no password yet → they set one before anything else.
+        if (me.passwordSet === false) { location.href = '/portal/setup'; return; }
         document.getElementById('brandName').textContent = me.brandName;
         document.getElementById('hello').textContent =
           `Performance reporting for ${me.brandName}, prepared by Rocky Mountain Co.`;
