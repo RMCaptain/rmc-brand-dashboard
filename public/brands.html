@@ -48,7 +48,7 @@
     <!-- Page header -->
     <div class="flex items-center justify-between mb-5">
       <div class="flex items-center gap-3 flex-wrap">
-        <h1 class="text-base font-semibold text-white">Brands <span id="brandCount" class="text-slate-500 font-normal text-sm"></span></h1>
+        <h1 class="text-base font-semibold text-white">Brands <span id="brandCount" class="text-slate-500 font-normal text-sm"></span> <span id="liveNote" class="text-slate-500 font-normal text-xs"></span></h1>
         <!-- Period selector — performance view only -->
         <div id="presetBtns" class="flex items-center gap-2">
           <select id="presetSelect" onchange="onPresetChange(this.value)" class="rmc-select" style="width:auto;min-width:140px;color-scheme:dark">
@@ -362,6 +362,18 @@
         : isCustom    ? (customData?.brands     || {})
         : (rangeData[activePreset]?.brands || presetMetrics.presets?.[activePreset]?.brands || {});
       document.getElementById('brandCount').textContent = `(${brandsData.length})`;
+
+      // Live view honesty (Today): freshness + how much is Pending-order estimate
+      const noteEl = document.getElementById('liveNote');
+      if (noteEl) {
+        if (isToday && todayData?.estimated && todayData?.updatedAt) {
+          const asOf = new Date(todayData.updatedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+          const est  = todayData.estimated.estUnits > 0 ? ` · ${todayData.estimated.estUnits} units estimated` : '';
+          noteEl.textContent = `as of ${asOf}${est}`;
+        } else {
+          noteEl.textContent = '';
+        }
+      }
 
       if (!brandsData.length) {
         document.getElementById('brandsGrid').innerHTML =

@@ -283,6 +283,15 @@
         ? (data.startDate === data.endDate ? fmtD(data.startDate) : `${fmtD(data.startDate)} – ${fmtD(data.endDate)}`)
         : '—';
 
+      // Live view honesty (Today): when the numbers include Pending-order
+      // estimates, say so — and always show data freshness.
+      let liveNote = '';
+      if (data?.estimated && data?.updatedAt) {
+        const asOf = new Date(data.updatedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+        const est  = data.estimated.estUnits > 0 ? ` · ${data.estimated.estUnits} units estimated` : '';
+        liveNote = `<div class="text-xs mt-0.5" style="color:var(--text-3)">as of ${asOf}${est}</div>`;
+      }
+
       if (!m) {
         return `<div class="rmc-card overflow-hidden" style="border-top:3px solid ${accent}">
           <div class="px-4 py-4">
@@ -313,6 +322,7 @@
             <div>
               <div class="text-sm font-semibold text-white">${label}</div>
               <div class="text-xs text-slate-400 mt-0.5">${dateStr}</div>
+              ${liveNote}
             </div>
             <button onclick="closeTileDetail('${key}')" class="transition-colors p-0.5 flex-shrink-0 hover:opacity-80" style="color:var(--text-3)">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -357,6 +367,7 @@
               <div>
                 <div class="text-xs font-semibold" style="color:${accent}">${label}</div>
                 <div class="text-xs mt-0.5" style="color:var(--text-3)">${dateStr}</div>
+                ${liveNote}
               </div>
             </div>
             <div class="mb-3 pb-3" style="border-bottom:1px solid var(--border)">

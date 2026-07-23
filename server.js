@@ -2513,25 +2513,36 @@ async function persistBrandOrderCounts(date, orderContrib) {
   }
 }
 
-async function finalizeYesterdayFromOrders() {
+// Re-pull one PST day in full from the Orders API and re-persist it as the
+// authoritative units/revenue. Idempotent; refuses to write when the API
+// returns nothing (rate limit must not wipe a populated day). Returns true
+// on a successful write.
+async function reconcileDayFromOrders(pstDate, tag = 'Reconcile') {
   try {
-    const yest = pstSubtractDays(pstDateStr(), 1);
-    const { byAsin, byAsinEstimated, orderCount, orderContrib } = await ordersPoller.computeDayFromOrders(yest);
+    const { byAsin, byAsinEstimated, orderCount, orderContrib, estimateMeta } =
+      await ordersPoller.computeDayFromOrders(pstDate);
 
     const realEntries = Object.values(byAsin || {}).filter(d =>
       (d.units || 0) > 0 || (d.revenueCad || 0) > 0 || (d.revenueUsd || 0) > 0
     );
     if (realEntries.length === 0) {
-      console.warn(`[Orders] Finalize ${yest}: Orders API returned no usable rows. NOT writing — preserving prior data.`);
-      return;
+      console.warn(`[${tag}] ${pstDate}: Orders API returned no usable rows. NOT writing — preserving prior data.`);
+      return false;
     }
 
-    const n = await persistOrdersDay(yest, byAsinEstimated || byAsin);
-    const o = await persistBrandOrderCounts(yest, orderContrib);
-    console.log(`[Orders] Finalized yesterday ${yest}: ${n} ASIN rows written, ${orderCount} orders, ${o} brand order-counts`);
+    const n = await persistOrdersDay(pstDate, byAsinEstimated || byAsin);
+    const o = await persistBrandOrderCounts(pstDate, orderContrib);
+    const estNote = estimateMeta?.estUnits ? `, ${estimateMeta.estUnits} units still estimated` : '';
+    console.log(`[${tag}] ${pstDate}: ${n} ASIN rows written, ${orderCount} orders, ${o} brand order-counts${estNote}`);
+    return true;
   } catch (e) {
-    console.warn('[Orders] finalize yesterday failed:', e.message);
+    console.warn(`[${tag}] ${pstDate} failed:`, e.message);
+    return false;
   }
+}
+
+async function finalizeYesterdayFromOrders() {
+  await reconcileDayFromOrders(pstSubtractDays(pstDateStr(), 1), 'Finalize');
 }
 
 // Trigger historical daily_metrics backfill — responds immediately, runs in background
@@ -5368,6 +5379,22 @@ async function runFullSync(tag = 'Sync') {
     } catch (dmErr) {
       console.warn(`[${tag}] daily_metrics write failed (non-fatal):`, dmErr.message);
     }
+
+    // Rolling reconcile: re-pull yesterday + day-2 from the Orders API and
+    // re-persist. The 8:30 UTC finalize catches most of a day, but orders
+    // still Pending at that moment get their real prices hours later — without
+    // this they'd stay estimates forever (and cancellations would linger).
+    // Background: each day is a full Orders pull (~5-10 min). Presets refresh
+    // again afterward so brand cards pick up the corrected numbers.
+    setImmediate(async () => {
+      try {
+        const ok1 = await reconcileDayFromOrders(pstSubtractDays(pstDateStr(), 1), `${tag}-Reconcile`);
+        const ok2 = await reconcileDayFromOrders(pstSubtractDays(pstDateStr(), 2), `${tag}-Reconcile`);
+        if (ok1 || ok2) await rebuildPresetSummariesFromDaily(`${tag}-PostReconcile`);
+      } catch (e) {
+        console.warn(`[${tag}] rolling reconcile failed:`, e.message);
+      }
+    });
 
     // Financial events run in background — fees data can take 30-60 min (100+ API pages)
     // so we don't block the core S&T sync on them. They'll patch preset-metrics when done.

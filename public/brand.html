@@ -378,6 +378,12 @@
         document.getElementById('dateRangeLabel').textContent = fmtLabel(today) + ' (live)';
         fetch('/api/metrics/today').then(r => r.json()).then(d => {
           todayData = d;
+          // Freshness + Pending-estimate honesty on the live label
+          if (d?.estimated && d?.updatedAt) {
+            const asOf = new Date(d.updatedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+            const est  = d.estimated.estUnits > 0 ? ` · ${d.estimated.estUnits} units estimated` : '';
+            document.getElementById('dateRangeLabel').textContent = `${fmtLabel(today)} (live, as of ${asOf}${est})`;
+          }
           if (brandCache) renderBrand({ ...brandCache, metrics: todayData.brands?.[brandCache.id] || null });
         });
         return;
