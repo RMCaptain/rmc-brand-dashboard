@@ -18,10 +18,13 @@ const { pstSubtractDays, pstDateStr } = require('../sync/dateUtils');
   const yest = pstSubtractDays(pstDateStr(), 1);
   console.log(`Rebuilding orders state for ${yest}...`);
 
-  await ordersPoller.rebuildYesterday();
-  const state = ordersPoller.getYesterdayState();
+  // computeDayFromOrders: full pull + rate-limit retry pass + Pending-order
+  // revenue estimation (byAsinEstimated) — same pipeline as the nightly finalize.
+  const result = await ordersPoller.computeDayFromOrders(yest);
+  const state = { date: result.date, byAsin: result.byAsinEstimated || result.byAsin };
+  state.asinCount = Object.keys(state.byAsin).length;
 
-  console.log(`In-memory state: ${state.asinCount} ASINs, date=${state.date}`);
+  console.log(`Computed: ${state.asinCount} ASINs, date=${state.date}, ${result.orderCount} orders`);
   if (!state.date || state.asinCount === 0) {
     console.error('Rebuild returned no data — aborting.');
     process.exit(1);

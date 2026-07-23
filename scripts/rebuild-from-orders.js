@@ -56,9 +56,11 @@ function daysBetween(startStr, endStr) {
   for (const date of dates) {
     const t0 = Date.now();
     try {
-      const { byAsin, orderCount, orderContrib } = await computeDayFromOrders(date);
+      // byAsinEstimated: Pending-order revenue priced via the estimateDay
+      // ladder. For settled historical days it's identical to raw byAsin.
+      const { byAsin, byAsinEstimated, orderCount, orderContrib } = await computeDayFromOrders(date);
 
-      const rows = Object.entries(byAsin).map(([asin, d]) => ({
+      const rows = Object.entries(byAsinEstimated || byAsin).map(([asin, d]) => ({
         asin,
         date,
         brand_id:    asinBrand[asin] || 'unknown-brand',

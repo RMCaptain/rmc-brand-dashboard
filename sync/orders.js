@@ -37,7 +37,7 @@ function resetIfNewDay() {
       console.log(`[Orders] Carried ${state.date} → yesterdayState (${Object.keys(state.byAsin).length} ASINs)`);
     }
     console.log(`[Orders] New day (${today}) — resetting intraday state`);
-    state = { date: today, updatedAt: null, byAsin: {}, seenOrderIds: new Set(), failedOrderIds: new Set(), orderContrib: {} };
+    state = { date: today, updatedAt: null, byAsin: {}, seenOrderIds: new Set(), failedOrderIds: new Set(), orderContrib: {}, skuQueue: new Map(), skuTried: new Set(), estPrice: {} };
   }
 }
 
@@ -72,26 +72,6 @@ async function processOrders(orders, token, mpId, target) {
   if (!target.failedOrderIds) target.failedOrderIds = new Set();
   if (!target.orderContrib)   target.orderContrib   = {};
 
-  function addContribution(asin, units, revenue) {
-    if (!target.byAsin[asin]) target.byAsin[asin] = { units: 0, unitsCa: 0, unitsUs: 0, revenueCad: 0, revenueUsd: 0 };
-    target.byAsin[asin].units += units;
-    if (isCA) { target.byAsin[asin].unitsCa += units; target.byAsin[asin].revenueCad += revenue; }
-    else      { target.byAsin[asin].unitsUs += units; target.byAsin[asin].revenueUsd += revenue; }
-  }
-
-  function reverseContribution(orderId) {
-    const prior = target.orderContrib[orderId];
-    if (!prior) return;
-    for (const [asin, c] of Object.entries(prior)) {
-      if (!target.byAsin[asin]) continue;
-      target.byAsin[asin].units -= c.units;
-      if (c.isCA) { target.byAsin[asin].unitsCa -= c.units; target.byAsin[asin].revenueCad -= c.revenue; }
-      else        { target.byAsin[asin].unitsUs -= c.units; target.byAsin[asin].revenueUsd -= c.revenue; }
-      if (target.byAsin[asin].pricedCa != null) target.byAsin[asin].pricedCa -= (c.pricedCa || 0);
-      if (target.byAsin[asin].pricedUs != null) target.byAsin[asin].pricedUs -= (c.pricedUs || 0);
-    }
-  }
-
   for (const order of orders) {
     const orderId = order.AmazonOrderId;
 
@@ -107,49 +87,78 @@ async function processOrders(orders, token, mpId, target) {
 
     // Re-poll case: subtract this order's prior contribution before re-applying.
     if (target.seenOrderIds.has(orderId)) {
-      reverseContribution(orderId);
+      reverseContribution(orderId, target);
     } else {
       target.seenOrderIds.add(orderId);
     }
     target.failedOrderIds.delete(orderId);
 
     // Apply the fresh contribution + record it for future reconciliation.
-    //
-    // Pending orders: Amazon zeros per-item ItemPrice until the order ships.
-    // For these we capture the SellerSKU and add a deferred-pricing record;
-    // computeDayFromOrders resolves all unpriced SKUs in batch via the
-    // SP-API Pricing endpoint at the end (orders-of-magnitude more reliable
-    // than ASIN-based catalog lookup, which the SKU-based one solves).
-    if (!target.unpriced) target.unpriced = [];
-
-    const fresh = {};
-    for (const item of items) {
-      const asin = item.ASIN;
-      const sku  = item.SellerSKU;
-      if (!asin) continue;
-      const units    = item.QuantityOrdered || 0;
-      const revenue  = parseFloat(item.ItemPrice?.Amount || 0);
-      addContribution(asin, units, revenue);
-      const bucket = target.byAsin[asin];
-      bucket.pricedCa = bucket.pricedCa || 0;
-      bucket.pricedUs = bucket.pricedUs || 0;
-      if (revenue > 0) {
-        if (isCA) bucket.pricedCa += units;
-        else      bucket.pricedUs += units;
-      } else if (units > 0 && sku) {
-        // Defer pricing for this item via SKU lookup later in the pipeline
-        target.unpriced.push({ asin, sku, units, isCA });
-      }
-      if (!fresh[asin]) fresh[asin] = { units: 0, revenue: 0, pricedCa: 0, pricedUs: 0, isCA };
-      fresh[asin].units   += units;
-      fresh[asin].revenue += revenue;
-      if (revenue > 0) {
-        if (isCA) fresh[asin].pricedCa += units;
-        else      fresh[asin].pricedUs += units;
-      }
-    }
-    target.orderContrib[orderId] = fresh;
+    applyOrderItems(items, orderId, isCA, target);
   }
+}
+
+// Subtract an order's previously-applied contribution from byAsin. Called
+// before re-applying whenever an already-seen order shows up again.
+function reverseContribution(orderId, target) {
+  const prior = target.orderContrib[orderId];
+  if (!prior) return;
+  for (const [asin, c] of Object.entries(prior)) {
+    if (!target.byAsin[asin]) continue;
+    target.byAsin[asin].units -= c.units;
+    if (c.isCA) { target.byAsin[asin].unitsCa -= c.units; target.byAsin[asin].revenueCad -= c.revenue; }
+    else        { target.byAsin[asin].unitsUs -= c.units; target.byAsin[asin].revenueUsd -= c.revenue; }
+    if (target.byAsin[asin].pricedCa != null) target.byAsin[asin].pricedCa -= (c.pricedCa || 0);
+    if (target.byAsin[asin].pricedUs != null) target.byAsin[asin].pricedUs -= (c.pricedUs || 0);
+  }
+}
+
+// Apply one order's items to target: units/revenue contributions, priced-unit
+// bookkeeping, and the SKU queue for deferred pricing. Shared by the main
+// pass and the rate-limit retry pass so both keep identical books.
+//
+// Pending orders: Amazon zeros per-item ItemPrice until the order ships. Those
+// units land in byAsin with $0 revenue and the SellerSKU goes into skuQueue.
+// The queue feeds a PRICE MAP only (resolveSkuPrices -> target.estPrice);
+// nothing here or there ever writes estimated revenue into byAsin. Estimated
+// revenue lives only in read-time derivations (estimateDay) — baking it into
+// byAsin breaks reverse-and-reapply reconciliation, because the estimate isn't
+// part of orderContrib and so survives the order's Pending->Shipped update as
+// a double count.
+function applyOrderItems(items, orderId, isCA, target) {
+  if (!target.skuQueue) target.skuQueue = new Map(); // "CA|sku" / "US|sku" -> { asin, sku, isCA }
+
+  const fresh = {};
+  for (const item of items) {
+    const asin = item.ASIN;
+    const sku  = item.SellerSKU;
+    if (!asin) continue;
+    const units   = item.QuantityOrdered || 0;
+    const revenue = parseFloat(item.ItemPrice?.Amount || 0);
+
+    if (!target.byAsin[asin]) target.byAsin[asin] = { units: 0, unitsCa: 0, unitsUs: 0, revenueCad: 0, revenueUsd: 0 };
+    const bucket = target.byAsin[asin];
+    bucket.units += units;
+    if (isCA) { bucket.unitsCa += units; bucket.revenueCad += revenue; }
+    else      { bucket.unitsUs += units; bucket.revenueUsd += revenue; }
+    bucket.pricedCa = bucket.pricedCa || 0;
+    bucket.pricedUs = bucket.pricedUs || 0;
+    if (revenue > 0) {
+      if (isCA) bucket.pricedCa += units;
+      else      bucket.pricedUs += units;
+    } else if (units > 0 && sku) {
+      target.skuQueue.set(`${isCA ? 'CA' : 'US'}|${sku}`, { asin, sku, isCA });
+    }
+
+    if (!fresh[asin]) fresh[asin] = { units: 0, revenue: 0, pricedCa: 0, pricedUs: 0, isCA };
+    fresh[asin].units   += units;
+    fresh[asin].revenue += revenue;
+    if (revenue > 0) {
+      if (isCA) fresh[asin].pricedCa += units;
+      else      fresh[asin].pricedUs += units;
+    }
+  }
+  target.orderContrib[orderId] = fresh;
 }
 
 // Retry orders that exhausted their initial fetchOrderItems retries. Quota
@@ -177,23 +186,19 @@ async function retryFailedOrders(token, mpId, target) {
       target.failedOrderIds.add(order.AmazonOrderId);
       continue;
     }
-    target.seenOrderIds.add(order.AmazonOrderId);
-    recovered++;
-    const fresh = {};
-    for (const item of items) {
-      const asin = item.ASIN;
-      if (!asin) continue;
-      const units   = item.QuantityOrdered || 0;
-      const revenue = parseFloat(item.ItemPrice?.Amount || 0);
-      if (!target.byAsin[asin]) target.byAsin[asin] = { units: 0, unitsCa: 0, unitsUs: 0, revenueCad: 0, revenueUsd: 0 };
-      target.byAsin[asin].units += units;
-      if (isCA) { target.byAsin[asin].unitsCa += units; target.byAsin[asin].revenueCad += revenue; }
-      else      { target.byAsin[asin].unitsUs += units; target.byAsin[asin].revenueUsd += revenue; }
-      if (!fresh[asin]) fresh[asin] = { units: 0, revenue: 0, isCA };
-      fresh[asin].units   += units;
-      fresh[asin].revenue += revenue;
+    // An order can land in the failed set on a RE-poll (seen earlier, then its
+    // update fetch rate-limited) — reverse its prior contribution first, or a
+    // recovered retry double-counts it.
+    if (target.seenOrderIds.has(order.AmazonOrderId)) {
+      reverseContribution(order.AmazonOrderId, target);
+    } else {
+      target.seenOrderIds.add(order.AmazonOrderId);
     }
-    target.orderContrib[order.AmazonOrderId] = fresh;
+    recovered++;
+    // Same bookkeeping as the main pass — recovered orders previously skipped
+    // priced-unit tracking and the SKU queue, so their Pending units could
+    // never be estimated AND triggered phantom extrapolation downstream.
+    applyOrderItems(items, order.AmazonOrderId, isCA, target);
   }
   console.log(`[Orders] Retry pass recovered ${recovered}/${failedIds.length} previously-failed orders`);
   return recovered;
@@ -239,6 +244,9 @@ async function rebuildToday() {
   state.seenOrderIds = new Set();
   state.failedOrderIds = new Set();
   state.orderContrib = {};
+  state.skuQueue = new Map();
+  state.skuTried = new Set();
+  state.estPrice = {};
   const failedByMp = {};
 
   console.log(`[Orders] Full rebuild for ${state.date}...`);
@@ -270,8 +278,8 @@ async function rebuildToday() {
     ]);
   }
 
-  // Resolve Pending-order prices via SKU lookup
-  await resolveUnpricedItems(state, token);
+  // Look up listing prices for Pending-order SKUs (feeds read-time estimation)
+  await resolveSkuPrices(state, token);
 
   state.updatedAt = new Date().toISOString();
   const unrec = state.failedOrderIds.size;
@@ -329,8 +337,8 @@ async function poll() {
     await sleep(2000);
   }
 
-  // Resolve Pending-order prices via SKU lookup
-  await resolveUnpricedItems(state, token);
+  // Look up listing prices for any newly-queued Pending-order SKUs
+  await resolveSkuPrices(state, token);
 
   state.updatedAt = new Date().toISOString();
   console.log(`[Orders] Poll done: ${Object.keys(state.byAsin).length} ASINs tracked for today`);
@@ -343,15 +351,18 @@ async function poll() {
 // it's a pure, explicitly-invoked computation.
 //
 // INCLUDES Pending: Sellerboard counts Pending in its tiles. Pending units
-// have units populated but ItemPrice = $0 from the API. processOrders tracks
-// pricedUnits per ASIN so the writer can extrapolate revenue for unpriced
-// units using the day's average price (priced revenue / priced units).
+// have units populated but ItemPrice = $0 from the API; their revenue is
+// estimated via the estimateDay ladder and returned as byAsinEstimated.
 // Canceled excluded (legitimately not a sale).
 async function computeDayFromOrders(pstDate, token = null) {
   token = token || await getAccessToken();
   const target   = { byAsin: {}, seenOrderIds: new Set(), failedOrderIds: new Set(), orderContrib: {}, failedByMp: {} };
   const dayStart = pstMidnightAsUTC(pstDate);
-  const dayEnd   = pstMidnightAsUTC(pstSubtractDays(pstDate, -1)); // next PST midnight
+  // Next PST midnight — but the Orders API rejects timestamps within 2 minutes
+  // of now (400 InvalidInput), so clamp when computing the current (partial) day.
+  let dayEnd = pstMidnightAsUTC(pstSubtractDays(pstDate, -1));
+  const apiCutoff = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+  if (dayEnd > apiCutoff) dayEnd = apiCutoff;
   let total = 0;
 
   for (const mpId of getMarketplaceIds()) {
@@ -388,7 +399,22 @@ async function computeDayFromOrders(pstDate, token = null) {
     console.warn(`[Orders] computeDayFromOrders ${pstDate}: ${target.failedOrderIds.size} orders unrecoverable after retry pass`);
   }
 
-  await resolveUnpricedItems(target, token);
+  await resolveSkuPrices(target, token);
+
+  // byAsinEstimated = byAsin with Pending-order revenue estimated via the
+  // ladder in estimateDay. Writers should persist THIS; byAsin stays raw.
+  // Trailing prices are best-effort — on failure the ladder just loses its
+  // last rung (listing price + same-day average still apply).
+  let trailing = {};
+  try {
+    trailing = await require('./priceCache').getTrailingPrices();
+  } catch (e) {
+    console.warn(`[Orders] trailing prices unavailable: ${e.message}`);
+  }
+  const est = estimateDay(target.byAsin, target.estPrice, trailing);
+  if (est.meta.estUnits > 0 || est.meta.unresolvedUnits > 0) {
+    console.log(`[Orders] ${pstDate}: estimated ${est.meta.estUnits} Pending units (CA$${est.meta.estRevenueCad} + US$${est.meta.estRevenueUsd})${est.meta.unresolvedUnits ? `, ${est.meta.unresolvedUnits} units unpriceable` : ''}`);
+  }
 
   // orderContrib rides along so callers can derive per-brand order counts for
   // AOV. It's already built for reversal bookkeeping — returning it costs
@@ -397,6 +423,8 @@ async function computeDayFromOrders(pstDate, token = null) {
   return {
     date: pstDate,
     byAsin: target.byAsin,
+    byAsinEstimated: est.byAsin,
+    estimateMeta: est.meta,
     orderCount: total,
     orderContrib: target.orderContrib,
     unrecoveredOrders: target.failedOrderIds.size,
@@ -433,38 +461,95 @@ function brandOrderCounts(orderContrib, asinBrand) {
   return out;
 }
 
-// For each unpriced (asin, sku, units, isCA) entry in target.unpriced, fetch
-// our seller's listing price from SP-API Pricing (SKU-keyed — far more
-// reliable than ASIN-keyed for our own offers). Adds resolved revenue to
-// byAsin and bumps pricedCa / pricedUs so downstream code sees the units
-// as priced.
-async function resolveUnpricedItems(target, token) {
-  if (!target.unpriced || target.unpriced.length === 0) return 0;
+// Look up our seller's live listing price for every queued Pending-order SKU
+// and store it in target.estPrice[asin] = { ca, us }. NEVER mutates byAsin —
+// see applyOrderItems for why baking estimates into byAsin double-counts.
+// skuTried stops re-hammering SKUs the Pricing API can't resolve (typically:
+// no active offer because the order took the last unit); state resets clear it.
+async function resolveSkuPrices(target, token) {
+  if (!target.skuQueue || target.skuQueue.size === 0) return 0;
+  if (!target.estPrice) target.estPrice = {};
+  if (!target.skuTried) target.skuTried = new Set();
   const { fetchListingPrices } = require('./amazon');
-  const caSkus = [...new Set(target.unpriced.filter(u => u.isCA).map(u => u.sku))];
-  const usSkus = [...new Set(target.unpriced.filter(u => !u.isCA).map(u => u.sku))];
-  const totalUnits = target.unpriced.reduce((s, u) => s + u.units, 0);
-  console.log(`[Orders] Resolving ${totalUnits} unpriced units (${caSkus.length} CA SKUs, ${usSkus.length} US SKUs)...`);
+
+  const pending = [...target.skuQueue.entries()].filter(([key]) => !target.skuTried.has(key));
+  if (pending.length === 0) return 0;
+  const caSkus = [...new Set(pending.filter(([, q]) => q.isCA).map(([, q]) => q.sku))];
+  const usSkus = [...new Set(pending.filter(([, q]) => !q.isCA).map(([, q]) => q.sku))];
+  console.log(`[Orders] Listing-price lookup for ${caSkus.length} CA + ${usSkus.length} US Pending-order SKUs...`);
+
   const caPrices = caSkus.length > 0 ? await fetchListingPrices(caSkus, 'A2EUQ1WTGCTBG2', token, { byType: 'Sku' }) : {};
   const usPrices = usSkus.length > 0 ? await fetchListingPrices(usSkus, 'ATVPDKIKX0DER',   token, { byType: 'Sku' }) : {};
-  let resolved = 0;
-  for (const u of target.unpriced) {
-    const priceObj = u.isCA ? caPrices[u.sku] : usPrices[u.sku];
-    if (!priceObj?.amount) continue;
-    const rev = priceObj.amount * u.units;
-    const bucket = target.byAsin[u.asin];
-    if (!bucket) continue;
-    if (u.isCA) { bucket.revenueCad += rev; bucket.pricedCa += u.units; }
-    else        { bucket.revenueUsd += rev; bucket.pricedUs += u.units; }
-    resolved += u.units;
+
+  let hits = 0;
+  for (const [key, q] of pending) {
+    target.skuTried.add(key);
+    const p = q.isCA ? caPrices[q.sku] : usPrices[q.sku];
+    if (!p?.amount) continue;
+    if (!target.estPrice[q.asin]) target.estPrice[q.asin] = {};
+    if (q.isCA) target.estPrice[q.asin].ca = p.amount;
+    else        target.estPrice[q.asin].us = p.amount;
+    hits++;
   }
-  console.log(`[Orders] Resolved ${resolved}/${totalUnits} unpriced units via SKU lookup`);
-  // Clear so re-calling doesn't double-apply
-  target.unpriced = target.unpriced.filter(u => {
-    const p = u.isCA ? caPrices[u.sku] : usPrices[u.sku];
-    return !p?.amount;
-  });
-  return resolved;
+  console.log(`[Orders] Listing-price lookup: ${hits}/${pending.length} SKUs priced (misses usually = no active offer, e.g. just sold out)`);
+  return hits;
+}
+
+// Read-time revenue estimation for unpriced (Pending) units — the Sellerboard
+// approach: estimate now at a known price, reconcile to actuals as orders ship.
+// Raw byAsin stays exactly what the Orders API reported; this derives a copy
+// with estimates layered on, so live-state reconciliation stays exact and an
+// estimate can never double-count or leak into raw state.
+//
+// Price ladder per ASIN+marketplace, applied to (units - pricedUnits):
+//   1. our live listing price for the exact SKU  (estPrice, resolveSkuPrices)
+//   2. the day's own realized average for the ASIN (revenue / pricedUnits)
+//   3. trailing 14-day realized average           (priceCache, finalized days)
+// Units no rung can price keep $0 revenue but are counted in meta.unresolvedUnits
+// so the UI can say so instead of silently understating.
+function estimateDay(byAsin, estPrice = {}, trailing = {}) {
+  const out  = {};
+  const meta = { estUnits: 0, estRevenueCad: 0, estRevenueUsd: 0, unresolvedUnits: 0 };
+
+  for (const [asin, d] of Object.entries(byAsin || {})) {
+    const e = { ...d };
+    const unpricedCa = Math.max(0, (d.unitsCa || 0) - (d.pricedCa || 0));
+    const unpricedUs = Math.max(0, (d.unitsUs || 0) - (d.pricedUs || 0));
+
+    if (unpricedCa > 0) {
+      let price = estPrice[asin]?.ca ?? null;
+      if (price == null && (d.pricedCa || 0) > 0 && (d.revenueCad || 0) > 0) price = d.revenueCad / d.pricedCa;
+      if (price == null) price = trailing[asin]?.ca ?? null;
+      if (price != null) {
+        e.revenueCad = (d.revenueCad || 0) + price * unpricedCa;
+        e.estUnitsCa = unpricedCa;
+        meta.estUnits      += unpricedCa;
+        meta.estRevenueCad += price * unpricedCa;
+      } else {
+        meta.unresolvedUnits += unpricedCa;
+      }
+    }
+
+    if (unpricedUs > 0) {
+      let price = estPrice[asin]?.us ?? null;
+      if (price == null && (d.pricedUs || 0) > 0 && (d.revenueUsd || 0) > 0) price = d.revenueUsd / d.pricedUs;
+      if (price == null) price = trailing[asin]?.us ?? null;
+      if (price != null) {
+        e.revenueUsd = (d.revenueUsd || 0) + price * unpricedUs;
+        e.estUnitsUs = unpricedUs;
+        meta.estUnits      += unpricedUs;
+        meta.estRevenueUsd += price * unpricedUs;
+      } else {
+        meta.unresolvedUnits += unpricedUs;
+      }
+    }
+
+    out[asin] = e;
+  }
+
+  meta.estRevenueCad = Math.round(meta.estRevenueCad * 100) / 100;
+  meta.estRevenueUsd = Math.round(meta.estRevenueUsd * 100) / 100;
+  return { byAsin: out, meta };
 }
 
 function getState() {
@@ -477,6 +562,27 @@ function getState() {
   };
 }
 
+// Estimated view of today's live state — what the today endpoint and the
+// hourly persist should consume. Raw getState() remains for anything that
+// needs exactly what the Orders API reported.
+async function getEstimatedState() {
+  resetIfNewDay();
+  let trailing = {};
+  try {
+    trailing = await require('./priceCache').getTrailingPrices();
+  } catch (e) {
+    console.warn(`[Orders] trailing prices unavailable: ${e.message}`);
+  }
+  const est = estimateDay(state.byAsin, state.estPrice, trailing);
+  return {
+    date:         state.date,
+    updatedAt:    state.updatedAt,
+    byAsin:       est.byAsin,
+    estimateMeta: est.meta,
+    asinCount:    Object.keys(est.byAsin).length
+  };
+}
+
 function getYesterdayState() {
   return {
     date:      yesterdayState.date,
@@ -485,4 +591,4 @@ function getYesterdayState() {
   };
 }
 
-module.exports = { rebuildToday, rebuildYesterday, poll, getState, getYesterdayState, computeDayFromOrders, brandOrderCounts };
+module.exports = { rebuildToday, rebuildYesterday, poll, getState, getYesterdayState, getEstimatedState, computeDayFromOrders, brandOrderCounts, estimateDay };

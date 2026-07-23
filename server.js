@@ -2303,7 +2303,10 @@ app.get('/api/metrics/yesterday', async (req, res) => {
 // Persistence is written after every poll/rebuild via persistOrdersTodayState().
 app.get('/api/metrics/today', async (req, res) => {
   const today      = pstDateStr();
-  const todayState = ordersPoller.getState();
+  // Estimated view: Pending-order units priced via the estimateDay ladder
+  // (listing price -> same-day avg -> trailing avg). Raw state would
+  // systematically understate today by whatever hasn't shipped yet.
+  const todayState = await ordersPoller.getEstimatedState();
   const { brands } = await loadBrands();
 
   // Build ASIN lookup — prefer in-memory if populated, else load from daily_metrics
@@ -2404,46 +2407,37 @@ app.get('/api/metrics/today', async (req, res) => {
     startDate: today,
     endDate:   today,
     brands:    byBrand,
+    // Present only on the in-memory path: how much of today's revenue is
+    // estimated (Pending orders priced by the ladder) vs API-reported.
+    estimated: hasInMemory ? (todayState.estimateMeta || null) : null,
   });
 });
 
 // Upsert orders-sourced units/revenue for a single day into daily_metrics.
 // This is the AUTHORITATIVE write for units/revenue (matches Sellerboard).
 // Writes only the units/revenue columns — leaves S&T traffic columns intact.
+//
+// Callers pass the ESTIMATED byAsin (getEstimatedState / byAsinEstimated from
+// computeDayFromOrders) — Pending-order revenue is already priced via the
+// estimateDay ladder, so no extrapolation happens here.
 async function persistOrdersDay(date, byAsin) {
   if (!date || !byAsin || Object.keys(byAsin).length === 0) return 0;
   const { brands } = await loadBrands();
   const asinBrand = {};
   for (const b of brands) for (const a of (b.asins || [])) asinBrand[a] = b.id;
 
-  // SKU-based price resolution already happens inside computeDayFromOrders,
-  // so byAsin's revenue is largely correct. Any remaining unpriced units —
-  // SKUs the Pricing API couldn't resolve — get same-marketplace avg
-  // extrapolation as a final fallback.
   const rows = Object.entries(byAsin)
     .filter(([, d]) => (d.units || 0) > 0 || (d.revenueCad || 0) > 0 || (d.revenueUsd || 0) > 0)
-    .map(([asin, d]) => {
-      const unitsCa  = d.unitsCa  || 0;
-      const unitsUs  = d.unitsUs  || 0;
-      const pricedCa = d.pricedCa || 0;
-      const pricedUs = d.pricedUs || 0;
-      const unpricedCa = Math.max(0, unitsCa - pricedCa);
-      const unpricedUs = Math.max(0, unitsUs - pricedUs);
-      let revCad = d.revenueCad || 0;
-      let revUsd = d.revenueUsd || 0;
-      if (unpricedCa > 0 && pricedCa > 0) revCad += (revCad / pricedCa) * unpricedCa;
-      if (unpricedUs > 0 && pricedUs > 0) revUsd += (revUsd / pricedUs) * unpricedUs;
-      return {
-        asin,
-        date,
-        brand_id:    asinBrand[asin] || 'unknown-brand',
-        units:       d.units || 0,
-        units_ca:    unitsCa,
-        units_us:    unitsUs,
-        revenue_cad: Math.round(revCad * 100) / 100,
-        revenue_usd: Math.round(revUsd * 100) / 100,
-      };
-    });
+    .map(([asin, d]) => ({
+      asin,
+      date,
+      brand_id:    asinBrand[asin] || 'unknown-brand',
+      units:       d.units    || 0,
+      units_ca:    d.unitsCa  || 0,
+      units_us:    d.unitsUs  || 0,
+      revenue_cad: Math.round((d.revenueCad || 0) * 100) / 100,
+      revenue_usd: Math.round((d.revenueUsd || 0) * 100) / 100,
+    }));
   if (rows.length === 0) return 0;
 
   const { error } = await supabase
@@ -2462,7 +2456,7 @@ async function persistOrdersDay(date, byAsin) {
 // pin yesterday's running totals to today's row — abort.
 async function persistOrdersTodayState() {
   try {
-    const st = ordersPoller.getState();
+    const st = await ordersPoller.getEstimatedState();
     const today = pstDateStr();
     if (st.date && st.date !== today) {
       console.warn(`[Orders] Skipping persist — state.date=${st.date} but today=${today} (stale state, rollover pending)`);
@@ -2522,7 +2516,7 @@ async function persistBrandOrderCounts(date, orderContrib) {
 async function finalizeYesterdayFromOrders() {
   try {
     const yest = pstSubtractDays(pstDateStr(), 1);
-    const { byAsin, orderCount, orderContrib } = await ordersPoller.computeDayFromOrders(yest);
+    const { byAsin, byAsinEstimated, orderCount, orderContrib } = await ordersPoller.computeDayFromOrders(yest);
 
     const realEntries = Object.values(byAsin || {}).filter(d =>
       (d.units || 0) > 0 || (d.revenueCad || 0) > 0 || (d.revenueUsd || 0) > 0
@@ -2532,7 +2526,7 @@ async function finalizeYesterdayFromOrders() {
       return;
     }
 
-    const n = await persistOrdersDay(yest, byAsin);
+    const n = await persistOrdersDay(yest, byAsinEstimated || byAsin);
     const o = await persistBrandOrderCounts(yest, orderContrib);
     console.log(`[Orders] Finalized yesterday ${yest}: ${n} ASIN rows written, ${orderCount} orders, ${o} brand order-counts`);
   } catch (e) {
