@@ -486,17 +486,46 @@ async function resolveSkuPrices(target, token) {
   const usPrices = usSkus.length > 0 ? await fetchListingPrices(usSkus, 'ATVPDKIKX0DER',   token, { byType: 'Sku' }) : {};
 
   let hits = 0;
+  const liveRows = [];
+  const misses = [];
   for (const [key, q] of pending) {
     target.skuTried.add(key);
     const p = q.isCA ? caPrices[q.sku] : usPrices[q.sku];
-    if (!p?.amount) continue;
+    if (!p?.amount) { misses.push([key, q]); continue; }
     if (!target.estPrice[q.asin]) target.estPrice[q.asin] = {};
     if (q.isCA) target.estPrice[q.asin].ca = p.amount;
     else        target.estPrice[q.asin].us = p.amount;
+    liveRows.push({ sku: q.sku, mpId: q.isCA ? 'A2EUQ1WTGCTBG2' : 'ATVPDKIKX0DER', asin: q.asin, price: p.amount, currency: p.currency });
     hits++;
   }
-  console.log(`[Orders] Listing-price lookup: ${hits}/${pending.length} SKUs priced (misses usually = no active offer, e.g. just sold out)`);
-  return hits;
+
+  // Misses are usually SKUs that just sold out (no active offer) — fall back
+  // to the daily snapshot, which priced them while they were still in stock.
+  let snapHits = 0;
+  if (misses.length > 0) {
+    try {
+      const { loadSkuPrices } = require('./priceCache');
+      const snap = await loadSkuPrices();
+      for (const [key, q] of misses) {
+        const s = snap[key];
+        if (!s?.price) continue;
+        if (!target.estPrice[q.asin]) target.estPrice[q.asin] = {};
+        if (q.isCA) { if (target.estPrice[q.asin].ca == null) target.estPrice[q.asin].ca = s.price; }
+        else        { if (target.estPrice[q.asin].us == null) target.estPrice[q.asin].us = s.price; }
+        snapHits++;
+      }
+    } catch (e) {
+      console.warn(`[Orders] snapshot fallback unavailable: ${e.message}`);
+    }
+  }
+
+  // Grow the snapshot from live hits (fire-and-forget — pricing must not block polling)
+  if (liveRows.length > 0) {
+    require('./priceCache').saveSkuPrices(liveRows).catch(() => {});
+  }
+
+  console.log(`[Orders] Listing-price lookup: ${hits}/${pending.length} SKUs live, ${snapHits} more from daily snapshot`);
+  return hits + snapHits;
 }
 
 // Read-time revenue estimation for unpriced (Pending) units — the Sellerboard

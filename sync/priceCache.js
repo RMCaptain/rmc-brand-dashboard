@@ -67,4 +67,87 @@ async function getTrailingPrices(force = false) {
   return prices;
 }
 
-module.exports = { getTrailingPrices };
+// ── SKU listing-price snapshot ───────────────────────────────────────────────
+// The Pricing API can't price a SKU whose last unit just sold (no active
+// offer). The snapshot captures listing prices while items ARE in stock —
+// daily sweep over every brand SKU on both marketplaces — so a sold-out
+// Pending item still gets priced at this morning's listing price.
+
+const MP_CA = 'A2EUQ1WTGCTBG2';
+const MP_US = 'ATVPDKIKX0DER';
+const SNAP_TTL_MS = 30 * 60 * 1000;
+let snapCache = { at: 0, prices: null };
+
+// { "CA|<sku>": { asin, price }, "US|<sku>": ... } — entries fresher than maxAgeDays.
+async function loadSkuPrices(maxAgeDays = 7) {
+  if (snapCache.prices && Date.now() - snapCache.at < SNAP_TTL_MS) return snapCache.prices;
+  const cutoff = new Date(Date.now() - maxAgeDays * 24 * 60 * 60 * 1000).toISOString();
+  const rows = [];
+  for (let page = 0; ; page++) {
+    const { data, error } = await client()
+      .from('sku_prices')
+      .select('sku,mp_id,asin,price')
+      .gte('fetched_at', cutoff)
+      .range(page * 1000, page * 1000 + 999);
+    if (error) { console.warn('[PriceCache] sku_prices load failed:', error.message); return snapCache.prices || {}; }
+    rows.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+  const prices = {};
+  for (const r of rows) {
+    if (!(r.price > 0)) continue;
+    prices[`${r.mp_id === MP_CA ? 'CA' : 'US'}|${r.sku}`] = { asin: r.asin, price: Number(r.price) };
+  }
+  snapCache = { at: Date.now(), prices };
+  return prices;
+}
+
+// rows: [{ sku, mpId, asin, price, currency }]
+async function saveSkuPrices(rows) {
+  const clean = (rows || []).filter(r => r.sku && r.mpId && Number.isFinite(r.price) && r.price > 0);
+  if (clean.length === 0) return 0;
+  const payload = clean.map(r => ({
+    sku: r.sku, mp_id: r.mpId, asin: r.asin || null,
+    price: r.price, currency: r.currency || null,
+    fetched_at: new Date().toISOString(),
+  }));
+  const { error } = await client().from('sku_prices').upsert(payload, { onConflict: 'sku,mp_id' });
+  if (error) { console.warn('[PriceCache] sku_prices save failed:', error.message); return 0; }
+  snapCache = { at: 0, prices: null }; // invalidate
+  return payload.length;
+}
+
+// Daily sweep: price every known SKU on both marketplaces while in stock.
+// Universe = brands' primary SKU per ASIN (listings report) ∪ every SKU ever
+// stored here (order items add multi-SKU ASINs' non-primary SKUs over time).
+async function refreshSkuPriceSnapshot(token) {
+  const { fetchListingPrices, getAccessToken } = require('./amazon');
+  token = token || await getAccessToken();
+
+  const skuAsin = {}; // sku -> asin (for storage; a SKU maps to one ASIN)
+  const { data: brandsRow, error: bErr } = await client().from('brands').select('data').eq('id', 'main').single();
+  if (bErr) console.warn('[PriceCache] brands load failed:', bErr.message);
+  for (const b of (brandsRow?.data?.brands || [])) {
+    for (const [asin, sku] of Object.entries(b.asinSkus || {})) {
+      if (sku) skuAsin[sku] = asin;
+    }
+  }
+  const { data: existing } = await client().from('sku_prices').select('sku,asin').range(0, 4999);
+  for (const r of (existing || [])) if (!skuAsin[r.sku]) skuAsin[r.sku] = r.asin;
+
+  const skus = Object.keys(skuAsin);
+  if (skus.length === 0) { console.warn('[PriceCache] snapshot refresh: no known SKUs'); return 0; }
+
+  let saved = 0;
+  for (const mpId of [MP_CA, MP_US]) {
+    const prices = await fetchListingPrices(skus, mpId, token, { byType: 'Sku' });
+    const rows = Object.entries(prices).map(([sku, p]) => ({
+      sku, mpId, asin: skuAsin[sku] || null, price: p.amount, currency: p.currency,
+    }));
+    saved += await saveSkuPrices(rows);
+  }
+  console.log(`[PriceCache] Snapshot refresh: ${saved} SKU prices stored (${skus.length} SKUs swept, both marketplaces)`);
+  return saved;
+}
+
+module.exports = { getTrailingPrices, loadSkuPrices, saveSkuPrices, refreshSkuPriceSnapshot };

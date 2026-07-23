@@ -1905,13 +1905,15 @@ async function fetchListingPrices(keys, mpId, token, { byType = 'Sku' } = {}) {
   const CHUNK = 20;
   for (let i = 0; i < keys.length; i += CHUNK) {
     const chunk = keys.slice(i, i + CHUNK);
+    // List params are COMMA-SEPARATED for this endpoint. Repeating the param
+    // (Skus=A&Skus=B) silently prices only ONE item per batch — that bug made
+    // the lookup resolve ~1 in 20 for months and looked like sold-out misses.
     const qs = new URLSearchParams({ MarketplaceId: mpId, ItemType: byType });
-    const paramName = byType === 'Sku' ? 'Skus' : 'Asins';
-    for (const k of chunk) qs.append(paramName, k);
+    qs.set(byType === 'Sku' ? 'Skus' : 'Asins', chunk.join(','));
     const path = `/products/pricing/v0/price?${qs.toString()}`;
     try {
       const res = await spRequest('GET', path, token, null, 30000);
-      if (res.status === 429) { await sleep(2000); i -= CHUNK; continue; }
+      if (res.status === 429) { await sleep(10000); i -= CHUNK; continue; }
       if (res.status !== 200) { console.warn(`[Pricing] HTTP ${res.status}: ${JSON.stringify(res.body || {}).slice(0, 200)}`); continue; }
       for (const item of (res.body?.payload || [])) {
         const key = byType === 'Sku' ? item.SellerSKU : item.ASIN;
@@ -1921,7 +1923,7 @@ async function fetchListingPrices(keys, mpId, token, { byType = 'Sku' } = {}) {
           out[key] = { amount: Number(price.Amount), currency: price.CurrencyCode };
         }
       }
-      await sleep(500); // 2 req/sec
+      await sleep(2500); // getPricing quota is small (~0.5 req/sec restore)
     } catch (e) {
       console.warn(`[Pricing] batch failed: ${e.message}`);
     }

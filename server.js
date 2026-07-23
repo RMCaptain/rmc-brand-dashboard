@@ -5623,6 +5623,16 @@ function scheduleDailySync() {
       .catch(err => console.warn('[Orders] Yesterday finalize error:', err.message));
   });
 
+  // SKU listing-price snapshot: 13:30 UTC daily (~6:30am PST — most items in
+  // stock). Prices every known SKU on both marketplaces so the Pending-order
+  // estimation ladder can price a SOLD-OUT item at this morning's listing
+  // price (the live Pricing lookup returns nothing once the offer is gone).
+  cron.schedule('30 13 * * *', () => {
+    const { refreshSkuPriceSnapshot } = require('./sync/priceCache');
+    refreshSkuPriceSnapshot()
+      .catch(err => console.warn('[PriceCache] snapshot cron error:', err.message));
+  });
+
   // Backfill: 8am UTC daily — fills any missing daily_metrics gaps (runs 2h after main sync)
   cron.schedule('0 8 * * *', () => {
     const { backfillDays } = require('./sync/backfill');
