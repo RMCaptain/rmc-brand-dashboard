@@ -134,7 +134,11 @@ function applyOrderItems(items, orderId, isCA, target) {
     const sku  = item.SellerSKU;
     if (!asin) continue;
     const units   = item.QuantityOrdered || 0;
-    const revenue = parseFloat(item.ItemPrice?.Amount || 0);
+    // A malformed Amount must degrade to "unpriced unit" (the estimation
+    // ladder prices it), never to NaN — one NaN propagates into the day's
+    // upsert payload as null and atomically fails the ENTIRE day's write.
+    let revenue = parseFloat(item.ItemPrice?.Amount || 0);
+    if (!Number.isFinite(revenue) || revenue < 0) revenue = 0;
 
     if (!target.byAsin[asin]) target.byAsin[asin] = { units: 0, unitsCa: 0, unitsUs: 0, revenueCad: 0, revenueUsd: 0 };
     const bucket = target.byAsin[asin];
@@ -520,6 +524,7 @@ function estimateDay(byAsin, estPrice = {}, trailing = {}) {
       let price = estPrice[asin]?.ca ?? null;
       if (price == null && (d.pricedCa || 0) > 0 && (d.revenueCad || 0) > 0) price = d.revenueCad / d.pricedCa;
       if (price == null) price = trailing[asin]?.ca ?? null;
+      if (!Number.isFinite(price) || price <= 0) price = null;
       if (price != null) {
         e.revenueCad = (d.revenueCad || 0) + price * unpricedCa;
         e.estUnitsCa = unpricedCa;
@@ -534,6 +539,7 @@ function estimateDay(byAsin, estPrice = {}, trailing = {}) {
       let price = estPrice[asin]?.us ?? null;
       if (price == null && (d.pricedUs || 0) > 0 && (d.revenueUsd || 0) > 0) price = d.revenueUsd / d.pricedUs;
       if (price == null) price = trailing[asin]?.us ?? null;
+      if (!Number.isFinite(price) || price <= 0) price = null;
       if (price != null) {
         e.revenueUsd = (d.revenueUsd || 0) + price * unpricedUs;
         e.estUnitsUs = unpricedUs;

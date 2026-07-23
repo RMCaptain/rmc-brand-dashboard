@@ -2048,7 +2048,16 @@ app.get('/api/sync/status', (req, res) => {
   // presetRebuild rides along: a sync can report "done" while the rebuild that
   // makes the numbers correct failed, which is exactly how every brand card sat
   // at $0 unnoticed on 2026-07-15.
-  res.json({ ...syncState, presetRebuild: presetRebuildState });
+  //
+  // ordersToday: the live poller's heartbeat. On 2026-07-22 the poller froze
+  // at 1:45am PST and nobody could see it — today/yesterday quietly served a
+  // frozen snapshot all day. A stale updatedAt here is the tell.
+  const ot = ordersPoller.getState();
+  res.json({
+    ...syncState,
+    presetRebuild: presetRebuildState,
+    ordersToday: { date: ot.date, updatedAt: ot.updatedAt, asinCount: ot.asinCount },
+  });
 });
 
 // One-time patch: re-derive preset-level adSpend from brand adSummary already in Supabase
@@ -2426,24 +2435,42 @@ async function persistOrdersDay(date, byAsin) {
   const asinBrand = {};
   for (const b of brands) for (const a of (b.asins || [])) asinBrand[a] = b.id;
 
+  // num(): one NaN anywhere in the payload becomes null on the wire and
+  // atomically fails the ENTIRE day's upsert — a whole day of revenue then
+  // silently freezes (exactly what happened to 2026-07-22).
+  const num = v => (Number.isFinite(v) ? v : 0);
   const rows = Object.entries(byAsin)
-    .filter(([, d]) => (d.units || 0) > 0 || (d.revenueCad || 0) > 0 || (d.revenueUsd || 0) > 0)
+    .filter(([, d]) => num(d.units) > 0 || num(d.revenueCad) > 0 || num(d.revenueUsd) > 0)
     .map(([asin, d]) => ({
       asin,
       date,
       brand_id:    asinBrand[asin] || 'unknown-brand',
-      units:       d.units    || 0,
-      units_ca:    d.unitsCa  || 0,
-      units_us:    d.unitsUs  || 0,
-      revenue_cad: Math.round((d.revenueCad || 0) * 100) / 100,
-      revenue_usd: Math.round((d.revenueUsd || 0) * 100) / 100,
+      units:       num(d.units),
+      units_ca:    num(d.unitsCa),
+      units_us:    num(d.unitsUs),
+      revenue_cad: Math.round(num(d.revenueCad) * 100) / 100,
+      revenue_usd: Math.round(num(d.revenueUsd) * 100) / 100,
     }));
   if (rows.length === 0) return 0;
 
   const { error } = await supabase
     .from('daily_metrics')
     .upsert(rows, { onConflict: 'asin,date' });
-  if (error) { console.warn('[Orders] persist error:', error.message); return 0; }
+  if (error) {
+    // A failed day-write is silent revenue loss on every dashboard view —
+    // surface it where someone will actually see it.
+    console.warn(`[Orders] persist error for ${date}:`, error.message);
+    try {
+      if (process.env.SLACK_WEBHOOK_URL) {
+        await fetch(process.env.SLACK_WEBHOOK_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: `:rotating_light: *daily_metrics write failed for ${date}* — revenue for that day is stale until a reconcile succeeds.\n\`${error.message}\`` }),
+        });
+      }
+    } catch (_) { /* alerting must never break the caller */ }
+    return 0;
+  }
   return rows.length;
 }
 
