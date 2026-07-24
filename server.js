@@ -2460,30 +2460,14 @@ async function persistOrdersDay(date, byAsin) {
     // A failed day-write is silent revenue loss on every dashboard view —
     // surface it where someone will actually see it.
     console.warn(`[Orders] persist error for ${date}:`, error.message);
-    try {
-      if (process.env.SLACK_WEBHOOK_URL) {
-        await fetch(process.env.SLACK_WEBHOOK_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: `:rotating_light: *daily_metrics write failed for ${date}* — revenue for that day is stale until a reconcile succeeds.\n\`${slackSafeError(error.message)}\`` }),
-        });
-      }
-    } catch (_) { /* alerting must never break the caller */ }
+    const { postSlackAlert } = require('./slack/alert');
+    await postSlackAlert(
+      `:rotating_light: *daily_metrics write failed for ${date}* — revenue for that day is stale until a reconcile succeeds.`,
+      error.message
+    );
     return 0;
   }
   return rows.length;
-}
-
-// Error messages can be entire HTML error pages (Supabase behind Cloudflare
-// returns a full 522 page, which got posted verbatim into #account-health on
-// 2026-07-24). Strip markup, collapse whitespace, and cap the length so an
-// alert is always one readable line.
-function slackSafeError(msg) {
-  const text = String(msg || 'unknown error')
-    .replace(/<[^>]*>/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  return text.length > 300 ? text.slice(0, 300) + '…' : text;
 }
 
 // Write the orders poller's current today state into daily_metrics. Lets the today
@@ -5394,15 +5378,11 @@ async function runFullSync(tag = 'Sync') {
       presetRebuildState = { ok: false, at: new Date().toISOString(), error: rebuildErr.message };
       console.error(`[${tag}] PRESET REBUILD FAILED — brand cards will read $0 until this succeeds:`, rebuildErr.message);
       // Surface it where someone will actually see it, rather than in a log.
-      try {
-        if (process.env.SLACK_WEBHOOK_URL) {
-          await fetch(process.env.SLACK_WEBHOOK_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: `:rotating_light: *Preset rebuild failed* during ${tag}.\nBrand cards will show *$0 for all brands* until the next successful sync.\n\`${slackSafeError(rebuildErr.message)}\`` }),
-          });
-        }
-      } catch (_) { /* alerting must never break the sync */ }
+      const { postSlackAlert } = require('./slack/alert');
+      await postSlackAlert(
+        `:rotating_light: *Preset rebuild failed* during ${tag}.\nBrand cards will show *$0 for all brands* until the next successful sync.`,
+        rebuildErr.message
+      );
     }
 
     syncState = { status: 'done', lastSync, error: null };

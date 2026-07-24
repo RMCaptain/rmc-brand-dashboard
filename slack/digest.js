@@ -211,9 +211,17 @@ function buildHealthDigestBlocks({ alerts, summary, generatedAt, dashboardUrl })
       const lines = buildBrandLines(bg.name, bg.alerts);
       const bulletText = lines.map(l => `• ${l}`).join('\n');
 
+      // Slack rejects the ENTIRE message if any section exceeds 3000 chars
+      // (invalid_blocks) — the digest would silently not post. Truncate a
+      // runaway brand section instead of losing the whole report.
+      let sectionText = `*${bg.name}* — ${count}\n\n${bulletText}`;
+      if (sectionText.length > 2900) {
+        sectionText = sectionText.slice(0, 2900) + '\n_…truncated — see dashboard for the full list._';
+      }
+
       blocks.push({
         type: 'section',
-        text: { type: 'mrkdwn', text: `*${bg.name}* — ${count}\n\n${bulletText}` }
+        text: { type: 'mrkdwn', text: sectionText }
       });
     }
 
