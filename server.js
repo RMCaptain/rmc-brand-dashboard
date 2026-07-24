@@ -2465,13 +2465,25 @@ async function persistOrdersDay(date, byAsin) {
         await fetch(process.env.SLACK_WEBHOOK_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: `:rotating_light: *daily_metrics write failed for ${date}* — revenue for that day is stale until a reconcile succeeds.\n\`${error.message}\`` }),
+          body: JSON.stringify({ text: `:rotating_light: *daily_metrics write failed for ${date}* — revenue for that day is stale until a reconcile succeeds.\n\`${slackSafeError(error.message)}\`` }),
         });
       }
     } catch (_) { /* alerting must never break the caller */ }
     return 0;
   }
   return rows.length;
+}
+
+// Error messages can be entire HTML error pages (Supabase behind Cloudflare
+// returns a full 522 page, which got posted verbatim into #account-health on
+// 2026-07-24). Strip markup, collapse whitespace, and cap the length so an
+// alert is always one readable line.
+function slackSafeError(msg) {
+  const text = String(msg || 'unknown error')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return text.length > 300 ? text.slice(0, 300) + '…' : text;
 }
 
 // Write the orders poller's current today state into daily_metrics. Lets the today
@@ -5387,7 +5399,7 @@ async function runFullSync(tag = 'Sync') {
           await fetch(process.env.SLACK_WEBHOOK_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: `:rotating_light: *Preset rebuild failed* during ${tag}.\nBrand cards will show *$0 for all brands* until the next successful sync.\n\`${rebuildErr.message}\`` }),
+            body: JSON.stringify({ text: `:rotating_light: *Preset rebuild failed* during ${tag}.\nBrand cards will show *$0 for all brands* until the next successful sync.\n\`${slackSafeError(rebuildErr.message)}\`` }),
           });
         }
       } catch (_) { /* alerting must never break the sync */ }
