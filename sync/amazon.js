@@ -1248,6 +1248,15 @@ async function syncBrandMetrics(brands) {
     return null;
   });
   if (snsData?.byMp && Object.keys(snsData.byMp).length) {
+    // Daily S&S history: the API only reports current counts, so this
+    // snapshot is the ONLY source of S&S trend data. Non-fatal by design.
+    try {
+      const asinBrandMap = {};
+      for (const b of brands) for (const a of (b.asins || [])) asinBrandMap[a] = b.id;
+      await require('./snsHistory').recordSnsSnapshot(snsData.byMp, asinBrandMap);
+    } catch (e) {
+      console.warn('[Sync] S&S history snapshot failed:', e.message);
+    }
     // Merge PER MARKETPLACE: overwrite a marketplace's contribution only when
     // that marketplace's fetch succeeded; keep the stored value otherwise.
     // The old gate required BOTH marketplaces or stored NOTHING — and since the
