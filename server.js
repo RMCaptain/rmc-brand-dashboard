@@ -73,19 +73,20 @@ require('./portal/routes').mountPublic(app, {
   trySelectSummary: (...a) => trySelectSummary(...a),
 });
 
-// HTTP Basic Auth — gates the entire dashboard. Skipped if AUTH_USERNAME / AUTH_PASSWORD
-// are unset (local dev). Temporary measure until Cloudflare Access (internal team) and
-// Supabase Auth (external brand portal) replace it.
-function basicAuth(req, res, next) {
+// Team auth. Humans: Google sign-in (team-login.html → session cookie, see
+// portal/teamAuth.js). Machines + break-glass: HTTP Basic Auth, accepted until
+// TEAM_BASIC_AUTH=off (external tooling — e.g. saved curl, bookmarks — sends
+// it). Both unset (local dev) = no gate, same as always.
+//
+// basicAuthOk is the shared-password CHECK ONLY — challenge/deny responses
+// live in the gate, which prefers the Google session when configured.
+function basicAuthOk(req) {
   const expectedUser = process.env.AUTH_USERNAME;
   const expectedPass = process.env.AUTH_PASSWORD;
-  if (!expectedUser || !expectedPass) return next();
+  if (!expectedUser || !expectedPass) return false;
 
   const header = req.headers.authorization || '';
-  if (!header.startsWith('Basic ')) {
-    res.setHeader('WWW-Authenticate', 'Basic realm="RMC Dashboard"');
-    return res.status(401).send('Authentication required');
-  }
+  if (!header.startsWith('Basic ')) return false;
 
   let user = '', pass = '';
   try {
@@ -100,16 +101,17 @@ function basicAuth(req, res, next) {
   const b = Buffer.from(expectedUser);
   const c = Buffer.from(pass);
   const d = Buffer.from(expectedPass);
-  const userOk = a.length === b.length && crypto.timingSafeEqual(a, b);
-  const passOk = c.length === d.length && crypto.timingSafeEqual(c, d);
-
-  if (!userOk || !passOk) {
-    res.setHeader('WWW-Authenticate', 'Basic realm="RMC Dashboard"');
-    return res.status(401).send('Invalid credentials');
-  }
-  next();
+  return a.length === b.length && crypto.timingSafeEqual(a, b)
+      && c.length === d.length && crypto.timingSafeEqual(c, d);
 }
-app.use(basicAuth);
+
+// Public team-auth surface (login page + its endpoints) — before the gate.
+const teamAuth = require('./portal/teamAuth');
+teamAuth.mountTeamAuth(app, { supabase, express });
+app.get('/team-login.html', (req, res) => res.sendFile(path.join(__dirname, 'public', 'team-login.html')));
+app.get('/rmc-logo.png',    (req, res) => res.sendFile(path.join(__dirname, 'public', 'rmc-logo.png')));
+
+app.use(teamAuth.teamAuthGate({ supabase, basicAuthCheck: basicAuthOk }));
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));

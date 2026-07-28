@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RMC Dashboard — Team Sign In</title>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+  :root { color-scheme: dark; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    background: #161913; color: #e8e6df;
+    min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+  }
+  .card {
+    background: #1e2218; border: 1px solid #33392c; border-radius: 16px;
+    padding: 40px 36px; max-width: 380px; width: 100%; text-align: center;
+  }
+  .logo { height: 64px; margin-bottom: 20px; }
+  h1 { font-size: 18px; font-weight: 600; margin-bottom: 6px; color: #fff; }
+  .sub { font-size: 13px; color: #9aa08f; margin-bottom: 28px; }
+  #gbtn { display: flex; justify-content: center; min-height: 44px; }
+  .note { font-size: 12px; color: #9aa08f; margin-top: 22px; line-height: 1.5; }
+  .error { font-size: 13px; color: #f0a8a8; background: rgba(190,60,60,.12);
+           border: 1px solid rgba(190,60,60,.35); border-radius: 8px;
+           padding: 10px 12px; margin-top: 18px; display: none; }
+  .signedin { font-size: 14px; color: #cdd3c2; margin-top: 4px; }
+  button.ghost {
+    margin-top: 16px; background: none; border: 1px solid #33392c; color: #cdd3c2;
+    border-radius: 8px; padding: 8px 18px; font-size: 13px; cursor: pointer;
+  }
+  button.ghost:hover { border-color: #9db47e; }
+  a.enter {
+    display: inline-block; margin-top: 16px; background: #2c3a20; color: #fff;
+    border-radius: 8px; padding: 10px 22px; font-size: 14px; font-weight: 600;
+    text-decoration: none;
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <img class="logo" src="/rmc-logo.png" alt="Rocky Mountain Co." onerror="this.style.display='none'">
+    <h1>RMC Dashboard</h1>
+    <div class="sub">Team sign-in</div>
+
+    <div id="state"></div>
+    <div id="gbtn"></div>
+    <div id="err" class="error"></div>
+    <div id="note" class="note"></div>
+  </div>
+
+<script>
+  const $ = id => document.getElementById(id);
+
+  function showError(msg) { const e = $('err'); e.textContent = msg; e.style.display = 'block'; }
+
+  async function handleCredential(resp) {
+    try {
+      const r = await fetch('/api/team/google', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ credential: resp.credential }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) return showError(d.error || 'Sign-in failed.');
+      location.href = '/brands.html';
+    } catch (e) {
+      showError('Sign-in failed — network error.');
+    }
+  }
+
+  async function boot() {
+    const [cfg, me] = await Promise.all([
+      fetch('/api/team/config').then(r => r.json()).catch(() => ({})),
+      fetch('/api/team/me').then(r => r.json()).catch(() => ({ signedIn: false })),
+    ]);
+
+    if (me.signedIn) {
+      $('state').innerHTML =
+        '<div class="signedin">Signed in as <strong>' + (me.email || '') + '</strong></div>' +
+        '<a class="enter" href="/brands.html">Open dashboard</a><br>' +
+        '<button class="ghost" onclick="signOut()">Sign out</button>';
+      return;
+    }
+
+    if (!cfg.googleClientId) {
+      $('note').textContent = 'Google sign-in is not configured yet. Use the browser password prompt at any dashboard page.';
+      return;
+    }
+
+    // GIS may still be loading — poll briefly for the library
+    const start = Date.now();
+    (function initGis() {
+      if (window.google?.accounts?.id) {
+        google.accounts.id.initialize({ client_id: cfg.googleClientId, callback: handleCredential });
+        google.accounts.id.renderButton($('gbtn'), { theme: 'filled_black', size: 'large', width: 280 });
+      } else if (Date.now() - start < 8000) {
+        setTimeout(initGis, 150);
+      } else {
+        showError('Google sign-in failed to load. Refresh, or check your network.');
+      }
+    })();
+  }
+
+  async function signOut() {
+    await fetch('/api/team/logout', { method: 'POST' });
+    location.reload();
+  }
+
+  boot();
+</script>
+</body>
+</html>
