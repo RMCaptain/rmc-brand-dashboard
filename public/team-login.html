@@ -6,7 +6,8 @@
 <title>RMC Dashboard — Team Sign In</title>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
-  :root { color-scheme: dark; }
+  /* No color-scheme:dark here — it forces Google's transparent sign-in
+     iframe to paint an opaque white canvas (Chrome cross-scheme rule). */
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
     font-family: 'Inter', -apple-system, system-ui, sans-serif;
