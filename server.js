@@ -5019,14 +5019,28 @@ app.get('/api/bulk-template', async (req, res) => {
     // cost — buy cost plus prep, freight, customs. Buy Cost was missing from
     // this template, so it was the one field of the three that couldn't be
     // filled from a spreadsheet: 341 ASINs, one at a time.
+    //
+    // ?missing=1 filters to rows missing any of the big three: Supplier
+    // Product Name, Buy Cost, or COGS (CA and US both empty — one marketplace
+    // filled counts as set, since single-marketplace products legitimately
+    // leave the other blank). ?missing=1&countOnly=1 returns just the count
+    // for the button badge. Same columns either way, so the existing upload
+    // path handles both files identically.
+    const missingOnly = req.query.missing === '1';
     const headers = ['Brand', 'ASIN', 'Title', 'SKU', 'UPC', 'Lead Time (days)', 'Case Pack Size (units)', 'Stock #', 'Supplier Product Name', 'Buy Cost (item only)', 'COGS (CA)', 'COGS (US)'];
     const csvRows = [headers];
+    const blank = v => v == null || v === '';
 
     for (const brand of brands.filter(b => b.id !== 'unknown-brand').sort((a, b) => a.name.localeCompare(b.name))) {
       const skuMap = Object.fromEntries((brandMetrics[brand.id]?.skus || []).map(s => [s.asin, s]));
       for (const asin of brand.asins) {
         const sku = skuMap[asin];
         const cfg = brand.asinConfig?.[asin] || {};
+        const supplierName = cfg.supplierName || '';
+        const buyCost = brand.buyCost?.[asin] ?? '';
+        const cogsCa  = brand.cogsPerMarketplace?.[asin]?.CA ?? brand.cogs?.[asin] ?? '';
+        const cogsUs  = brand.cogsPerMarketplace?.[asin]?.US ?? '';
+        if (missingOnly && !(blank(supplierName) || blank(buyCost) || (blank(cogsCa) && blank(cogsUs)))) continue;
         csvRows.push([
           brand.name,
           asin,
@@ -5036,12 +5050,16 @@ app.get('/api/bulk-template', async (req, res) => {
           brand.leadTimes?.[asin] ?? '',
           brand.casePacks?.[asin] ?? '',
           cfg.stockNumber || '',
-          cfg.supplierName || '',
-          brand.buyCost?.[asin] ?? '',
-          brand.cogsPerMarketplace?.[asin]?.CA ?? brand.cogs?.[asin] ?? '',
-          brand.cogsPerMarketplace?.[asin]?.US ?? ''
+          supplierName,
+          buyCost,
+          cogsCa,
+          cogsUs
         ]);
       }
+    }
+
+    if (req.query.countOnly === '1') {
+      return res.json({ count: csvRows.length - 1 });
     }
 
     const escape = v => {
@@ -5051,7 +5069,7 @@ app.get('/api/bulk-template', async (req, res) => {
     const csv = csvRows.map(r => r.map(escape).join(',')).join('\r\n');
 
     res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', 'attachment; filename="rmc-product-data.csv"');
+    res.setHeader('Content-Disposition', `attachment; filename="${missingOnly ? 'rmc-product-data-missing.csv' : 'rmc-product-data.csv'}"`);
     res.send(csv);
   } catch (err) {
     res.status(500).json({ error: err.message });

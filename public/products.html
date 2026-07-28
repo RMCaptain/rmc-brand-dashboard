@@ -1130,6 +1130,12 @@
       document.getElementById('bulkUploadLabel').textContent = 'Choose CSV file…';
       document.getElementById('bulkErrorMsg').classList.add('hidden');
       document.getElementById('bulkEditModal').classList.remove('hidden');
+      // Live count of products still missing supplier / buy cost / COGS —
+      // doubles as a progress meter that shrinks to zero as uploads land.
+      fetch('/api/bulk-template?missing=1&countOnly=1')
+        .then(r => r.json())
+        .then(d => { document.getElementById('missingCount').textContent = d.count != null ? ` (${d.count})` : ''; })
+        .catch(() => { document.getElementById('missingCount').textContent = ''; });
     }
 
     function closeBulkEdit() {
@@ -1367,13 +1373,21 @@
         <div class="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center flex-shrink-0 mt-0.5">1</div>
         <div class="flex-1">
           <p class="text-sm font-medium mb-1" style="color:var(--text)">Download Template</p>
-          <p class="text-xs mb-3" style="color:var(--text-3)">Pre-filled with all your ASINs. <strong style="color:var(--text-2)">Edit only the last 7 columns</strong> — Brand, ASIN, Title, and SKU are read-only reference columns and will be ignored on upload. <strong style="color:var(--text-2)">Buy Cost</strong> = item cost on the supplier invoice. <strong style="color:var(--text-2)">COGS</strong> = landed cost (buy cost + prep, freight, customs) — CA in CAD, US in USD. Blank cells are left unchanged, so you can fill one column at a time.</p>
-          <a href="/api/bulk-template" download class="btn-ghost inline-flex items-center gap-2" style="font-size:12px;padding:6px 14px;text-decoration:none">
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
-            </svg>
-            Download rmc-product-data.csv
-          </a>
+          <p class="text-xs mb-3" style="color:var(--text-3)"><strong style="color:var(--text-2)">All products</strong> = every ASIN. <strong style="color:var(--text-2)">Missing data only</strong> = just the ASINs still missing Supplier Name, Buy Cost, or COGS — a shorter list that shrinks as you fill it. Both use the same columns; upload works identically. <strong style="color:var(--text-2)">Edit only the last 7 columns</strong> — Brand, ASIN, Title, and SKU are read-only reference columns and will be ignored on upload. <strong style="color:var(--text-2)">Buy Cost</strong> = item cost on the supplier invoice. <strong style="color:var(--text-2)">COGS</strong> = landed cost (buy cost + prep, freight, customs) — CA in CAD, US in USD. Blank cells are left unchanged, so you can fill one column at a time.</p>
+          <div class="flex flex-wrap items-center gap-2">
+            <a href="/api/bulk-template" download class="btn-ghost inline-flex items-center gap-2" style="font-size:12px;padding:6px 14px;text-decoration:none">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+              </svg>
+              All products
+            </a>
+            <a href="/api/bulk-template?missing=1" download class="btn-ghost inline-flex items-center gap-2" style="font-size:12px;padding:6px 14px;text-decoration:none">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+              </svg>
+              Missing data only<span id="missingCount" class="font-semibold"></span>
+            </a>
+          </div>
         </div>
       </div>
 
