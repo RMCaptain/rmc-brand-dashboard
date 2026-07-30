@@ -2469,6 +2469,10 @@ async function persistOrdersDay(date, byAsin) {
     );
     return 0;
   }
+
+  const metricsMp = require('./sync/metricsMp');
+  await metricsMp.upsertMpRows(supabase, metricsMp.ordersRows(date, byAsin, asinBrand), `orders ${date}`);
+
   return rows.length;
 }
 
@@ -2718,6 +2722,9 @@ async function syncDailyAdSpend({ windowDays = 30, includeToday = true } = {}) {
     const { error } = await supabase.from('daily_metrics').upsert(rows, { onConflict: 'asin,date' });
     if (error) console.warn(`[AdsDaily] ${date} upsert error:`, error.message);
     else { rowCount += rows.length; }
+
+    const metricsMp = require('./sync/metricsMp');
+    await metricsMp.upsertMpRows(supabase, metricsMp.adsRows(date, asins, asinBrand), `ads ${date}`);
   }
   console.log(`[AdsDaily] Wrote ad spend + engagement on ${rowCount} (asin,date) rows`);
   return { rowCount, datesTouched: Object.keys(merged).length };

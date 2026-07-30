@@ -57,4 +57,8 @@ const { pstSubtractDays, pstDateStr } = require('../sync/dateUtils');
   const { error } = await supabase.from('daily_metrics').upsert(rows, { onConflict: 'asin,date' });
   if (error) { console.error('Upsert failed:', error.message); process.exit(1); }
   console.log('✓ daily_metrics updated.');
+
+  const metricsMp = require('../sync/metricsMp');
+  const n = await metricsMp.upsertMpRows(supabase, metricsMp.ordersRows(state.date, state.byAsin, asinBrand), `rebuild ${state.date}`);
+  console.log(`✓ daily_metrics_mp: ${n} rows.`);
 })().catch(err => { console.error('Fatal:', err.message); process.exit(1); });

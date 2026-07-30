@@ -253,9 +253,19 @@ async function recomputeRefundAggregates(supabase, asinBrand, dates) {
     const byAsin = {};
     for (const r of (rows || [])) {
       const a = r.asin || 'UNMAPPED';
-      if (!byAsin[a]) byAsin[a] = { units: 0, cad: 0, usd: 0, count: 0 };
+      if (!byAsin[a]) byAsin[a] = {
+        units: 0, cad: 0, usd: 0, count: 0,
+        // Per-marketplace split for daily_metrics_mp — events carry the
+        // marketplace (as currency), so units/count split cleanly too.
+        ca: { units: 0, amount: 0, count: 0 },
+        us: { units: 0, amount: 0, count: 0 },
+      };
       byAsin[a].units += r.refunded_units || 0;
       byAsin[a].count += 1;
+      const side = r.marketplace_currency === 'USD' ? byAsin[a].us : byAsin[a].ca;
+      side.units  += r.refunded_units || 0;
+      side.amount += r.refund_amount || 0;
+      side.count  += 1;
       if (r.marketplace_currency === 'USD') byAsin[a].usd += r.refund_amount || 0;
       else                                   byAsin[a].cad += r.refund_amount || 0;
     }
@@ -276,6 +286,11 @@ async function recomputeRefundAggregates(supabase, asinBrand, dates) {
       .upsert(updates, { onConflict: 'asin,date' });
     if (upErr) console.warn(`[Refunds] upsert daily_metrics ${date}:`, upErr.message);
     else console.log(`[Refunds] ${date}: refund totals on ${updates.length} ASIN rows`);
+
+    const metricsMp = require('./metricsMp');
+    const mpByAsin = Object.fromEntries(Object.entries(byAsin).map(([asin, v]) =>
+      [asin === 'UNMAPPED' ? `UNMAPPED-REFUND-${date}` : asin, v]));
+    await metricsMp.upsertMpRows(supabase, metricsMp.refundRows(date, mpByAsin, asinBrand), `refunds ${date}`);
   }
 }
 
