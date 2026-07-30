@@ -2969,6 +2969,52 @@ app.post('/api/datadive/sync', async (req, res) => {
   });
 });
 
+// Listing content per ASIN for a brand — variant relationships, structured
+// attributes, bullets/description, backend keywords, status/issues. Pulled
+// read-only from SP-API weekly (sync/listingContent.js). ?asin= narrows to one.
+// Feeds seo-asin-audit + listing-copy catalog audit mode.
+app.get('/api/listing-content/:brandId', async (req, res) => {
+  try {
+    let q = supabase.from('listing_content').select('*').eq('brand_id', req.params.brandId).order('asin');
+    if (req.query.asin) q = q.eq('asin', String(req.query.asin).toUpperCase());
+    const { data, error } = await q;
+    if (error) throw new Error(error.message);
+    if (!data?.length) {
+      return res.status(404).json({ error: 'no listing content for this brand — sync has not run (POST /api/listing-content/sync) or brand id is wrong' });
+    }
+    // Descriptions can be several KB each; brand-wide calls get a preview,
+    // single-ASIN calls (?asin=) get everything.
+    const full = Boolean(req.query.asin);
+    res.json({
+      brandId: req.params.brandId,
+      count: data.length,
+      syncedAt: data[0].synced_at,
+      note: 'backend_keywords is seller-private — never show it in client-facing output. Own-listing bullets/description where available, catalog fallback otherwise.',
+      asins: data.map(r => ({
+        asin: r.asin, sku: r.seller_sku, marketplace: r.marketplace,
+        parentAsin: r.parent_asin, variationTheme: r.variation_theme,
+        title: r.title, attributes: r.attributes, imageCount: r.image_count,
+        bullets: r.bullets, description: full ? r.description : (r.description ? r.description.slice(0, 200) + (r.description.length > 200 ? '…' : '') : null),
+        descriptionLength: r.description ? r.description.length : 0,
+        backendKeywords: r.backend_keywords, status: r.status, issues: r.issues,
+      })),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/listing-content/sync', async (req, res) => {
+  if (process.env.SYNC_ENABLED !== 'true') return res.status(403).json({ error: 'SYNC_ENABLED is false' });
+  res.json({ status: 'started', note: 'Read-only SP-API pull (~5 min). Verify via GET /api/listing-content/:brandId.' });
+  setImmediate(async () => {
+    try {
+      const { syncListingContent } = require('./sync/listingContent');
+      const { brands } = await loadBrands();
+      const r = await syncListingContent(supabase, brands);
+      console.log('[ListingContent] Done:', JSON.stringify(r));
+    } catch (e) { console.error('[ListingContent] Manual sync error:', e.message); }
+  });
+});
+
 // Manually trigger refund sync. Returns when complete (can take ~5-15 min depending
 // on how many fresh refund events). For ad-hoc runs after the initial schema migration.
 app.post('/api/refunds/sync', async (req, res) => {
@@ -5751,7 +5797,17 @@ function scheduleDailySync() {
       .catch(err => console.warn('[DataDive] cron error:', err.message));
   });
 
-  console.log('[AutoSync] Crons scheduled: sync 6am/9am/12pm UTC, Slack digest 7am UTC, Orders poll */15min, Orders hourly-rebuild :05, Yesterday-finalize 8:30 UTC, Backfill 8am UTC, Audit 9am UTC, AdsDaily 9:10 UTC + */2h :20, Refunds 9:15 UTC, Images backfill 10 UTC + :30 hourly refresh, AdsTerms Mon 11 UTC, AdsStructure 11:15 UTC, DataDive Mon 11:45 UTC');
+  // Listing content: weekly Monday 12:15pm UTC (after Data Dive) — read-only
+  // Catalog + Listings Items pull per managed ASIN into listing_content.
+  cron.schedule('15 12 * * 1', () => {
+    if (process.env.SYNC_ENABLED !== 'true') return;
+    console.log('[ListingContent] Monday 12:15 UTC cron fired');
+    const { syncListingContent } = require('./sync/listingContent');
+    loadBrands().then(({ brands }) => syncListingContent(supabase, brands))
+      .catch(err => console.warn('[ListingContent] cron error:', err.message));
+  });
+
+  console.log('[AutoSync] Crons scheduled: sync 6am/9am/12pm UTC, Slack digest 7am UTC, Orders poll */15min, Orders hourly-rebuild :05, Yesterday-finalize 8:30 UTC, Backfill 8am UTC, Audit 9am UTC, AdsDaily 9:10 UTC + */2h :20, Refunds 9:15 UTC, Images backfill 10 UTC + :30 hourly refresh, AdsTerms Mon 11 UTC, AdsStructure 11:15 UTC, DataDive Mon 11:45 UTC, ListingContent Mon 12:15 UTC');
 
   // Load image cache at startup so first requests see images.
   refreshImagesCache().catch(err => console.warn('[Images] Startup load:', err.message));

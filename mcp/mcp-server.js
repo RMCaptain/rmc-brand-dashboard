@@ -128,6 +128,20 @@ const TOOLS = [
     handler: args => localApi(`/api/datadive/${encodeURIComponent(args.brandId)}`),
   },
   {
+    name: 'get_listing_content',
+    description: 'Full listing content per ASIN for a brand, pulled read-only from Amazon weekly: variant relationships (parent ASIN + variation theme), structured attributes (flavour/size/count), image count, bullets, description, BACKEND SEARCH TERMS (seller-private — never show in client-facing output), listing status and suppression issues. Pass asin for one listing with the full description. First stop for seo-asin-audit and listing-copy catalog audit mode — no pasting from Seller Central needed.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        brandId: { type: 'string' },
+        asin: { type: 'string', description: 'Optional — narrow to one ASIN and include the full description' },
+      },
+      required: ['brandId'],
+      additionalProperties: false,
+    },
+    handler: args => localApi(`/api/listing-content/${encodeURIComponent(args.brandId)}` + qs({ asin: args.asin })),
+  },
+  {
     name: 'get_listing_health',
     description: 'Current listing-health report across all brands: Buy Box losses (with winning seller and price), suppressed/stranded/inactive listings, unfulfillable units. Use for the catalog-health dimension of audits.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
