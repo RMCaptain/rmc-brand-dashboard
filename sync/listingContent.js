@@ -69,7 +69,9 @@ async function fetchCatalogBatch(asins, marketplaceId, token) {
   for (let i = 0; i < asins.length; i += 20) {
     const batch = asins.slice(i, i + 20);
     const ids = batch.map(a => `identifiers=${encodeURIComponent(a)}`).join('&');
-    const path = `/catalog/2022-04-01/items?marketplaceIds=${marketplaceId}&${ids}&identifiersType=ASIN&includedData=summaries,attributes,images,relationships`;
+    // pageSize MUST match the batch size — the API defaults to 10 and silently
+    // drops the rest of a 20-identifier batch.
+    const path = `/catalog/2022-04-01/items?marketplaceIds=${marketplaceId}&${ids}&identifiersType=ASIN&pageSize=20&includedData=summaries,attributes,images,relationships`;
     let res = await spRequest('GET', path, token);
     if (res.status === 429) { await sleep(2500); res = await spRequest('GET', path, token); }
     if (res.status === 200) {
@@ -124,10 +126,18 @@ async function syncListingContent(supabase, brands) {
   const token = await getAccessToken();
   console.log(`[ListingContent] ${asins.length} ASINs across ${managed.length} brands (${Object.keys(skuMap).length} with SKUs)...`);
 
-  // Catalog: CA first, US fills the gaps.
+  // Catalog: CA first, US fills the gaps, then individual lookups for stragglers.
   const catalog = await fetchCatalogBatch(asins, MP_ID.CA, token);
-  const missing = asins.filter(a => !catalog[a]);
+  let missing = asins.filter(a => !catalog[a]);
   if (missing.length) Object.assign(catalog, await fetchCatalogBatch(missing, MP_ID.US, token));
+  missing = asins.filter(a => !catalog[a]);
+  for (const asin of missing) {
+    const res = await spRequest('GET', `/catalog/2022-04-01/items/${asin}?marketplaceIds=${MP_ID.CA},${MP_ID.US}&includedData=summaries,attributes,images,relationships`, token);
+    if (res.status === 200 && res.body?.asin) catalog[asin] = parseCatalogItem(res.body);
+    await sleep(500);
+  }
+  const stillMissing = asins.filter(a => !catalog[a]).length;
+  if (stillMissing) console.warn(`[ListingContent] ${stillMissing} ASINs have no catalog data (not found in CA or US)`);
 
   const rows = [];
   let listingsOk = 0;
