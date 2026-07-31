@@ -3300,25 +3300,74 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
       topRefundUsd    += a.refund_amount_usd   || 0;
       topRefundCount  += a.refund_count        || 0;
     }
+    // Fees + refunds for the range from daily_fees (Finances API, posted-date
+    // semantics — matches Sellerboard). Before daily_fees existed, amazonFees
+    // came from a per-preset passthrough and CUSTOM ranges silently got $0
+    // fees — overstating profit ~4x (Jul 1-29: $127k shown vs $31k real).
+    // Passthrough remains only as a fallback for ranges with no daily_fees
+    // rows (pre-backfill history).
+    let feeDays = 0;
+    let fFeesCad = 0, fFeesUsd = 0, fSvcCad = 0, fSvcUsd = 0;
+    let fRefCad = 0, fRefUsd = 0, fRefFeeCad = 0, fRefFeeUsd = 0, fRefCount = 0;
+    const fBreakCad = {}, fBreakUsd = {};
+    try {
+      const { data: feeRows } = await supabase
+        .from('daily_fees').select('*').gte('date', from).lte('date', to);
+      for (const r of (feeRows || [])) {
+        feeDays++;
+        fFeesCad += r.fees_cad || 0;           fFeesUsd += r.fees_usd || 0;
+        fSvcCad  += r.service_fees_cad || 0;   fSvcUsd  += r.service_fees_usd || 0;
+        fRefCad  += r.refund_amount_cad || 0;  fRefUsd  += r.refund_amount_usd || 0;
+        fRefFeeCad += r.refund_fees_cad || 0;  fRefFeeUsd += r.refund_fees_usd || 0;
+        fRefCount  += r.refund_count || 0;
+        for (const [k, v] of Object.entries(r.breakdown_cad || {})) fBreakCad[k] = (fBreakCad[k] || 0) + v;
+        for (const [k, v] of Object.entries(r.breakdown_usd || {})) fBreakUsd[k] = (fBreakUsd[k] || 0) + v;
+      }
+    } catch (e) {
+      console.warn('[Metrics] daily_fees read failed — falling back to preset passthrough:', e.message);
+    }
+
     const passthrough = pm.presets?.[presetKey]?.financials || {};
-    const financials = {
+    const r2 = v => Math.round(v * 100) / 100;
+    const financials = feeDays > 0 ? {
       CAD: {
-        adSpend:      Math.round(topSpendCad * 100) / 100,
-        refundAmount: Math.round(topRefundCad * 100) / 100,
+        adSpend:      r2(topSpendCad),
+        refundAmount: r2(fRefCad),
+        amazonFees:   r2(fFeesCad),
+        serviceFees:  r2(fSvcCad),
+        refundFees:   r2(fRefFeeCad),
+        breakdown:    fBreakCad,
+      },
+      USD: {
+        adSpend:      r2(topSpendUsd),
+        refundAmount: r2(fRefUsd),
+        amazonFees:   r2(fFeesUsd),
+        serviceFees:  r2(fSvcUsd),
+        refundFees:   r2(fRefFeeUsd),
+        breakdown:    fBreakUsd,
+      },
+      refundCount: fRefCount,
+      feeDaysCovered: feeDays,
+      feeSource: 'daily_fees',
+    } : {
+      CAD: {
+        adSpend:      r2(topSpendCad),
+        refundAmount: r2(topRefundCad),
         amazonFees:   passthrough.CAD?.amazonFees   || 0,
         serviceFees:  passthrough.CAD?.serviceFees  || 0,
         refundFees:   passthrough.CAD?.refundFees   || 0,
         breakdown:    passthrough.CAD?.breakdown    || {},
       },
       USD: {
-        adSpend:      Math.round(topSpendUsd * 100) / 100,
-        refundAmount: Math.round(topRefundUsd * 100) / 100,
+        adSpend:      r2(topSpendUsd),
+        refundAmount: r2(topRefundUsd),
         amazonFees:   passthrough.USD?.amazonFees   || 0,
         serviceFees:  passthrough.USD?.serviceFees  || 0,
         refundFees:   passthrough.USD?.refundFees   || 0,
         breakdown:    passthrough.USD?.breakdown    || {},
       },
       refundCount: topRefundCount,
+      feeSource: 'preset_passthrough',
     };
 
     const fmtD = d => new Date(d + 'T12:00:00Z').toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -5482,7 +5531,12 @@ async function runFullSync(tag = 'Sync') {
       try {
         const ok1 = await reconcileDayFromOrders(pstSubtractDays(pstDateStr(), 1), `${tag}-Reconcile`);
         const ok2 = await reconcileDayFromOrders(pstSubtractDays(pstDateStr(), 2), `${tag}-Reconcile`);
-        if (ok1 || ok2) await rebuildPresetSummariesFromDaily(`${tag}-PostReconcile`);
+        // Day-7 pass: orders can cancel DAYS after our day-2 pass, and those
+        // phantom units previously lingered forever (units ran ~5% over
+        // Sellerboard). One extra day-pull per sync means every day gets a
+        // final wash a week out, after virtually all cancellations settle.
+        const ok7 = await reconcileDayFromOrders(pstSubtractDays(pstDateStr(), 7), `${tag}-Reconcile`);
+        if (ok1 || ok2 || ok7) await rebuildPresetSummariesFromDaily(`${tag}-PostReconcile`);
       } catch (e) {
         console.warn(`[${tag}] rolling reconcile failed:`, e.message);
       }
@@ -5696,6 +5750,17 @@ function scheduleDailySync() {
     const { refreshSkuPriceSnapshot } = require('./sync/priceCache');
     refreshSkuPriceSnapshot()
       .catch(err => console.warn('[PriceCache] snapshot cron error:', err.message));
+  });
+
+  // Daily fees refresh: 10am UTC — re-collect trailing 4 posted-days from the
+  // Finances API (fees/refunds keep posting after order day). Sundays sweep
+  // the trailing 40 days so late-posting refunds are eventually captured.
+  cron.schedule('0 10 * * *', () => {
+    const { syncDailyFees, trailingDates } = require('./sync/dailyFees');
+    const isSunday = new Date().getUTCDay() === 0;
+    const days = trailingDates(isSunday ? 40 : 4);
+    syncDailyFees(supabase, days, { label: isSunday ? 'FeesSweep' : 'FeesRefresh' })
+      .catch(err => console.warn('[DailyFees] cron error:', err.message));
   });
 
   // Backfill: 8am UTC daily — fills any missing daily_metrics gaps (runs 2h after main sync)
