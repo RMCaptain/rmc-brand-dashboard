@@ -130,11 +130,15 @@ async function syncListingContent(supabase, brands) {
   const catalog = await fetchCatalogBatch(asins, MP_ID.CA, token);
   let missing = asins.filter(a => !catalog[a]);
   if (missing.length) Object.assign(catalog, await fetchCatalogBatch(missing, MP_ID.US, token));
+  // Individual fallback must query ONE marketplace at a time — the per-item
+  // endpoint 404s if the ASIN is missing from ANY marketplace in the list.
   missing = asins.filter(a => !catalog[a]);
   for (const asin of missing) {
-    const res = await spRequest('GET', `/catalog/2022-04-01/items/${asin}?marketplaceIds=${MP_ID.CA},${MP_ID.US}&includedData=summaries,attributes,images,relationships`, token);
-    if (res.status === 200 && res.body?.asin) catalog[asin] = parseCatalogItem(res.body);
-    await sleep(500);
+    for (const mp of [MP_ID.CA, MP_ID.US]) {
+      const res = await spRequest('GET', `/catalog/2022-04-01/items/${asin}?marketplaceIds=${mp}&includedData=summaries,attributes,images,relationships`, token);
+      await sleep(500);
+      if (res.status === 200 && res.body?.asin) { catalog[asin] = parseCatalogItem(res.body); break; }
+    }
   }
   const stillMissing = asins.filter(a => !catalog[a]).length;
   if (stillMissing) console.warn(`[ListingContent] ${stillMissing} ASINs have no catalog data (not found in CA or US)`);
