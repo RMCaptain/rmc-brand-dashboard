@@ -579,6 +579,7 @@ const SHARED_RENDERERS = {
         ${stat('TACOS',          fmtPct(ad.tacos), 'Spend ÷ total revenue')}
         ${stat('Impressions',    fmtN(ad.impressions))}
         ${stat('Clicks',         fmtN(ad.clicks), `CTR ${fmtPct(ad.ctr, 2)} · CPC $${fmt2(ad.cpc)}`)}
+        ${stat('Total Sessions', fmtN(d.summary?.sessions), 'All traffic — ads + organic')}
       </div>
       <div class="ad-section-sub">Engagement</div>
       <div class="ad-grid">
