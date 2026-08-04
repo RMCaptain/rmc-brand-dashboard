@@ -568,24 +568,20 @@ const SHARED_RENDERERS = {
     const totalSpend = (ad.spendCad || 0) + (ad.spendUsd || 0);
     const totalAttr  = (ad.attributedSalesCad || 0) + (ad.attributedSalesUsd || 0);
     return `
+      <div class="ad-section-sub">Sales &amp; spend</div>
       <div class="ad-grid">
         ${stat('Total Ad Sales', fmtC(totalAttr, '$'), `CAD ${fmtC(ad.attributedSalesCad)} · USD ${fmtC(ad.attributedSalesUsd, 'US$')}`)}
         ${stat('Total Spend',    fmtC(totalSpend, '$'), `CAD ${fmtC(ad.spendCad)} · USD ${fmtC(ad.spendUsd, 'US$')}`)}
         ${stat('ACOS',           fmtPct(ad.acos), 'Spend ÷ ad sales')}
-        ${stat('ROAS',           ad.roas != null ? ad.roas.toFixed(2) + 'x' : '—', 'Ad sales ÷ spend')}
-      </div>
-      <div class="ad-section-sub">Vs total business</div>
-      <div class="ad-grid">
         ${stat('TACOS',          fmtPct(ad.tacos), 'Spend ÷ total revenue')}
-        ${stat('Impressions',    fmtN(ad.impressions))}
-        ${stat('Clicks',         fmtN(ad.clicks), `CTR ${fmtPct(ad.ctr, 2)} · CPC $${fmt2(ad.cpc)}`)}
-        ${stat('Total Sessions', fmtN(d.summary?.sessions), 'All traffic — ads + organic')}
       </div>
       <div class="ad-section-sub">Engagement</div>
-      <div class="ad-grid">
-        ${stat('Ad Orders',      fmtN(ad.orders), `Ad CVR ${fmtPct(ad.adCvr)}`)}
-        ${stat('Ad CVR',         fmtPct(ad.adCvr), 'Orders ÷ clicks')}
+      <div class="ad-grid ad-grid-3">
+        ${stat('Impressions',    fmtN(ad.impressions))}
+        ${stat('Clicks',         fmtN(ad.clicks))}
+        ${stat('Total Sessions', fmtN(d.summary?.sessions), 'All traffic — ads + organic')}
         ${stat('CPC',            ad.cpc != null ? '$' + fmt2(ad.cpc) : '—', 'Cost per click')}
+        ${stat('Ad CVR',         fmtPct(ad.adCvr), `${fmtN(ad.orders)} ad orders ÷ clicks`)}
         ${stat('CTR',            fmtPct(ad.ctr, 2), 'Clicks ÷ impressions')}
       </div>
       ${cov.state === 'partial' ? adsPartialNoteHtml(cov, d) : ''}`;
