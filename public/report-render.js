@@ -577,8 +577,8 @@ const SHARED_RENDERERS = {
       </div>
       <div class="ad-section-sub">Engagement</div>
       <div class="ad-grid ad-grid-3">
-        ${stat('Impressions',    fmtN(ad.impressions))}
-        ${stat('Clicks',         fmtN(ad.clicks))}
+        ${stat('Impressions',    fmtN(ad.impressions), 'Times ads were shown')}
+        ${stat('Clicks',         fmtN(ad.clicks), 'Times ads were clicked')}
         ${stat('Total Sessions', fmtN(d.summary?.sessions), 'All traffic — ads + organic')}
         ${stat('CPC',            ad.cpc != null ? '$' + fmt2(ad.cpc) : '—', 'Cost per click')}
         ${stat('Ad CVR',         fmtPct(ad.adCvr), `${fmtN(ad.orders)} ad orders ÷ clicks`)}
