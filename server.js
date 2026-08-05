@@ -3858,10 +3858,19 @@ async function generateBrandReportPdf({ brandId, period, from, to, compFrom, com
     });
     const page = await browser.newPage();
 
-    // If Basic Auth is on in this environment, authenticate so the page's
-    // internal API fetches don't 401. Skipped locally where auth is bypassed.
+    // Attach Basic Auth up front on loopback requests. page.authenticate()
+    // waits for a 401 challenge that never comes: since Google sign-in, the
+    // team gate 302s unauthenticated HTML navigations to the login page, so
+    // Chrome would render team-login.html and reportReady never fires.
+    // Scoped to 127.0.0.1 — the page also loads fonts.googleapis/jsdelivr,
+    // which must not receive our credentials.
     if (process.env.AUTH_USERNAME && process.env.AUTH_PASSWORD) {
-      await page.authenticate({ username: process.env.AUTH_USERNAME, password: process.env.AUTH_PASSWORD });
+      const basic = 'Basic ' + Buffer.from(`${process.env.AUTH_USERNAME}:${process.env.AUTH_PASSWORD}`).toString('base64');
+      await page.setRequestInterception(true);
+      page.on('request', r => {
+        const sameOrigin = r.url().startsWith(`http://127.0.0.1:${port}/`);
+        r.continue(sameOrigin ? { headers: { ...r.headers(), authorization: basic } } : undefined);
+      });
     }
 
     await page.setViewport({ width: 1100, height: 1600, deviceScaleFactor: 2 });
