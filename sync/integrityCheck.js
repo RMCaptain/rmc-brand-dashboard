@@ -145,7 +145,9 @@ function buildSlackText({ findings, window }) {
 }
 
 async function postIntegrityAlert(payload) {
-  const webhook = process.env.SLACK_WEBHOOK_URL;
+  // Own channel when SLACK_INTEGRITY_WEBHOOK_URL is set; falls back to the
+  // health-digest webhook (#account-health) so alerts never silently drop.
+  const webhook = process.env.SLACK_INTEGRITY_WEBHOOK_URL || process.env.SLACK_WEBHOOK_URL;
   if (!webhook) return { posted: false, reason: 'no_webhook' };
   const res = await fetch(webhook, {
     method: 'POST',
