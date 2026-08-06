@@ -52,10 +52,12 @@
     body.print-mode .rpt-toolbar { display: none !important; }
     body.print-mode #report { max-width: none; padding: 0; }
     body.print-mode .rpt-header { border-radius: 0; margin-bottom: 20px; }
-    body.print-mode .exec-textarea {
-      background: transparent !important; border: 0 !important; padding: 0 !important;
-      resize: none !important; min-height: 0 !important; pointer-events: none;
-      font-size: 13px; color: var(--text);
+    /* Print renders the summary as flowing text (.exec-print-text, injected by
+       showExecSummary) — a textarea clips to its box height and can't fragment
+       across pages, so long summaries were silently truncated in the PDF. */
+    body.print-mode .exec-textarea { display: none !important; }
+    .exec-print-text {
+      white-space: pre-wrap; font-size: 13px; line-height: 1.6; color: var(--text);
     }
     body.print-mode .exec-actions,
     body.print-mode .exec-status:empty { display: none !important; }
@@ -354,6 +356,11 @@
     body.print-mode .rpt-grip { display: none !important; }
     @media print {
       .section-panel, .rpt-grip { display: none !important; }
+      /* A section never splits across a page break — a half-rendered chart is
+         worse than a gap. Sections taller than one page (per-ASIN table) are
+         exempt automatically: 'avoid' is ignored when the box can't fit a page,
+         and those tables keep their own row-level break rules. */
+      .rpt-section, .chart-wrap { break-inside: avoid; page-break-inside: avoid; }
     }
 
     /* Revenue share pie */
@@ -1401,6 +1408,18 @@ function showExecSummary(text) {
   textarea.style.display = 'block';
   if (actions) actions.style.display = 'flex';
   if (empty)   empty.style.display = 'none';
+  // Print: swap the textarea for flowing text so the full summary renders and
+  // can fragment across pages (the textarea CSS is display:none in print-mode).
+  if (window.__printMode) {
+    let prose = document.getElementById('execPrintText');
+    if (!prose) {
+      prose = document.createElement('div');
+      prose.id = 'execPrintText';
+      prose.className = 'exec-print-text';
+      textarea.insertAdjacentElement('afterend', prose);
+    }
+    prose.textContent = text || '';
+  }
 }
 
 function showExecEmpty() {
