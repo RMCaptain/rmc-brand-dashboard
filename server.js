@@ -2753,6 +2753,15 @@ app.post('/api/ads/sync-daily', async (req, res) => {
   });
 });
 
+// Master-sheet ads tabs — manual trigger. Synchronous (a full run is ~15s:
+// Supabase reads + 4 Sheets API calls per brand), returns the per-brand result.
+app.post('/api/master-sheets/sync', async (req, res) => {
+  try {
+    const { syncMasterSheets } = require('./sync/masterSheets');
+    res.json(await syncMasterSheets(supabase));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Ads API expansion: search terms + campaign structure ────────────────────
 // Feeds the team's ppc-* skills. Tables: ads_search_terms (rolling 30d clicked
 // terms, wipe-and-replace per profile) and ads_campaign_snapshot (JSONB per
@@ -5921,7 +5930,19 @@ function scheduleDailySync() {
       .catch(err => console.warn('[ListingContent] cron error:', err.message));
   });
 
-  console.log('[AutoSync] Crons scheduled: sync 6am/9am/12pm UTC, Slack digest 7am UTC, Orders poll */15min, Orders hourly-rebuild :05, Yesterday-finalize 8:30 UTC, Backfill 8am UTC, Audit 9am UTC, AdsDaily 9:10 UTC + */2h :20, Refunds 9:15 UTC, Images backfill 10 UTC + :30 hourly refresh, AdsTerms Mon 11 UTC, AdsStructure 11:15 UTC, DataDive Mon 11:45 UTC, ListingContent Mon 12:15 UTC');
+  // Master-sheet ads tabs: weekly Monday 1pm UTC (after the 9:10 AdsDaily
+  // 30d re-pull has landed) — rebuilds the "Ads (auto)" tab in each brand's
+  // Master Google Sheet from daily_metrics. Writes to OUR sheets only, never
+  // Amazon. Skips cleanly if Google credentials are absent.
+  cron.schedule('0 13 * * 1', () => {
+    if (process.env.SYNC_ENABLED !== 'true') return;
+    console.log('[MasterSheets] Monday 13:00 UTC cron fired');
+    const { syncMasterSheets } = require('./sync/masterSheets');
+    syncMasterSheets(supabase)
+      .catch(err => console.warn('[MasterSheets] cron error:', err.message));
+  });
+
+  console.log('[AutoSync] Crons scheduled: sync 6am/9am/12pm UTC, Slack digest 7am UTC, Orders poll */15min, Orders hourly-rebuild :05, Yesterday-finalize 8:30 UTC, Backfill 8am UTC, Audit 9am UTC, AdsDaily 9:10 UTC + */2h :20, Refunds 9:15 UTC, Images backfill 10 UTC + :30 hourly refresh, AdsTerms Mon 11 UTC, AdsStructure 11:15 UTC, DataDive Mon 11:45 UTC, ListingContent Mon 12:15 UTC, MasterSheets Mon 13 UTC');
 
   // Load image cache at startup so first requests see images.
   refreshImagesCache().catch(err => console.warn('[Images] Startup load:', err.message));
