@@ -65,6 +65,18 @@ const { MP_CA, MP_US, upsertMpRows } = require('../sync/metricsMp');
   }
   console.log(`Prepared ${rows.length} long rows (${rows.filter(r => r.mp_id === MP_CA).length} CA, ${rows.filter(r => r.mp_id === MP_US).length} US).`);
 
+  // Reconcile, don't just add: zero every column the wide table can restore,
+  // so mirror rows whose wide value shrank to 0 (canceled orders, ads
+  // restatements) don't keep their stale numbers. refunded_units/refund_count
+  // are NOT touched — the wide table has no per-currency source for them, so
+  // zeroing would destroy forward-only data from the refunds recompute.
+  const { error: zeroErr } = await supabase
+    .from('daily_metrics_mp')
+    .update({ units: 0, revenue: 0, ad_spend: 0, ad_attributed_sales: 0, refund_amount: 0 })
+    .gte('date', '1970-01-01');
+  if (zeroErr) { console.error('Zero pass failed:', zeroErr.message); process.exit(1); }
+  console.log('Zeroed wide-restorable columns on existing mirror rows.');
+
   const written = await upsertMpRows(supabase, rows, 'backfill');
   if (written !== rows.length) { console.error(`Only ${written}/${rows.length} written — inspect warnings above.`); process.exit(1); }
   console.log(`✓ ${written} rows upserted into daily_metrics_mp.`);

@@ -93,13 +93,11 @@ function daysBetween(startStr, endStr) {
         if (upErr) {
           console.warn(`${date}: UPSERT FAILED — ${upErr.message}`);
         } else {
-          // Mirror into daily_metrics_mp: zero orders columns for the date
-          // (ads/refund columns on the same rows survive), then upsert.
+          // Mirror into daily_metrics_mp — replaceDay zeroes the orders
+          // columns first (ads/refund columns on the same rows survive).
           try {
             const metricsMp = require('../sync/metricsMp');
-            await supabase.from('daily_metrics_mp')
-              .update({ units: 0, revenue: 0 }).eq('date', date);
-            await metricsMp.upsertMpRows(supabase,
+            await metricsMp.replaceDay(supabase, date, 'orders',
               metricsMp.ordersRows(date, byAsinEstimated || byAsin, asinBrand), `rebuild ${date}`);
           } catch (e) { console.warn(`${date}: daily_metrics_mp mirror failed — ${e.message}`); }
           // Per-brand order counts for AOV. Separate table, separate grain —

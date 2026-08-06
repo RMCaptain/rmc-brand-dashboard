@@ -59,6 +59,6 @@ const { pstSubtractDays, pstDateStr } = require('../sync/dateUtils');
   console.log('✓ daily_metrics updated.');
 
   const metricsMp = require('../sync/metricsMp');
-  const n = await metricsMp.upsertMpRows(supabase, metricsMp.ordersRows(state.date, state.byAsin, asinBrand), `rebuild ${state.date}`);
+  const n = await metricsMp.replaceDay(supabase, state.date, 'orders', metricsMp.ordersRows(state.date, state.byAsin, asinBrand), `rebuild ${state.date}`);
   console.log(`✓ daily_metrics_mp: ${n} rows.`);
 })().catch(err => { console.error('Fatal:', err.message); process.exit(1); });

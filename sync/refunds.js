@@ -290,7 +290,7 @@ async function recomputeRefundAggregates(supabase, asinBrand, dates) {
     const metricsMp = require('./metricsMp');
     const mpByAsin = Object.fromEntries(Object.entries(byAsin).map(([asin, v]) =>
       [asin === 'UNMAPPED' ? `UNMAPPED-REFUND-${date}` : asin, v]));
-    await metricsMp.upsertMpRows(supabase, metricsMp.refundRows(date, mpByAsin, asinBrand), `refunds ${date}`);
+    await metricsMp.replaceDay(supabase, date, 'refunds', metricsMp.refundRows(date, mpByAsin, asinBrand), `refunds ${date}`);
   }
 }
 

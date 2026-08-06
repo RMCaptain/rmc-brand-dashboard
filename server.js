@@ -2471,7 +2471,7 @@ async function persistOrdersDay(date, byAsin) {
   }
 
   const metricsMp = require('./sync/metricsMp');
-  await metricsMp.upsertMpRows(supabase, metricsMp.ordersRows(date, byAsin, asinBrand), `orders ${date}`);
+  await metricsMp.replaceDay(supabase, date, 'orders', metricsMp.ordersRows(date, byAsin, asinBrand), `orders ${date}`);
 
   return rows.length;
 }
@@ -2724,7 +2724,7 @@ async function syncDailyAdSpend({ windowDays = 30, includeToday = true } = {}) {
     else { rowCount += rows.length; }
 
     const metricsMp = require('./sync/metricsMp');
-    await metricsMp.upsertMpRows(supabase, metricsMp.adsRows(date, asins, asinBrand), `ads ${date}`);
+    await metricsMp.replaceDay(supabase, date, 'ads', metricsMp.adsRows(date, asins, asinBrand), `ads ${date}`);
   }
   console.log(`[AdsDaily] Wrote ad spend + engagement on ${rowCount} (asin,date) rows`);
   return { rowCount, datesTouched: Object.keys(merged).length };
@@ -5021,6 +5021,18 @@ app.get('/api/revenue-check', async (req, res) => {
   res.json({ preset: presetKey, label: preset.label, totalCad, totalUsd, brands: rows });
 });
 
+// On-demand run of the nightly data-integrity checks (see sync/integrityCheck).
+// Read-only; never posts to Slack — the cron owns alerting.
+app.get('/api/integrity', async (req, res) => {
+  try {
+    const { runIntegrityChecks } = require('./sync/integrityCheck');
+    res.json(await runIntegrityChecks({ supabase, loadBrands }));
+  } catch (err) {
+    console.error('[integrity]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/health', async (req, res) => {
   try {
     // Browser view shows recent events from the last 7 days
@@ -5771,6 +5783,31 @@ function scheduleDailySync() {
     syncDailyFees(supabase, days, { label: isSunday ? 'FeesSweep' : 'FeesRefresh' })
       .catch(err => console.warn('[DailyFees] cron error:', err.message));
   });
+
+  // Data integrity checks: 11:30 UTC — after syncs (6/9), finalize (8:30) and
+  // fees refresh (10), so a quiet night means every invariant should hold.
+  // Failures post to Slack immediately; warnings (e.g. known missing COGS)
+  // ride along Mondays only so unchanged gaps don't spam daily. Same env gate
+  // as the health digest: prod posts, local runs stay silent.
+  if (process.env.SLACK_DIGEST_ENABLED === 'true') {
+    cron.schedule('30 11 * * *', async () => {
+      console.log('[Integrity] 11:30 UTC cron fired');
+      try {
+        const { runIntegrityChecks, postIntegrityAlert } = require('./sync/integrityCheck');
+        const result = await runIntegrityChecks({ supabase, loadBrands });
+        const fails = result.findings.filter(f => f.level === 'fail');
+        const isMonday = new Date().getUTCDay() === 1;
+        if (fails.length || (isMonday && result.findings.length)) {
+          const posted = await postIntegrityAlert(result);
+          console.log('[Integrity]', result.findings.length, 'finding(s), Slack posted:', posted.posted);
+        } else {
+          console.log('[Integrity] clean —', result.findings.length, 'warning(s) held for Monday');
+        }
+      } catch (err) {
+        console.error('[Integrity] cron error:', err.message);
+      }
+    });
+  }
 
   // Backfill: 8am UTC daily — fills any missing daily_metrics gaps (runs 2h after main sync)
   cron.schedule('0 8 * * *', () => {

@@ -43,6 +43,33 @@ async function upsertMpRows(supabase, rows, tag) {
   }
 }
 
+// Day rewriters call this instead of upsertMpRows. A rewritten day that
+// SHRANK (canceled orders, ads restatements, refund recomputes) must not
+// leave stale mirror rows behind — the upsert alone never removes values.
+// Zero the group's columns for the date first, then upsert. The zero is
+// semantically true, not a NULL-discipline violation: every caller rewrites
+// its full day, so an ASIN absent from the new data genuinely did 0 that day.
+// Two steps, not atomic — a failure in between leaves zeros, which the
+// integrity check + backfill script repair; stale non-zero values would lie.
+const DAY_COLUMN_GROUPS = {
+  orders:  { units: 0, revenue: 0 },
+  ads:     { ad_spend: 0, ad_attributed_sales: 0 },
+  refunds: { refunded_units: 0, refund_amount: 0, refund_count: 0 },
+};
+
+async function replaceDay(supabase, date, group, rows, tag) {
+  const zeros = DAY_COLUMN_GROUPS[group];
+  if (!zeros) { console.warn(`[MetricsMp] ${tag}: unknown group '${group}'`); return 0; }
+  try {
+    const { error } = await supabase.from('daily_metrics_mp').update(zeros).eq('date', date);
+    if (error) { console.warn(`[MetricsMp] ${tag} zero pass failed:`, error.message); return 0; }
+  } catch (e) {
+    console.warn(`[MetricsMp] ${tag} zero pass exception:`, e.message);
+    return 0;
+  }
+  return upsertMpRows(supabase, rows, tag);
+}
+
 // Orders shape: byAsin[asin] = { unitsCa, unitsUs, revenueCad, revenueUsd }.
 // A marketplace with no activity gets no row (absence = no recorded sales,
 // same semantics as the wide table's row filter).
@@ -102,4 +129,4 @@ function refundRows(date, byAsin, asinBrand) {
   return rows;
 }
 
-module.exports = { MP_CA, MP_US, upsertMpRows, ordersRows, adsRows, refundRows };
+module.exports = { MP_CA, MP_US, upsertMpRows, replaceDay, ordersRows, adsRows, refundRows };
