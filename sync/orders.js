@@ -254,6 +254,7 @@ async function fetchCanceledOrderDates(hoursBack = 48) {
   const token = await getAccessToken();
   const since = new Date(Date.now() - hoursBack * 3600 * 1000).toISOString();
   const dates = new Set();
+  const errors = [];
   let count = 0;
   for (const mpId of getMarketplaceIds()) {
     let nextToken = null;
@@ -265,7 +266,11 @@ async function fetchCanceledOrderDates(hoursBack = 48) {
       const res = await spRequest('GET', `/orders/v0/orders?${qs}`, token);
       if (res.status === 429) { console.warn('[CancelSweep] Rate limited — waiting 65s'); await sleep(65000); continue; }
       if (res.status !== 200) {
-        console.warn(`[CancelSweep] getOrders ${res.status}:`, JSON.stringify(res.body || {}).slice(0, 200));
+        // Surface, don't swallow: an empty result from an error must be
+        // distinguishable from a genuinely quiet window.
+        const detail = `${mpId} getOrders ${res.status}: ${JSON.stringify(res.body || {}).slice(0, 300)}`;
+        console.warn('[CancelSweep]', detail);
+        errors.push(detail);
         break;
       }
       for (const o of (res.body?.payload?.Orders || [])) {
@@ -278,7 +283,7 @@ async function fetchCanceledOrderDates(hoursBack = 48) {
     } while (nextToken);
     await sleep(2000);
   }
-  return { dates, count };
+  return { dates, count, errors };
 }
 
 // Full rebuild — wipes today state and re-fetches all orders created today.

@@ -5141,21 +5141,34 @@ app.get('/api/reconcile', async (req, res) => {
 // the background — each affected day is a full re-finalize from the Orders
 // API, which takes minutes per day. Progress in server logs.
 let cancelSweepRunning = false;
+// Persistent record of the last/current manual sweep — Render logs aren't
+// reachable from a session, so the job must be observable via HTTP.
+let cancelSweepStatus = { state: 'never-run' };
+app.get('/api/cancel-sweep/status', (req, res) => res.json(cancelSweepStatus));
 app.get('/api/cancel-sweep', async (req, res) => {
   if (process.env.SYNC_ENABLED !== 'true') return res.status(403).json({ error: 'SYNC_ENABLED is false' });
-  if (cancelSweepRunning) return res.status(409).json({ error: 'A sweep is already running' });
+  if (cancelSweepRunning) return res.status(409).json({ error: 'A sweep is already running', status: cancelSweepStatus });
   const hours = Math.min(parseInt(req.query.hours || '48', 10) || 48, 24 * 120);
   cancelSweepRunning = true;
+  cancelSweepStatus = { state: 'fetching', hours, startedAt: new Date().toISOString() };
   res.json({ started: true, hours });
   setImmediate(async () => {
     try {
-      const { dates, count } = await ordersPoller.fetchCanceledOrderDates(hours);
+      const { dates, count, errors } = await ordersPoller.fetchCanceledOrderDates(hours);
       const today = pstDateStr();
       const targets = [...dates].filter(d => d < today).sort();
+      Object.assign(cancelSweepStatus, { state: 'rebuilding', canceledOrders: count, fetchErrors: errors, targets, done: [], failed: [] });
       console.log(`[CancelSweep] manual (${hours}h): ${count} canceled order(s), ${targets.length} day(s) to re-finalize`);
-      for (const d of targets) await reconcileDayFromOrders(d, 'CancelSweep');
-      console.log(`[CancelSweep] manual sweep complete: ${targets.length} day(s) re-finalized`);
+      for (const d of targets) {
+        const ok = await reconcileDayFromOrders(d, 'CancelSweep');
+        cancelSweepStatus[ok ? 'done' : 'failed'].push(d);
+      }
+      cancelSweepStatus.state = 'complete';
+      cancelSweepStatus.finishedAt = new Date().toISOString();
+      console.log(`[CancelSweep] manual sweep complete: ${cancelSweepStatus.done.length}/${targets.length} day(s) re-finalized`);
     } catch (err) {
+      cancelSweepStatus.state = 'error';
+      cancelSweepStatus.error = err.message;
       console.error('[CancelSweep] manual error:', err.message);
     } finally {
       cancelSweepRunning = false;
