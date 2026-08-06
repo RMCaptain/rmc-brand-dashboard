@@ -1315,6 +1315,36 @@ async function syncBrandMetrics(brands) {
     console.warn('[Sync] Repeat purchase skipped:', e.message);
   }
 
+  // ── Surface orphaned ASINs ──────────────────────────────────────────────────
+  // Any ASIN with sales/sessions that no brand claims gets APPENDED to the
+  // Unknown Brand list here, so the Products page shows it as needing remapping.
+  // Until 2026-08-06 orphans only accrued invisible unknown-brand metrics — the
+  // list itself never grew after the one-time import, which is how $9.8k of
+  // Zellies revenue went missing without any surface showing it.
+  const claimedAsins = new Set(brands.filter(b => b.id !== 'unknown-brand').flatMap(b => b.asins));
+  const orphanTitles = {};
+  for (const preset of Object.values(result)) {
+    for (const sku of (preset.brands?.['unknown-brand']?.skus || [])) {
+      if (!claimedAsins.has(sku.asin)) orphanTitles[sku.asin] = sku.title || orphanTitles[sku.asin] || '';
+    }
+  }
+  const orphanAsins = Object.keys(orphanTitles);
+  if (orphanAsins.length) {
+    let unknown = brands.find(b => b.id === 'unknown-brand');
+    if (!unknown) {
+      unknown = { id: 'unknown-brand', name: 'Unknown Brand', marketplace: 'CA', color: '#f59e0b',
+                  asins: [], asinTitles: {}, createdAt: new Date().toISOString().split('T')[0] };
+      brands.push(unknown);
+    }
+    unknown.asinTitles = unknown.asinTitles || {};
+    let added = 0;
+    for (const asin of orphanAsins) {
+      if (!unknown.asins.includes(asin)) { unknown.asins.push(asin); added++; }
+      if (!unknown.asinTitles[asin] && orphanTitles[asin]) unknown.asinTitles[asin] = orphanTitles[asin];
+    }
+    if (added) console.log(`[Sync] ${added} unmapped ASIN(s) with activity added to Unknown Brand for remapping`);
+  }
+
   console.log('[Sync] Complete.');
   return { presets: result, updatedBrands: brands };
 }

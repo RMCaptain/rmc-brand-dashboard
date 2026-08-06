@@ -9,6 +9,11 @@
 //   mp_mirror   — daily_metrics (wide) and daily_metrics_mp (long) agree on
 //                 units/revenue/ad spend/refunds by currency over the last 30 full days
 //   sanity      — no negative units/revenue/spend in the last 30 days
+//   unknown     — revenue attributed to unknown-brand in the last 30 days.
+//                 Fail, not warn: it's sales no brand report will ever show
+//                 (how $9.8k of Zellies revenue went missing, 2026-08-06).
+//                 Self-clearing — remapping the ASIN in Products moves its
+//                 history, so the alert stops the day it's dealt with.
 //   cogs        — % of last-30d revenue from ASINs with COGS, per brand (warn < 95%)
 
 const { pstDateStr, pstSubtractDays } = require('./dateUtils');
@@ -99,6 +104,25 @@ async function runIntegrityChecks({ supabase, loadBrands }) {
   if (negs.length) {
     findings.push({ check: 'sanity', level: 'fail',
       detail: `${negs.length} row(s) with negative units/revenue/spend in last 30d (first: ${negs[0].asin} on ${negs[0].date}).` });
+  }
+
+  // unknown — sales on ASINs no brand claims (attribution stamped at sync time)
+  const unknownByAsin = {};
+  for (const r of wide) {
+    if (r.brand_id !== 'unknown-brand') continue;
+    const rev = num(r.revenue_cad) + num(r.revenue_usd);
+    const u = num(r.units);
+    if (rev <= 0 && u <= 0) continue;
+    const acc = unknownByAsin[r.asin] || (unknownByAsin[r.asin] = { rev: 0, units: 0 });
+    acc.rev += rev; acc.units += u;
+  }
+  const unknownAsins = Object.entries(unknownByAsin).sort((a, b) => b[1].rev - a[1].rev);
+  if (unknownAsins.length) {
+    const totRev = unknownAsins.reduce((s, [, v]) => s + v.rev, 0);
+    const totU   = unknownAsins.reduce((s, [, v]) => s + v.units, 0);
+    const top = unknownAsins.slice(0, 5).map(([a, v]) => `${a} $${r2(v.rev)}`).join(', ');
+    findings.push({ check: 'unknown', level: 'fail',
+      detail: `$${r2(totRev)} / ${totU} unit(s) in last 30d on ${unknownAsins.length} unmapped ASIN(s) — no brand report shows this. Remap in Products: ${top}${unknownAsins.length > 5 ? ', …' : ''}` });
   }
 
   // cogs — revenue-weighted coverage per brand (warn only; posts Mondays)

@@ -201,7 +201,11 @@ async function saveSyncResults(syncBrands) {
     for (const asin of syncUnknown.asins) {
       if (!allFreshAsins.has(asin) && !freshUnknown.asins.includes(asin)) {
         freshUnknown.asins.push(asin);
-        if (syncUnknown.asinTitles?.[asin]) freshUnknown.asinTitles[asin] = syncUnknown.asinTitles[asin];
+      }
+      // Title backfill also covers ASINs already on the list (e.g. seeded by a
+      // script before any sync saw them) — the card is useless without names.
+      if (freshUnknown.asins.includes(asin) && !freshUnknown.asinTitles[asin] && syncUnknown.asinTitles?.[asin]) {
+        freshUnknown.asinTitles[asin] = syncUnknown.asinTitles[asin];
       }
     }
   }
@@ -414,6 +418,33 @@ app.delete('/api/brands/:id', async (req, res) => {
   res.json({ success: true });
 });
 
+// When an ASIN gets mapped to a brand, its unknown-brand metric history follows.
+// Attribution is stamped at sync time, so sales from before the mapping sit
+// under unknown-brand forever without this (how $9.8k of Zellies revenue went
+// missing — found 2026-08-06). Deliberately scoped to unknown-brand/NULL rows
+// only: moving an ASIN between two real brands must NOT rewrite history — the
+// old brand really did earn that revenue while it owned the ASIN.
+async function reattributeUnknownHistory(asins, toBrandId, tag) {
+  if (toBrandId === 'unknown-brand') return 0;
+  let moved = 0;
+  for (const raw of asins) {
+    const asin = String(raw).trim().toUpperCase();
+    for (const table of ['daily_metrics', 'daily_metrics_mp']) {
+      try {
+        const { data, error } = await supabase.from(table)
+          .update({ brand_id: toBrandId })
+          .eq('asin', asin)
+          .or('brand_id.eq.unknown-brand,brand_id.is.null')
+          .select('date');
+        if (error) console.warn(`[Reattribute] ${tag} ${table} ${asin}:`, error.message);
+        else moved += (data || []).length;
+      } catch (e) { console.warn(`[Reattribute] ${tag} ${table} ${asin}:`, e.message); }
+    }
+  }
+  if (moved) console.log(`[Reattribute] ${tag}: ${moved} row(s) moved to ${toBrandId}`);
+  return moved;
+}
+
 app.post('/api/brands/:id/asins', async (req, res) => {
   const { asin } = req.body;
   if (!asin || !/^[A-Z0-9]{10}$/.test(asin.trim().toUpperCase())) {
@@ -434,8 +465,9 @@ app.post('/api/brands/:id/asins', async (req, res) => {
     brand.asins.push(normalized);
     await saveBrands(data);
   }
+  const movedRows = await reattributeUnknownHistory([normalized], brand.id, 'add-asin');
 
-  res.json(brand);
+  res.json({ ...brand, movedRows });
 });
 
 app.put('/api/brands/:id/asins/:asin/move', async (req, res) => {
@@ -454,7 +486,8 @@ app.put('/api/brands/:id/asins/:asin/move', async (req, res) => {
   if (!toBrand.asins.includes(asin)) toBrand.asins.push(asin);
 
   await saveBrands(data);
-  res.json({ success: true, from: fromBrand, to: toBrand });
+  const movedRows = await reattributeUnknownHistory([asin], toBrand.id, 'move-asin');
+  res.json({ success: true, from: fromBrand, to: toBrand, movedRows });
 });
 
 app.post('/api/brands/:id/asins/bulk-move', async (req, res) => {
@@ -480,7 +513,8 @@ app.post('/api/brands/:id/asins/bulk-move', async (req, res) => {
   }
 
   await saveBrands(data);
-  res.json({ success: true, from: fromBrand, to: toBrand });
+  const movedRows = await reattributeUnknownHistory(asins, toBrand.id, 'bulk-move');
+  res.json({ success: true, from: fromBrand, to: toBrand, movedRows });
 });
 
 app.delete('/api/brands/:id/asins/:asin', async (req, res) => {
