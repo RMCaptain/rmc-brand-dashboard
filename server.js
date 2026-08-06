@@ -3823,6 +3823,21 @@ function resolveReportPeriod(query = {}) {
   return { from, to, compFrom, compTo, preset };
 }
 
+// Download-filename label for the covered range: an exact calendar month reads
+// "July 2026"; any other range spells out the dates (Mike, 2026-08-06).
+const REPORT_MONTH_NAMES = ['January','February','March','April','May','June',
+  'July','August','September','October','November','December'];
+function reportRangeLabel(from, to) {
+  const [fy, fm, fd] = from.split('-').map(Number);
+  const [ty, tm, td] = to.split('-').map(Number);
+  const monthEnd = new Date(Date.UTC(ty, tm, 0)).getUTCDate(); // day 0 of next month
+  if (fy === ty && fm === tm && fd === 1 && td === monthEnd) {
+    return `${REPORT_MONTH_NAMES[fm - 1]} ${fy}`;
+  }
+  if (fy === ty) return `${REPORT_MONTH_NAMES[fm - 1]} ${fd} to ${REPORT_MONTH_NAMES[tm - 1]} ${td}, ${fy}`;
+  return `${REPORT_MONTH_NAMES[fm - 1]} ${fd}, ${fy} to ${REPORT_MONTH_NAMES[tm - 1]} ${td}, ${ty}`;
+}
+
 // ── Brand report PDF export (Phase 2 slice 2.4) ──────────────────────────────
 // Server-side PDF render using Puppeteer (same pattern as the PO Builder PDF
 // path). Navigates headless Chrome to the brand-report page with ?print=1
@@ -3900,10 +3915,11 @@ async function generateBrandReportPdf({ brandId, period, from, to, compFrom, com
     await browser.close();
     browser = null;
 
-    const dateStamp = new Date().toISOString().split('T')[0];
-    const safeName  = String(brandName).replace(/[^a-z0-9\-_]+/gi, '_');
-    const label     = effPeriod || `${from}_${to}`;
-    const filename  = `RMC_${safeName}_${label}_${dateStamp}.pdf`;
+    // Real brand name + human period, e.g. "Zellies - July 2026.pdf". Presets
+    // resolve to their concrete dates so "last month" names the month it covered.
+    const range    = (from && to) ? { from, to } : resolveReportPeriod({ period: effPeriod });
+    const safeName = String(brandName).replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, ' ').trim() || brandId;
+    const filename = `${safeName} - ${reportRangeLabel(range.from, range.to)}.pdf`;
 
     return { pdfData: Buffer.isBuffer(pdfData) ? pdfData : Buffer.from(pdfData), filename };
   } catch (err) {
