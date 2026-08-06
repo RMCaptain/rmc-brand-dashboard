@@ -5095,6 +5095,36 @@ app.get('/api/integrity', async (req, res) => {
   }
 });
 
+// External reconcile: dashboard vs Amazon's own S&T report. S&T reports take
+// minutes to bake, so this kicks off in the background and delivers the result
+// to Slack (#data-integrity) — pass or fail, it always posts. Defaults to the
+// previous calendar month; ?from&to for any custom range.
+let reconcileRunning = false;
+app.get('/api/reconcile', async (req, res) => {
+  try {
+    if (reconcileRunning) return res.status(409).json({ error: 'A reconcile is already running' });
+    let from = req.query.from, to = req.query.to;
+    if (from || to) {
+      from = parseReportDate(from, 'from'); to = parseReportDate(to, 'to');
+      if (from > to) return res.status(400).json({ error: 'from must be on or before to' });
+    } else {
+      ({ from, to } = resolveReportPeriod({ period: 'lastMonth' }));
+    }
+    reconcileRunning = true;
+    const { runRevenueReconcile, postReconcile } = require('./sync/reconcile');
+    runRevenueReconcile({ supabase, loadBrands, from, to })
+      .then(async result => {
+        const posted = await postReconcile(result);
+        console.log(`[Reconcile] ${from} → ${to}: ${result.pass ? 'PASS' : `FAIL (${result.failures.length})`}, Slack posted:`, posted.posted);
+      })
+      .catch(err => console.error('[Reconcile] failed:', err.message))
+      .finally(() => { reconcileRunning = false; });
+    res.json({ started: true, from, to, deliversTo: 'Slack #data-integrity in a few minutes' });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
 app.get('/api/health', async (req, res) => {
   try {
     // Browser view shows recent events from the last 7 days
@@ -5867,6 +5897,26 @@ function scheduleDailySync() {
         }
       } catch (err) {
         console.error('[Integrity] cron error:', err.message);
+      }
+    });
+  }
+
+  // Monthly external reconcile: 3rd of the month 13:00 UTC, previous calendar
+  // month vs Amazon's own S&T report — the day BEFORE the 4th-of-month auto
+  // reports, so brand reports are generated from verified data. Posts to Slack
+  // pass or fail: silence never means "unchecked". Internal checks prove the
+  // DB is self-consistent; only this proves it matches Amazon.
+  if (process.env.SLACK_DIGEST_ENABLED === 'true') {
+    cron.schedule('0 13 3 * *', async () => {
+      console.log('[Reconcile] monthly cron fired');
+      try {
+        const { runRevenueReconcile, postReconcile } = require('./sync/reconcile');
+        const { from, to } = resolveReportPeriod({ period: 'lastMonth' });
+        const result = await runRevenueReconcile({ supabase, loadBrands, from, to });
+        const posted = await postReconcile(result);
+        console.log(`[Reconcile] ${from} → ${to}: ${result.pass ? 'PASS' : `FAIL (${result.failures.length})`}, Slack posted:`, posted.posted);
+      } catch (err) {
+        console.error('[Reconcile] cron error:', err.message);
       }
     });
   }
