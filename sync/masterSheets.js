@@ -1,7 +1,11 @@
 'use strict';
 /**
- * Master-sheet ads tab writer — projects daily_metrics ad data into each
- * brand's Master Google Sheet every Monday ("Ads (auto)" tab).
+ * Master-sheet tab writer — projects dashboard data into each brand's Master
+ * Google Sheet every Monday: "Ads (auto)" (ad performance from daily_metrics)
+ * and "Inventory (auto)" (per-ASIN FBA stock + days of cover + weekly on-hand
+ * history; current stock from the preset_metrics blob, history from
+ * daily_metrics.inventory_on_hand which the post-sync traffic writer has been
+ * snapshotting daily — no separate inventory pull exists or is needed).
  *
  * The DATABASE is the permanent ads history (daily_metrics, ASIN-level daily
  * since 2026-04-11; the 9:10 UTC cron re-pulls a trailing 30d window daily, so
@@ -24,7 +28,9 @@ const path = require('path');
 const { google } = require('googleapis');
 
 const ADS_HISTORY_START = '2026-04-11'; // earlier Ads data was past Amazon's ~95d retention when syncing began — gone forever
-const TAB_NAME = 'Ads (auto)';
+const TAB_ADS = 'Ads (auto)';
+const TAB_INV = 'Inventory (auto)';
+const INV_HISTORY_WEEKS = 13;
 
 // brand_id → Master sheet. Which brands get a tab is controlled by which
 // sheets Mike shares with the service account — add a row here after sharing.
@@ -165,6 +171,19 @@ const HEADER = ['Period', 'Spend CA (CAD)', 'Ad Sales CA (CAD)', 'ACOS CA', 'Spe
 
 // ── Tab content ───────────────────────────────────────────────────────────────
 
+// Ads tab. Returns { values, boldRows, headerRows, deltaRows, bands, colWidths }.
+const ADS_BANDS = [
+  { c0: 1, c1: 3,  pattern: '$#,##0.00', type: 'CURRENCY' }, // Spend/Sales CA
+  { c0: 4, c1: 6,  pattern: '$#,##0.00', type: 'CURRENCY' }, // Spend/Sales US
+  { c0: 3, c1: 4,  pattern: '0.0%',  type: 'PERCENT' },      // ACOS CA
+  { c0: 6, c1: 7,  pattern: '0.0%',  type: 'PERCENT' },      // ACOS US
+  { c0: 7, c1: 9,  pattern: '#,##0', type: 'NUMBER' },       // Clicks, Impressions
+  { c0: 9, c1: 10, pattern: '0.00%', type: 'PERCENT' },      // CTR
+  { c0: 10, c1: 11, pattern: '#,##0', type: 'NUMBER' },      // Orders
+  { c0: 11, c1: 12, pattern: '0.0%', type: 'PERCENT' },      // CVR
+];
+const ADS_WIDTHS = [{ c0: 0, c1: 1, px: 300 }, { c0: 1, c1: 12, px: 105 }];
+
 function buildTabValues(byDate, dataThrough, todayStr) {
   const values = [];
   const boldRows = [], headerRows = [], deltaRows = [];
@@ -237,21 +256,146 @@ function buildTabValues(byDate, dataThrough, todayStr) {
     push(metricRow(`${fmtMonth(m)}${partial ? ' (partial — history starts Apr 11)' : ''}`, t));
   }
 
-  return { values, boldRows, headerRows, deltaRows };
+  return { values, boldRows, headerRows, deltaRows, bands: ADS_BANDS, colWidths: ADS_WIDTHS };
+}
+
+// ── Inventory tab ─────────────────────────────────────────────────────────────
+
+// Current per-ASIN stock lives in the preset_metrics blob (FBA Inventory API,
+// CA+US summed per ASIN during sync). last30d gives velocity; last7d gives the
+// recent-ad-spend signal for the "spending on low stock" flag.
+async function loadPresetBrands(supabase) {
+  const { data, error } = await supabase.from('preset_metrics').select('data').eq('id', 'main').single();
+  if (error || !data?.data) throw new Error(`preset_metrics fetch: ${error?.message || 'empty'}`);
+  return {
+    last30d:  data.data.presets?.last30d?.brands || {},
+    last7d:   data.data.presets?.last7d?.brands  || {},
+    lastSync: data.data.lastSync || null,
+  };
+}
+
+// Weekly on-hand history from daily_metrics: for each ASIN and each week, the
+// last non-null inventory_on_hand snapshot in that week.
+async function fetchInventoryHistory(supabase, brandId, fromDate) {
+  const latest = {}; // `${asin}|${weekEnd}` -> { date, onHand }
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from('daily_metrics')
+      .select('date,asin,inventory_on_hand')
+      .eq('brand_id', brandId)
+      .gte('date', fromDate)
+      .not('inventory_on_hand', 'is', null)
+      .order('date', { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(`inventory history (${brandId}): ${error.message}`);
+    for (const r of (data || [])) {
+      const dow = dayOfWeek(r.date);
+      const weekEnd = dow === 0 ? r.date : addDays(r.date, 7 - dow);
+      const key = `${r.asin}|${weekEnd}`;
+      if (!latest[key] || r.date > latest[key].date) latest[key] = { date: r.date, onHand: r.inventory_on_hand };
+    }
+    if (!data || data.length < PAGE) break;
+  }
+  return latest;
+}
+
+const INV_HEADER = ['ASIN', 'Product', 'On hand', 'Inbound', 'Unfulfillable', 'Units/day (30d)', 'Days of cover', 'Ad spend 7d ($)', 'Flag'];
+const INV_BANDS = [
+  { c0: 2, c1: 5, pattern: '#,##0', type: 'NUMBER' },       // On hand, Inbound, Unfulfillable
+  { c0: 5, c1: 6, pattern: '0.0',   type: 'NUMBER' },       // Units/day
+  { c0: 6, c1: 7, pattern: '#,##0', type: 'NUMBER' },       // Days of cover
+  { c0: 7, c1: 8, pattern: '$#,##0.00', type: 'CURRENCY' }, // Ad spend 7d
+];
+const INV_WIDTHS = [{ c0: 0, c1: 1, px: 110 }, { c0: 1, c1: 2, px: 340 }, { c0: 2, c1: 9, px: 100 }];
+const RED   = { red: 0.96, green: 0.80, blue: 0.80 };
+const AMBER = { red: 0.99, green: 0.90, blue: 0.80 };
+
+function buildInventoryValues({ skus30, spend7ByAsin, history, dataThrough, todayStr, lastSync }) {
+  // Collapse sku rows to one row per ASIN (inventory in the blob is already a
+  // per-ASIN total, so take it as-is; units and spend sum across rows).
+  const byAsin = {};
+  for (const s of (skus30 || [])) {
+    if (!s.asin) continue;
+    const e = byAsin[s.asin] || (byAsin[s.asin] = { asin: s.asin, title: s.title || s.amazonTitle || s.asin, units30: 0, inv: null });
+    e.units30 += Number(s.units || 0);
+    if (!e.inv && s.inventory) e.inv = s.inventory;
+    if ((e.title === e.asin) && (s.title || s.amazonTitle)) e.title = s.title || s.amazonTitle;
+  }
+
+  const rows = Object.values(byAsin).map(e => {
+    const onHand  = e.inv?.onHand ?? null;
+    const vel     = e.units30 / 30;
+    const cover   = onHand != null && vel > 0 ? Math.round(onHand / vel) : null;
+    const spend7  = Math.round((spend7ByAsin[e.asin] || 0) * 100) / 100;
+    let flag = '';
+    if (onHand === 0 && vel > 0)            flag = spend7 > 0 ? 'OOS + AD SPEND' : 'OOS';
+    else if (cover != null && cover < 14)   flag = spend7 > 0 ? 'LOW (<14d) + AD SPEND' : 'LOW (<14d)';
+    else if (cover != null && cover < 30)   flag = 'WATCH (<30d)';
+    return { ...e, onHand, vel, cover, spend7, flag };
+  });
+
+  const FLAG_RANK = { 'OOS + AD SPEND': 0, 'OOS': 1, 'LOW (<14d) + AD SPEND': 2, 'LOW (<14d)': 3, 'WATCH (<30d)': 4, '': 9 };
+  rows.sort((a, b) => (FLAG_RANK[a.flag] - FLAG_RANK[b.flag])
+    || ((a.cover ?? 1e9) - (b.cover ?? 1e9))
+    || (b.units30 - a.units30));
+
+  const values = [];
+  const boldRows = [], headerRows = [], highlights = [];
+  const push = row => { values.push(row); return values.length - 1; };
+
+  boldRows.push(push(['FBA INVENTORY (CA + US) — AUTO-GENERATED. Do not edit: this tab is rebuilt every Monday by the RMC dashboard. Manual notes belong on your own tabs.']));
+  push([`Updated ${todayStr} · inventory as of last sync (${lastSync ? String(lastSync).slice(0, 16).replace('T', ' ') : 'unknown'} UTC) · velocity = units sold last 30d ÷ 30 · flags: OOS, LOW <14d cover, WATCH <30d · "+ AD SPEND" = ad spend in the last 7 days on that ASIN`]);
+  push([]);
+  headerRows.push(push(INV_HEADER));
+
+  for (const r of rows) {
+    const rowIdx = push([
+      r.asin, r.title,
+      r.onHand ?? '', r.inv?.inbound ?? '', r.inv?.unfulfillable ?? '',
+      r.vel > 0 ? Math.round(r.vel * 10) / 10 : 0,
+      r.cover ?? '', r.spend7 || 0, r.flag,
+    ]);
+    if (r.flag.startsWith('OOS') || r.flag.includes('+ AD SPEND')) highlights.push({ row: rowIdx, color: RED });
+    else if (r.flag.startsWith('LOW'))                             highlights.push({ row: rowIdx, color: AMBER });
+  }
+
+  const mainEnd = values.length; // main table bands stop here — history reuses the same columns
+
+  // Weekly on-hand history — one column per week (ending Sunday), newest first
+  push([]);
+  const wkEnd = dayOfWeek(dataThrough) === 0 ? dataThrough : addDays(dataThrough, -dayOfWeek(dataThrough));
+  const weeks = [];
+  for (let i = 0; i < INV_HISTORY_WEEKS; i++) weeks.push(addDays(wkEnd, -7 * i));
+  boldRows.push(push(['WEEKLY ON-HAND HISTORY (units at end of week, newest first — from the dashboard database)']));
+  headerRows.push(push(['ASIN', 'Product', ...weeks.map(fmtDate)]));
+  const histStart = values.length;
+  for (const r of rows) {
+    push([r.asin, r.title, ...weeks.map(w => history[`${r.asin}|${w}`]?.onHand ?? '')]);
+  }
+
+  return {
+    values, boldRows, headerRows, highlights,
+    bands: [
+      ...INV_BANDS.map(b => ({ ...b, r0: 3, r1: mainEnd })),
+      { c0: 2, c1: 2 + INV_HISTORY_WEEKS, r0: histStart, r1: values.length, pattern: '#,##0', type: 'NUMBER' },
+    ],
+    colWidths: INV_WIDTHS,
+  };
 }
 
 // ── Sheet writing ─────────────────────────────────────────────────────────────
 
-async function ensureTab(sheets, spreadsheetId) {
+async function ensureTab(sheets, spreadsheetId, tabName) {
   const meta = await sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets(properties(sheetId,title))' });
-  const existing = meta.data.sheets.find(s => s.properties.title === TAB_NAME);
+  const existing = meta.data.sheets.find(s => s.properties.title === tabName);
   if (existing) return existing.properties.sheetId;
   const res = await sheets.spreadsheets.batchUpdate({
     spreadsheetId,
     requestBody: { requests: [{ addSheet: { properties: {
-      title: TAB_NAME,
+      title: tabName,
       tabColor: { red: 0.17, green: 0.23, blue: 0.13 }, // RMC green — marks machine-owned tabs
-      gridProperties: { rowCount: 300, columnCount: 14 },
+      gridProperties: { rowCount: 400, columnCount: 20 },
     } } }] },
   });
   return res.data.replies[0].addSheet.properties.sheetId;
@@ -259,50 +403,53 @@ async function ensureTab(sheets, spreadsheetId) {
 
 function formatRequests(sheetId, built) {
   const numRows = built.values.length;
-  const band = (startCol, endCol, pattern, type) => ({
-    repeatCell: {
-      range: { sheetId, startRowIndex: 2, endRowIndex: numRows, startColumnIndex: startCol, endColumnIndex: endCol },
-      cell: { userEnteredFormat: { numberFormat: { type, pattern } } },
-      fields: 'userEnteredFormat.numberFormat',
-    },
-  });
   const reqs = [
     // Wipe all formatting first so layout shifts between runs never leave stale styling
     { repeatCell: { range: { sheetId }, cell: { userEnteredFormat: {} }, fields: 'userEnteredFormat' } },
-    band(1, 3,  '$#,##0.00', 'CURRENCY'),  // Spend/Sales CA
-    band(4, 6,  '$#,##0.00', 'CURRENCY'),  // Spend/Sales US
-    band(3, 4,  '0.0%',  'PERCENT'),       // ACOS CA
-    band(6, 7,  '0.0%',  'PERCENT'),       // ACOS US
-    band(7, 9,  '#,##0', 'NUMBER'),        // Clicks, Impressions
-    band(9, 10, '0.00%', 'PERCENT'),       // CTR
-    band(10, 11, '#,##0', 'NUMBER'),       // Orders
-    band(11, 12, '0.0%', 'PERCENT'),       // CVR
-    { updateDimensionProperties: { range: { sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: 1 }, properties: { pixelSize: 300 }, fields: 'pixelSize' } },
-    { updateDimensionProperties: { range: { sheetId, dimension: 'COLUMNS', startIndex: 1, endIndex: 12 }, properties: { pixelSize: 105 }, fields: 'pixelSize' } },
   ];
-  for (const r of [...built.boldRows, ...built.headerRows]) {
+  for (const b of (built.bands || [])) {
+    reqs.push({ repeatCell: {
+      range: { sheetId, startRowIndex: b.r0 ?? 2, endRowIndex: b.r1 ?? numRows, startColumnIndex: b.c0, endColumnIndex: b.c1 },
+      cell: { userEnteredFormat: { numberFormat: { type: b.type, pattern: b.pattern } } },
+      fields: 'userEnteredFormat.numberFormat',
+    } });
+  }
+  for (const w of (built.colWidths || [])) {
+    reqs.push({ updateDimensionProperties: {
+      range: { sheetId, dimension: 'COLUMNS', startIndex: w.c0, endIndex: w.c1 },
+      properties: { pixelSize: w.px }, fields: 'pixelSize',
+    } });
+  }
+  for (const r of [...(built.boldRows || []), ...(built.headerRows || [])]) {
     reqs.push({ repeatCell: {
       range: { sheetId, startRowIndex: r, endRowIndex: r + 1 },
       cell: { userEnteredFormat: { textFormat: { bold: true } } },
       fields: 'userEnteredFormat.textFormat.bold',
     } });
   }
-  for (const r of built.deltaRows) {
+  for (const r of (built.deltaRows || [])) {
     reqs.push({ repeatCell: {
       range: { sheetId, startRowIndex: r, endRowIndex: r + 1, startColumnIndex: 1, endColumnIndex: 12 },
       cell: { userEnteredFormat: { numberFormat: { type: 'PERCENT', pattern: '+0.0%;-0.0%' } } },
       fields: 'userEnteredFormat.numberFormat',
     } });
   }
+  for (const h of (built.highlights || [])) {
+    reqs.push({ repeatCell: {
+      range: { sheetId, startRowIndex: h.row, endRowIndex: h.row + 1, startColumnIndex: 0, endColumnIndex: 9 },
+      cell: { userEnteredFormat: { backgroundColor: h.color } },
+      fields: 'userEnteredFormat.backgroundColor',
+    } });
+  }
   return reqs;
 }
 
-async function writeTab(sheets, spreadsheetId, built) {
-  const sheetId = await ensureTab(sheets, spreadsheetId);
-  await sheets.spreadsheets.values.clear({ spreadsheetId, range: `'${TAB_NAME}'` });
+async function writeTab(sheets, spreadsheetId, tabName, built) {
+  const sheetId = await ensureTab(sheets, spreadsheetId, tabName);
+  await sheets.spreadsheets.values.clear({ spreadsheetId, range: `'${tabName}'` });
   await sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: `'${TAB_NAME}'!A1`,
+    range: `'${tabName}'!A1`,
     valueInputOption: 'RAW',
     requestBody: { values: built.values },
   });
@@ -320,14 +467,29 @@ async function syncMasterSheets(supabase) {
   }
   const todayStr    = pstDateStr();
   const dataThrough = pstSubtractDays(todayStr, 1);
+  const invFrom     = pstSubtractDays(todayStr, INV_HISTORY_WEEKS * 7 + 6);
+  const presets     = await loadPresetBrands(supabase);
 
   const results = { ok: [], failed: [] };
   for (const [brandId, spreadsheetId] of Object.entries(BRAND_SHEETS)) {
     try {
       const byDate = await fetchBrandDaily(supabase, brandId);
-      const built  = buildTabValues(byDate, dataThrough, todayStr);
-      await writeTab(sheets, spreadsheetId, built);
-      console.log(`[MasterSheets] ${brandId}: wrote ${built.values.length} rows (data through ${dataThrough})`);
+      const ads = buildTabValues(byDate, dataThrough, todayStr);
+      await writeTab(sheets, spreadsheetId, TAB_ADS, ads);
+
+      const spend7ByAsin = {};
+      for (const s of (presets.last7d[brandId]?.skus || [])) {
+        if (s.asin) spend7ByAsin[s.asin] = (spend7ByAsin[s.asin] || 0) + Number(s.spendCad || 0) + Number(s.spendUsd || 0);
+      }
+      const inv = buildInventoryValues({
+        skus30: presets.last30d[brandId]?.skus || [],
+        spend7ByAsin,
+        history: await fetchInventoryHistory(supabase, brandId, invFrom),
+        dataThrough, todayStr, lastSync: presets.lastSync,
+      });
+      await writeTab(sheets, spreadsheetId, TAB_INV, inv);
+
+      console.log(`[MasterSheets] ${brandId}: ads ${ads.values.length} rows, inventory ${inv.values.length} rows (data through ${dataThrough})`);
       results.ok.push(brandId);
     } catch (e) {
       console.warn(`[MasterSheets] ${brandId} FAILED: ${e.message}`);
@@ -338,4 +500,4 @@ async function syncMasterSheets(supabase) {
   return results;
 }
 
-module.exports = { syncMasterSheets, BRAND_SHEETS, TAB_NAME };
+module.exports = { syncMasterSheets, BRAND_SHEETS, TAB_ADS, TAB_INV };

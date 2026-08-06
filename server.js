@@ -5855,6 +5855,25 @@ function scheduleDailySync() {
       .catch(err => console.warn('[Orders] Yesterday finalize error:', err.message));
   });
 
+  // Late-cancellation sweep: 9:00 UTC, after finalize. Orders canceled AFTER
+  // their day was finalized vanish from every Pending..Shipped query, leaving
+  // phantom revenue in daily_metrics. Ask Amazon for anything canceled in the
+  // last 48h (24h cadence + overlap) and re-finalize just the affected days.
+  cron.schedule('0 9 * * *', async () => {
+    if (process.env.SYNC_ENABLED !== 'true') return;
+    try {
+      const { dates, count } = await ordersPoller.fetchCanceledOrderDates(48);
+      const today = pstDateStr();
+      const targets = [...dates].filter(d => d < today).sort();
+      if (!targets.length) { console.log('[CancelSweep] no finalized days affected'); return; }
+      console.log(`[CancelSweep] ${count} canceled order(s) touching ${targets.length} day(s): ${targets.join(', ')}`);
+      for (const d of targets.slice(0, 20)) await reconcileDayFromOrders(d, 'CancelSweep');
+      if (targets.length > 20) console.warn(`[CancelSweep] capped at 20 days — rest picked up next run`);
+    } catch (err) {
+      console.error('[CancelSweep] cron error:', err.message);
+    }
+  });
+
   // SKU listing-price snapshot: 13:30 UTC daily (~6:30am PST — most items in
   // stock). Prices every known SKU on both marketplaces so the Pending-order
   // estimation ladder can price a SOLD-OUT item at this morning's listing
@@ -6030,10 +6049,10 @@ function scheduleDailySync() {
       .catch(err => console.warn('[ListingContent] cron error:', err.message));
   });
 
-  // Master-sheet ads tabs: weekly Monday 1pm UTC (after the 9:10 AdsDaily
-  // 30d re-pull has landed) — rebuilds the "Ads (auto)" tab in each brand's
-  // Master Google Sheet from daily_metrics. Writes to OUR sheets only, never
-  // Amazon. Skips cleanly if Google credentials are absent.
+  // Master-sheet tabs: weekly Monday 1pm UTC (after the 9:10 AdsDaily 30d
+  // re-pull and the 12:00 full sync have landed) — rebuilds the "Ads (auto)"
+  // and "Inventory (auto)" tabs in each brand's Master Google Sheet. Writes to
+  // OUR sheets only, never Amazon. Skips cleanly if Google creds are absent.
   cron.schedule('0 13 * * 1', () => {
     if (process.env.SYNC_ENABLED !== 'true') return;
     console.log('[MasterSheets] Monday 13:00 UTC cron fired');
