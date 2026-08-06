@@ -5125,6 +5125,33 @@ app.get('/api/reconcile', async (req, res) => {
   }
 });
 
+// Manual late-cancellation sweep, for catch-up over a longer window than the
+// daily cron's 48h (e.g. ?hours=1440 to clean 60 days of history). Runs in
+// the background — each affected day is a full re-finalize from the Orders
+// API, which takes minutes per day. Progress in server logs.
+let cancelSweepRunning = false;
+app.get('/api/cancel-sweep', async (req, res) => {
+  if (process.env.SYNC_ENABLED !== 'true') return res.status(403).json({ error: 'SYNC_ENABLED is false' });
+  if (cancelSweepRunning) return res.status(409).json({ error: 'A sweep is already running' });
+  const hours = Math.min(parseInt(req.query.hours || '48', 10) || 48, 24 * 120);
+  cancelSweepRunning = true;
+  res.json({ started: true, hours });
+  setImmediate(async () => {
+    try {
+      const { dates, count } = await ordersPoller.fetchCanceledOrderDates(hours);
+      const today = pstDateStr();
+      const targets = [...dates].filter(d => d < today).sort();
+      console.log(`[CancelSweep] manual (${hours}h): ${count} canceled order(s), ${targets.length} day(s) to re-finalize`);
+      for (const d of targets) await reconcileDayFromOrders(d, 'CancelSweep');
+      console.log(`[CancelSweep] manual sweep complete: ${targets.length} day(s) re-finalized`);
+    } catch (err) {
+      console.error('[CancelSweep] manual error:', err.message);
+    } finally {
+      cancelSweepRunning = false;
+    }
+  });
+});
+
 app.get('/api/health', async (req, res) => {
   try {
     // Browser view shows recent events from the last 7 days

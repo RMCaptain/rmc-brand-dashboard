@@ -240,6 +240,47 @@ async function fetchAndProcess(token, params, mpId, target) {
   return totalOrders;
 }
 
+// PST purchase-dates of orders CANCELED within the last `hoursBack` hours.
+// A cancellation UPDATES the order, so LastUpdatedAfter + OrderStatuses=Canceled
+// finds it no matter how old the original purchase is. Headers only — no
+// per-order item calls — so a sweep costs a page or two per marketplace.
+//
+// Why this exists: every other query here filters to Pending..Shipped, so a
+// canceled order simply VANISHES from view. Today self-heals via the hourly
+// rebuild and yesterday via the 8:30 finalize — but a cancellation AFTER
+// finalize left phantom revenue in daily_metrics forever (found by the
+// 2026-08 external reconcile: trimax read +9% vs Amazon's own S&T report).
+async function fetchCanceledOrderDates(hoursBack = 48) {
+  const token = await getAccessToken();
+  const since = new Date(Date.now() - hoursBack * 3600 * 1000).toISOString();
+  const dates = new Set();
+  let count = 0;
+  for (const mpId of getMarketplaceIds()) {
+    let nextToken = null;
+    do {
+      const params = nextToken
+        ? { NextToken: nextToken }
+        : { MarketplaceIds: mpId, LastUpdatedAfter: since, OrderStatuses: 'Canceled' };
+      const qs  = new URLSearchParams(params).toString();
+      const res = await spRequest('GET', `/orders/v0/orders?${qs}`, token);
+      if (res.status === 429) { console.warn('[CancelSweep] Rate limited — waiting 65s'); await sleep(65000); continue; }
+      if (res.status !== 200) {
+        console.warn(`[CancelSweep] getOrders ${res.status}:`, JSON.stringify(res.body || {}).slice(0, 200));
+        break;
+      }
+      for (const o of (res.body?.payload?.Orders || [])) {
+        if (!o.PurchaseDate) continue;
+        dates.add(pstDateStr(new Date(o.PurchaseDate)));
+        count++;
+      }
+      nextToken = res.body?.payload?.NextToken;
+      if (nextToken) await sleep(3000);
+    } while (nextToken);
+    await sleep(2000);
+  }
+  return { dates, count };
+}
+
 // Full rebuild — wipes today state and re-fetches all orders created today.
 async function rebuildToday() {
   if (!ENABLED) return;
@@ -626,4 +667,4 @@ function getYesterdayState() {
   };
 }
 
-module.exports = { rebuildToday, rebuildYesterday, poll, getState, getYesterdayState, getEstimatedState, computeDayFromOrders, brandOrderCounts, estimateDay };
+module.exports = { rebuildToday, rebuildYesterday, poll, getState, getYesterdayState, getEstimatedState, computeDayFromOrders, brandOrderCounts, estimateDay, fetchCanceledOrderDates };
