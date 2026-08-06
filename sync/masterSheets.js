@@ -300,18 +300,38 @@ async function fetchInventoryHistory(supabase, brandId, fromDate) {
   return latest;
 }
 
-const INV_HEADER = ['ASIN', 'Product', 'On hand', 'Inbound', 'Unfulfillable', 'Units/day (30d)', 'Days of cover', 'Ad spend 7d ($)', 'Flag'];
+const INV_HEADER = ['ASIN', 'Product', 'On hand', 'Reserved', 'Inbound', 'Unfulfillable', 'Units/day (30d)', 'Days of cover', 'Ad spend 7d ($)', 'Flag'];
 const INV_BANDS = [
-  { c0: 2, c1: 5, pattern: '#,##0', type: 'NUMBER' },       // On hand, Inbound, Unfulfillable
-  { c0: 5, c1: 6, pattern: '0.0',   type: 'NUMBER' },       // Units/day
-  { c0: 6, c1: 7, pattern: '#,##0', type: 'NUMBER' },       // Days of cover
-  { c0: 7, c1: 8, pattern: '$#,##0.00', type: 'CURRENCY' }, // Ad spend 7d
+  { c0: 2, c1: 6, pattern: '#,##0', type: 'NUMBER' },       // On hand, Reserved, Inbound, Unfulfillable
+  { c0: 6, c1: 7, pattern: '0.0',   type: 'NUMBER' },       // Units/day
+  { c0: 7, c1: 8, pattern: '#,##0', type: 'NUMBER' },       // Days of cover
+  { c0: 8, c1: 9, pattern: '$#,##0.00', type: 'CURRENCY' }, // Ad spend 7d
 ];
-const INV_WIDTHS = [{ c0: 0, c1: 1, px: 110 }, { c0: 1, c1: 2, px: 340 }, { c0: 2, c1: 9, px: 100 }];
+const INV_WIDTHS = [{ c0: 0, c1: 1, px: 110 }, { c0: 1, c1: 2, px: 340 }, { c0: 2, c1: 10, px: 100 }];
+
+// Latest reserved/unfulfillable snapshot per ASIN from daily_metrics — the
+// preset blob's rebuild paths historically slimmed inventory to onHand/inbound,
+// so these two fall back to the daily snapshot when the blob lacks them.
+async function fetchInvExtras(supabase, brandId, fromDate) {
+  const byAsin = {};
+  const { data, error } = await supabase
+    .from('daily_metrics')
+    .select('date,asin,inventory_reserved,inventory_unfulfillable')
+    .eq('brand_id', brandId)
+    .gte('date', fromDate)
+    .not('inventory_reserved', 'is', null)
+    .order('date', { ascending: true })
+    .limit(5000);
+  if (error) throw new Error(`inventory extras (${brandId}): ${error.message}`);
+  for (const r of (data || [])) {
+    if (!byAsin[r.asin] || r.date > byAsin[r.asin].date) byAsin[r.asin] = r;
+  }
+  return byAsin;
+}
 const RED   = { red: 0.96, green: 0.80, blue: 0.80 };
 const AMBER = { red: 0.99, green: 0.90, blue: 0.80 };
 
-function buildInventoryValues({ skus30, spend7ByAsin, history, dataThrough, todayStr, lastSync }) {
+function buildInventoryValues({ skus30, spend7ByAsin, history, invExtras, dataThrough, todayStr, lastSync }) {
   // Collapse sku rows to one row per ASIN (inventory in the blob is already a
   // per-ASIN total, so take it as-is; units and spend sum across rows).
   const byAsin = {};
@@ -324,7 +344,10 @@ function buildInventoryValues({ skus30, spend7ByAsin, history, dataThrough, toda
   }
 
   const rows = Object.values(byAsin).map(e => {
-    const onHand  = e.inv?.onHand ?? null;
+    const extra    = invExtras[e.asin] || {};
+    const onHand   = e.inv?.onHand ?? null;
+    const reserved = e.inv?.reserved      ?? extra.inventory_reserved      ?? null;
+    const unfulf   = e.inv?.unfulfillable ?? extra.inventory_unfulfillable ?? null;
     const vel     = e.units30 / 30;
     const cover   = onHand != null && vel > 0 ? Math.round(onHand / vel) : null;
     const spend7  = Math.round((spend7ByAsin[e.asin] || 0) * 100) / 100;
@@ -332,7 +355,7 @@ function buildInventoryValues({ skus30, spend7ByAsin, history, dataThrough, toda
     if (onHand === 0 && vel > 0)            flag = spend7 > 0 ? 'OOS + AD SPEND' : 'OOS';
     else if (cover != null && cover < 14)   flag = spend7 > 0 ? 'LOW (<14d) + AD SPEND' : 'LOW (<14d)';
     else if (cover != null && cover < 30)   flag = 'WATCH (<30d)';
-    return { ...e, onHand, vel, cover, spend7, flag };
+    return { ...e, onHand, reserved, unfulf, vel, cover, spend7, flag };
   });
 
   const FLAG_RANK = { 'OOS + AD SPEND': 0, 'OOS': 1, 'LOW (<14d) + AD SPEND': 2, 'LOW (<14d)': 3, 'WATCH (<30d)': 4, '': 9 };
@@ -345,14 +368,14 @@ function buildInventoryValues({ skus30, spend7ByAsin, history, dataThrough, toda
   const push = row => { values.push(row); return values.length - 1; };
 
   boldRows.push(push(['FBA INVENTORY (CA + US) — AUTO-GENERATED. Do not edit: this tab is rebuilt every Monday by the RMC dashboard. Manual notes belong on your own tabs.']));
-  push([`Updated ${todayStr} · inventory as of last sync (${lastSync ? String(lastSync).slice(0, 16).replace('T', ' ') : 'unknown'} UTC) · velocity = units sold last 30d ÷ 30 · flags: OOS, LOW <14d cover, WATCH <30d · "+ AD SPEND" = ad spend in the last 7 days on that ASIN`]);
+  push([`Updated ${todayStr} · inventory as of last sync (${lastSync ? String(lastSync).slice(0, 16).replace('T', ' ') : 'unknown'} UTC) · Reserved = FC transfer + FC processing + pending customer orders · velocity = units sold last 30d ÷ 30 · cover = on hand ÷ velocity · flags: OOS, LOW <14d cover, WATCH <30d · "+ AD SPEND" = ad spend in the last 7 days on that ASIN`]);
   push([]);
   headerRows.push(push(INV_HEADER));
 
   for (const r of rows) {
     const rowIdx = push([
       r.asin, r.title,
-      r.onHand ?? '', r.inv?.inbound ?? '', r.inv?.unfulfillable ?? '',
+      r.onHand ?? '', r.reserved ?? '', r.inv?.inbound ?? '', r.unfulf ?? '',
       r.vel > 0 ? Math.round(r.vel * 10) / 10 : 0,
       r.cover ?? '', r.spend7 || 0, r.flag,
     ]);
@@ -436,7 +459,7 @@ function formatRequests(sheetId, built) {
   }
   for (const h of (built.highlights || [])) {
     reqs.push({ repeatCell: {
-      range: { sheetId, startRowIndex: h.row, endRowIndex: h.row + 1, startColumnIndex: 0, endColumnIndex: 9 },
+      range: { sheetId, startRowIndex: h.row, endRowIndex: h.row + 1, startColumnIndex: 0, endColumnIndex: 10 },
       cell: { userEnteredFormat: { backgroundColor: h.color } },
       fields: 'userEnteredFormat.backgroundColor',
     } });
@@ -485,6 +508,7 @@ async function syncMasterSheets(supabase) {
         skus30: presets.last30d[brandId]?.skus || [],
         spend7ByAsin,
         history: await fetchInventoryHistory(supabase, brandId, invFrom),
+        invExtras: await fetchInvExtras(supabase, brandId, pstSubtractDays(todayStr, 7)),
         dataThrough, todayStr, lastSync: presets.lastSync,
       });
       await writeTab(sheets, spreadsheetId, TAB_INV, inv);

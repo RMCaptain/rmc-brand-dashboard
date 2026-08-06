@@ -256,6 +256,8 @@ async function writeDailyMetrics(yesterdayBrands, date) {
         buy_box_pct:       sku.buyBox           ?? null,
         inventory_on_hand: sku.inventory?.onHand  ?? null,
         inventory_inbound: sku.inventory?.inbound ?? null,
+        inventory_reserved:      sku.inventory?.reserved      ?? null,
+        inventory_unfulfillable: sku.inventory?.unfulfillable ?? null,
       });
     }
   }
@@ -2225,7 +2227,8 @@ app.get('/api/metrics/yesterday', async (req, res) => {
         title:              meta.title    || brand.asinTitles?.[asin] || '',
         imageUrl:           imagesByAsin[asin] || meta.imageUrl || null,
         inventory:          dm?.inventory_on_hand != null
-                              ? { onHand: dm.inventory_on_hand, inbound: dm.inventory_inbound || 0 }
+                              ? { onHand: dm.inventory_on_hand, inbound: dm.inventory_inbound || 0,
+                                  reserved: dm.inventory_reserved ?? null, unfulfillable: dm.inventory_unfulfillable ?? null }
                               : (meta.inventory ?? null),
         marketplaces:       [...(ca > 0 ? ['CA'] : []), ...(us > 0 ? ['US'] : [])],
       });
@@ -2283,7 +2286,10 @@ app.get('/api/metrics/yesterday', async (req, res) => {
       buyBox:     r.buy_box_pct,
       cvr: null, spendCad: null, spendUsd: null, attributedSalesCad: null, attributedSalesUsd: null, acos: null,
       title: '', imageUrl: imagesByAsin[r.asin] || null,
-      inventory: r.inventory_on_hand != null ? { onHand: r.inventory_on_hand, inbound: r.inventory_inbound || 0 } : null,
+      inventory: r.inventory_on_hand != null
+        ? { onHand: r.inventory_on_hand, inbound: r.inventory_inbound || 0,
+            reserved: r.inventory_reserved ?? null, unfulfillable: r.inventory_unfulfillable ?? null }
+        : null,
       marketplaces: [...((r.units_ca||0) > 0 ? ['CA'] : []), ...((r.units_us||0) > 0 ? ['US'] : [])],
     });
   }
@@ -3143,7 +3149,7 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
           spend_cad: 0, spend_usd: 0,
           attr_sales_cad: 0, attr_sales_usd: 0,
           ad_clicks: 0, ad_impressions: 0, ad_orders: 0,
-          inv_onhand: null, inv_inbound: null,
+          inv_onhand: null, inv_inbound: null, inv_reserved: null, inv_unfulfillable: null,
         };
       }
       const a = byAsin[row.asin];
@@ -3169,6 +3175,8 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
       // Use latest inventory snapshot in window
       if (row.inventory_on_hand != null) a.inv_onhand = row.inventory_on_hand;
       if (row.inventory_inbound != null) a.inv_inbound = row.inventory_inbound;
+      if (row.inventory_reserved      != null) a.inv_reserved      = row.inventory_reserved;
+      if (row.inventory_unfulfillable != null) a.inv_unfulfillable = row.inventory_unfulfillable;
     }
 
     function lookupSkuMeta(brandId, asin) {
@@ -3209,7 +3217,10 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
         ctr:  impressions > 0 ? Math.round(clicks / impressions * 100000) / 1000 : null,
         cpc:  clicks > 0      ? Math.round(spendTotal / clicks * 10000) / 10000 : null,
         adCvr: clicks > 0     ? Math.round(adOrders / clicks * 10000) / 100 : null,
-        inventory: a.inv_onhand != null ? { onHand: a.inv_onhand, inbound: a.inv_inbound || 0 } : null,
+        inventory: a.inv_onhand != null
+          ? { onHand: a.inv_onhand, inbound: a.inv_inbound || 0,
+              reserved: a.inv_reserved ?? null, unfulfillable: a.inv_unfulfillable ?? null }
+          : null,
         marketplaces: [...((a.units_ca||0) > 0 ? ['CA'] : []), ...((a.units_us||0) > 0 ? ['US'] : [])],
         imageUrl: imagesByAsin[asin] || null,
       };
