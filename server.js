@@ -5022,11 +5022,14 @@ app.get('/api/revenue-check', async (req, res) => {
 });
 
 // On-demand run of the nightly data-integrity checks (see sync/integrityCheck).
-// Read-only; never posts to Slack — the cron owns alerting.
+// Read-only by default — the cron owns alerting. ?post=1 additionally sends
+// the result to the integrity Slack channel (webhook wiring test / manual ping).
 app.get('/api/integrity', async (req, res) => {
   try {
-    const { runIntegrityChecks } = require('./sync/integrityCheck');
-    res.json(await runIntegrityChecks({ supabase, loadBrands }));
+    const { runIntegrityChecks, postIntegrityAlert } = require('./sync/integrityCheck');
+    const result = await runIntegrityChecks({ supabase, loadBrands });
+    if (req.query.post === '1') result.slack = await postIntegrityAlert(result);
+    res.json(result);
   } catch (err) {
     console.error('[integrity]', err);
     res.status(500).json({ error: err.message });
