@@ -2510,6 +2510,25 @@ async function persistOrdersDay(date, byAsin) {
     return 0;
   }
 
+  // Clear orders-owned columns on rows this rebuild no longer produces. An
+  // ASIN whose only orders for the day were canceled is ABSENT from byAsin,
+  // and an upsert-only write left its stale units/revenue forever — the
+  // wide-table twin of the mirror-drift bug (found via trimax +9% vs S&T:
+  // canceled single-order days never cleared). Orders-owned columns only;
+  // sessions/ads/refunds belong to other syncs.
+  try {
+    const keep = rows.map(r => `"${r.asin}"`).join(',');
+    const { data: cleared, error: clearErr } = await supabase
+      .from('daily_metrics')
+      .update({ units: 0, units_ca: 0, units_us: 0, revenue_cad: 0, revenue_usd: 0 })
+      .eq('date', date)
+      .not('asin', 'in', `(${keep})`)
+      .or('units.gt.0,revenue_cad.gt.0,revenue_usd.gt.0')
+      .select('asin');
+    if (clearErr) console.warn(`[Orders] stale-row clear failed for ${date}:`, clearErr.message);
+    else if (cleared?.length) console.log(`[Orders] ${date}: cleared ${cleared.length} stale row(s) (all orders canceled): ${cleared.map(r => r.asin).join(', ')}`);
+  } catch (e) { console.warn(`[Orders] stale-row clear exception for ${date}:`, e.message); }
+
   const metricsMp = require('./sync/metricsMp');
   await metricsMp.replaceDay(supabase, date, 'orders', metricsMp.ordersRows(date, byAsin, asinBrand), `orders ${date}`);
 
