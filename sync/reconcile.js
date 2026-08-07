@@ -13,7 +13,15 @@ const { getAccessToken, getMarketplaceIds, createReport, waitForReport, download
 const { pstMidnightAsUTC, pstEndOfDayAsUTC } = require('./dateUtils');
 
 const MARKETPLACE_CURRENCY = { 'A2EUQ1WTGCTBG2': 'CAD', 'ATVPDKIKX0DER': 'USD' };
-const TOLERANCE_PCT = 1.5;   // per brand+currency
+// Tolerance is asymmetric because the two sources measure differently: S&T
+// "ordered product sales" counts orders at placement and is never restated
+// when they cancel, while daily_metrics deliberately excludes cancelled
+// orders (to match Sellerboard / actual payouts). The dashboard therefore
+// normally sits a few percent BELOW S&T — that gap is the cancellation rate,
+// not a sync failure. ABOVE S&T has no such excuse: the dashboard counting
+// revenue Amazon itself doesn't see is a real problem.
+const TOLERANCE_ABOVE_PCT = 1.5; // dashboard > Amazon — strict
+const TOLERANCE_BELOW_PCT = 5;   // dashboard < Amazon — cancellations live here
 const MIN_ABS_DELTA = 50;    // dollars — a 40% miss on a $20 brand isn't a sync failure
 
 const r2 = v => Math.round(v * 100) / 100;
@@ -99,7 +107,7 @@ async function runRevenueReconcile({ supabase, loadBrands, from, to }) {
       totals[cur].dashUnits += c.dashUnits; totals[cur].stUnits += c.stUnits;
       const delta = c.dashRev - c.stRev;
       const pct = c.stRev > 0 ? (delta / c.stRev) * 100 : (c.dashRev > 0 ? 100 : 0);
-      if (Math.abs(delta) > MIN_ABS_DELTA && Math.abs(pct) > TOLERANCE_PCT) {
+      if (Math.abs(delta) > MIN_ABS_DELTA && (pct > TOLERANCE_ABOVE_PCT || pct < -TOLERANCE_BELOW_PCT)) {
         failures.push({ brand, currency: cur,
           dashRev: r2(c.dashRev), stRev: r2(c.stRev), deltaPct: r2(pct),
           dashUnits: c.dashUnits, stUnits: c.stUnits });
@@ -124,11 +132,11 @@ function buildReconcileSlackText(result) {
   const head = `RMC REVENUE RECONCILE — ${result.from} → ${result.to} vs Amazon S&T`;
   const tot = `Totals: dashboard CA$${money(result.totals.CAD.dashboard)} / US$${money(result.totals.USD.dashboard)}  ·  Amazon CA$${money(result.totals.CAD.amazonSt)} / US$${money(result.totals.USD.amazonSt)}`;
   if (result.pass) {
-    return [head, '', `PASS — all ${result.brandCount} brands within ${TOLERANCE_PCT}%`, tot].join('\n');
+    return [head, '', `PASS — all ${result.brandCount} brands within tolerance (+${TOLERANCE_ABOVE_PCT}% / −${TOLERANCE_BELOW_PCT}%)`, tot].join('\n');
   }
   const lines = result.failures.map(f =>
     `• ${f.brand} ${f.currency}: dashboard $${money(f.dashRev)} vs Amazon $${money(f.stRev)} (${f.deltaPct > 0 ? '+' : ''}${f.deltaPct}%, units ${f.dashUnits} vs ${f.stUnits})`);
-  return [head, '', `FAIL — ${result.failures.length} brand/currency pair(s) beyond ${TOLERANCE_PCT}%`, ...lines, tot].join('\n');
+  return [head, '', `FAIL — ${result.failures.length} brand/currency pair(s) outside tolerance (+${TOLERANCE_ABOVE_PCT}% above / −${TOLERANCE_BELOW_PCT}% below Amazon; below = cancellations are normal, above = we count revenue Amazon doesn't)`, ...lines, tot].join('\n');
 }
 
 async function postReconcile(result) {
@@ -143,4 +151,4 @@ async function postReconcile(result) {
   return { posted: true };
 }
 
-module.exports = { runRevenueReconcile, buildReconcileSlackText, postReconcile, TOLERANCE_PCT };
+module.exports = { runRevenueReconcile, buildReconcileSlackText, postReconcile, TOLERANCE_ABOVE_PCT, TOLERANCE_BELOW_PCT };
