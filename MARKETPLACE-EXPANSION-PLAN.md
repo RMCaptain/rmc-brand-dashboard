@@ -39,15 +39,21 @@ Walmart is `walmart_ca`. UK = `A1F83G8C2ARO7P`.
 
 ## What Mike must obtain (blocking, do first)
 
-**Amazon UK** — same SP-API app, but authorizations are REGION-SCOPED:
-- EU refresh token: Seller Central UK → Apps and Services → Develop Apps →
-  Authorize app. Merged global accounts show a separate Authorize button per
-  region; each click issues a distinct refresh token. Store as
-  `SP_API_REFRESH_TOKEN_EU`.
-- Ads: same LWA client creds work across regions, but the UK profile id must
-  be fetched from `advertising-api-eu.amazon.com` `/v2/profiles`
-  (`ADS_PROFILE_UK`). Existing ads refresh token *should* work if the UK ads
-  account is under the same Amazon login — verify; separate login = new grant.
+**Amazon UK** — the UK seller account is SEPARATE from the NA account (Mike,
+2026-08-07 — not a merged global account), so the NA app's self-authorization
+does not reach it. Simplest path for a private tool:
+- In UK Seller Central: Apps and Services → Develop Apps → register a
+  developer profile + app there, then Authorize app. That yields its own LWA
+  client id/secret AND refresh token → store all three:
+  `SP_API_CLIENT_ID_EU`, `SP_API_CLIENT_SECRET_EU`, `SP_API_REFRESH_TOKEN_EU`.
+  (Alternative: full OAuth flow against the existing NA app with
+  `version_beta=true` — more moving parts, no benefit for a private tool.)
+- Ads: separate login almost certainly means a separate OAuth grant too —
+  `ADS_REFRESH_TOKEN_EU` (+ possibly its own client creds), and the UK
+  profile id from `advertising-api-eu.amazon.com` `/v2/profiles`
+  (`ADS_PROFILE_UK`).
+- Region plumbing therefore selects host + client creds + refresh token as a
+  SET per region, not just the token.
 
 **Walmart.ca** — must use the **Global (Unified) Marketplace APIs** (legacy CA
 XML APIs' migration deadline was 2026-07-31 — already passed):
@@ -131,6 +137,11 @@ XML APIs' migration deadline was 2026-07-31 — already passed):
 - New module `sync/walmart.js`: token mint (15-min TTL), orders pull →
   `daily_metrics_mp` rows (`mp_id='walmart_ca'`, currency CAD), inventory,
   item mapping table `walmart_items(sku, item_id, gtin, asin_hint)`.
+- **WFS-only** (Mike, 2026-08-07): inventory comes from the WFS inventory
+  API (verify CA operation coverage — flagged in research); no seller-
+  fulfilled shipping/label logic needed. WFS fees will appear in Walmart's
+  settlement reporting — a Walmart analog of daily_fees_mp rows, scoped
+  later.
 - Brands get `walmart_ca` in `brand.marketplace`; ASINs don't exist — decide
   keying: reuse `asin` column with SKU/GTIN for Walmart rows (mp table's
   `asin` is just text) vs a mapping to existing ASINs where the product is
@@ -143,7 +154,10 @@ XML APIs' migration deadline was 2026-07-31 — already passed):
 ## New env vars
 
 ```
+SP_API_CLIENT_ID_EU=          # UK account is separate — own app registration
+SP_API_CLIENT_SECRET_EU=
 SP_API_REFRESH_TOKEN_EU=      # from Seller Central UK authorize
+ADS_REFRESH_TOKEN_EU=         # separate login = separate ads grant
 ADS_PROFILE_UK=               # from EU /v2/profiles
 WALMART_CLIENT_ID=
 WALMART_CLIENT_SECRET=
@@ -152,12 +166,12 @@ WALMART_CLIENT_SECRET=
 
 ## Open questions for Mike
 
-1. UK account: is it merged with the NA account (single global login)? Decides
-   the auth path (per-region Authorize button vs full OAuth flow).
-2. UK brands: which brands launch there, and do any have Brand Registry UK
+*Answered 2026-08-07: UK account is separate (not merged) → own app
+registration + creds in UK Seller Central. Walmart is WFS-only.*
+
+1. UK brands: which brands launch there, and do any have Brand Registry UK
    (gates repeat-purchase data)?
-3. Walmart fulfillment: WFS or seller-fulfilled? (Changes inventory sync scope.)
-4. Reporting currency: keep CAD as the blended default with GBP converted in?
+2. Reporting currency: keep CAD as the blended default with GBP converted in?
    (Recommended — Sellerboard-style single home currency.)
-5. Sellerboard: does it cover the UK account/Walmart? Decides what we reconcile
+3. Sellerboard: does it cover the UK account/Walmart? Decides what we reconcile
    against for accuracy parity.
