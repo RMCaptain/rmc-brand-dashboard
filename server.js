@@ -2471,7 +2471,7 @@ app.get('/api/metrics/today', async (req, res) => {
 // Callers pass the ESTIMATED byAsin (getEstimatedState / byAsinEstimated from
 // computeDayFromOrders) — Pending-order revenue is already priced via the
 // estimateDay ladder, so no extrapolation happens here.
-async function persistOrdersDay(date, byAsin) {
+async function persistOrdersDay(date, byAsin, { allowClear = true } = {}) {
   if (!date || !byAsin || Object.keys(byAsin).length === 0) return 0;
   const { brands } = await loadBrands();
   const asinBrand = {};
@@ -2516,7 +2516,14 @@ async function persistOrdersDay(date, byAsin) {
   // wide-table twin of the mirror-drift bug (found via trimax +9% vs S&T:
   // canceled single-order days never cleared). Orders-owned columns only;
   // sessions/ads/refunds belong to other syncs.
-  try {
+  //
+  // allowClear=false when the rebuild dropped orders to rate limits: absence
+  // from an INCOMPLETE rebuild proves nothing, and clearing on it would turn
+  // a transient fetch failure into deleted revenue. Upsert-only in that case;
+  // the next complete pass (tomorrow's sweep/finalize) does the clearing.
+  if (!allowClear) {
+    console.warn(`[Orders] ${date}: skipping stale-row clear — rebuild was incomplete`);
+  } else try {
     const keep = rows.map(r => `"${r.asin}"`).join(',');
     const { data: cleared, error: clearErr } = await supabase
       .from('daily_metrics')
@@ -2607,7 +2614,7 @@ async function persistBrandOrderCounts(date, orderContrib) {
 // on a successful write.
 async function reconcileDayFromOrders(pstDate, tag = 'Reconcile') {
   try {
-    const { byAsin, byAsinEstimated, orderCount, orderContrib, estimateMeta } =
+    const { byAsin, byAsinEstimated, orderCount, orderContrib, estimateMeta, unrecoveredOrders } =
       await ordersPoller.computeDayFromOrders(pstDate);
 
     const realEntries = Object.values(byAsin || {}).filter(d =>
@@ -2618,7 +2625,7 @@ async function reconcileDayFromOrders(pstDate, tag = 'Reconcile') {
       return false;
     }
 
-    const n = await persistOrdersDay(pstDate, byAsinEstimated || byAsin);
+    const n = await persistOrdersDay(pstDate, byAsinEstimated || byAsin, { allowClear: !unrecoveredOrders });
     const o = await persistBrandOrderCounts(pstDate, orderContrib);
     const estNote = estimateMeta?.estUnits ? `, ${estimateMeta.estUnits} units still estimated` : '';
     console.log(`[${tag}] ${pstDate}: ${n} ASIN rows written, ${orderCount} orders, ${o} brand order-counts${estNote}`);
