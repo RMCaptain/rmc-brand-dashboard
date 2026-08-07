@@ -659,13 +659,15 @@ const SECTION_RENDERERS = {
 
       <textarea id="execSummaryText" class="exec-textarea" spellcheck="true" style="display:none;"
         placeholder="Write the executive summary — headline numbers and what drove them, product callouts, advertising, and what to watch next."></textarea>
-      <!-- No Regenerate button by design (Mike, 2026-07-15). Once a summary
-           exists — written or generated — there is deliberately no one-click
-           path to another paid Claude call. Generation happens once, from the
-           empty state. To redo one, clear the text and save. -->
+      <!-- "Start over" (Mike, 2026-08-07 — reverses the 2026-07-15 no-regenerate
+           rule after underlying data was corrected post-generation): returns to
+           the write-myself / generate chooser WITHOUT deleting anything. The old
+           summary survives until a new one is saved or generated; the paid call
+           still sits behind the chooser plus its own confirm. -->
       <div class="exec-actions" id="execActions" style="display:none;">
         <span id="execSummaryMeta" class="exec-meta"></span>
         <div class="exec-buttons">
+          <button id="execRedoBtn" class="exec-btn-secondary" type="button">Start over</button>
           <button id="execSaveBtn" class="exec-btn" type="button" disabled>Save</button>
         </div>
       </div>
@@ -1386,7 +1388,7 @@ async function render() {
 }
 
 // ── Executive summary controller ──────────────────────────────────────────────
-let execState = { brandId: null, from: null, to: null, dirty: false, edited: false, generating: false };
+let execState = { brandId: null, from: null, to: null, dirty: false, edited: false, generating: false, force: false };
 
 function setExecStatus(msg, isError = false) {
   const el = document.getElementById('execSummaryStatus');
@@ -1435,12 +1437,13 @@ function showExecEmpty() {
 // opening a report is free, generating costs money and must be a choice.
 // When viewing a saved report, the frozen summary is passed in directly.
 async function initExecSummary(brandId, from, to, frozenText, preloaded) {
-  execState = { brandId, from, to, dirty: false, edited: false, generating: false };
+  execState = { brandId, from, to, dirty: false, edited: false, generating: false, force: false };
 
   const textarea = document.getElementById('execSummaryText');
   const saveBtn  = document.getElementById('execSaveBtn');
   const genBtn   = document.getElementById('execGenerateBtn');
   const writeBtn = document.getElementById('execWriteBtn');
+  const redoBtn  = document.getElementById('execRedoBtn');
   if (!textarea) return;
 
   saveBtn.disabled  = true;
@@ -1449,13 +1452,25 @@ async function initExecSummary(brandId, from, to, frozenText, preloaded) {
 
   textarea.oninput = () => { execState.dirty = true; saveBtn.disabled = false; };
   saveBtn.onclick  = () => saveExecSummary();
-  // Generation is reachable ONLY from the empty state — there is no regenerate.
+  // Generation is reachable only from the empty-state chooser — directly for a
+  // brand+period with no summary, or via Start over when one exists.
   if (genBtn) genBtn.onclick = () => generateExecSummary();
   // Write-it-myself: just open the editor. No dialog, no API call, no cost.
   if (writeBtn) writeBtn.onclick = () => {
     showExecSummary('');
     textarea.focus();
     refreshSaveBtn();
+  };
+  // Start over: back to the chooser. Free and non-destructive — the saved
+  // summary stays until a replacement is saved or generated. Because one
+  // exists, a generate from here must pass force=true or the server would
+  // hand back the edited cache instead of regenerating.
+  if (redoBtn) redoBtn.onclick = () => {
+    execState.force = true;
+    execState.dirty = false;
+    showExecEmpty();
+    setExecMeta('');
+    setExecStatus('');
   };
 
   // Viewing a frozen saved report — show its summary, no editing, no fetching.
@@ -1495,7 +1510,10 @@ async function generateExecSummary() {
 
   // Generation is a paid Claude call, so it's always confirmed. Once generated
   // it's cached for this brand+period — viewing it again is free.
-  if (!confirm('Generate an executive summary?\n\nThis calls Claude — a paid API request. Once generated it\'s saved for this brand and period, so viewing it again is free.')) return;
+  const msg = execState.force
+    ? 'Generate a new executive summary from the current numbers?\n\nThis calls Claude — a paid API request — and REPLACES the saved summary for this brand and period.'
+    : 'Generate an executive summary?\n\nThis calls Claude — a paid API request. Once generated it\'s saved for this brand and period, so viewing it again is free.';
+  if (!confirm(msg)) return;
 
   execState.generating = true;
   refreshSaveBtn();
@@ -1505,13 +1523,14 @@ async function generateExecSummary() {
   setExecMeta('');
 
   try {
-    const url = `/api/brand-report-summary/${encodeURIComponent(execState.brandId)}?from=${execState.from}&to=${execState.to}`;
+    const url = `/api/brand-report-summary/${encodeURIComponent(execState.brandId)}?from=${execState.from}&to=${execState.to}${execState.force ? '&force=true' : ''}`;
     const res = await fetch(url, { method: 'POST', credentials: 'include' });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
 
     execState.dirty  = false;
     execState.edited = false;
+    execState.force  = false;
     showExecSummary(data.summary_text || '');
     setExecStatus('');
     setExecMeta('');
