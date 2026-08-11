@@ -258,7 +258,7 @@ function buildTabValues(byDate, dataThrough, todayStr, sbSd = {}) {
   const pmSameDay = `${pm}-${dataThrough.slice(8)}`; // same day-of-month, clamped to month length
   const pmPaceEnd = pmSameDay > monthEnd(pm) ? monthEnd(pm) : pmSameDay;
   const pmPace = sumRange(byDate, monthStart(pm), pmPaceEnd);
-  section(`MONTH TO DATE — ${fmtDate(monthStart(ym))}–${fmtDate(dataThrough)}`);
+  section(`MONTH TO DATE (Sponsored Products) — ${fmtDate(monthStart(ym))}–${fmtDate(dataThrough)}`);
   header();
   push(metricRow(`MTD (${fmtDate(monthStart(ym))}–${fmtDate(dataThrough)})`, mtd));
   push(metricRow(`Prior month, same days (${fmtDate(monthStart(pm))}–${fmtDate(pmPaceEnd)})`, pmPace));
@@ -272,7 +272,7 @@ function buildTabValues(byDate, dataThrough, todayStr, sbSd = {}) {
   const pwStart = addDays(pwEnd, -6);
   const wk = sumRange(byDate, wkStart, wkEnd);
   const pw = sumRange(byDate, pwStart, pwEnd);
-  section('WEEK OVER WEEK — last complete week (Mon–Sun)');
+  section('WEEK OVER WEEK (Sponsored Products) — last complete week (Mon–Sun)');
   header();
   push(metricRow(`Week ${fmtDate(wkStart)}–${fmtDate(wkEnd)}`, wk));
   push(metricRow(`Week ${fmtDate(pwStart)}–${fmtDate(pwEnd)}`, pw));
@@ -284,7 +284,7 @@ function buildTabValues(byDate, dataThrough, todayStr, sbSd = {}) {
   const lm2 = prevMonthOf(lm);
   const lmT  = sumRange(byDate, monthStart(lm),  monthEnd(lm));
   const lm2T = sumRange(byDate, monthStart(lm2), monthEnd(lm2));
-  section('MONTH OVER MONTH — last complete month');
+  section('MONTH OVER MONTH (Sponsored Products) — last complete month');
   header();
   push(metricRow(fmtMonth(lm), lmT));
   push(metricRow(fmtMonth(lm2), lm2T));
@@ -292,7 +292,7 @@ function buildTabValues(byDate, dataThrough, todayStr, sbSd = {}) {
   blank();
 
   // Weekly history — every complete Mon–Sun week, newest first
-  section('WEEKLY HISTORY (Mon–Sun, newest first — rebuilt from the database each run)');
+  section('WEEKLY HISTORY (Sponsored Products, Mon–Sun, newest first — rebuilt from the database each run)');
   header();
   for (let end = wkEnd; end >= ADS_HISTORY_START; end = addDays(end, -7)) {
     const start = addDays(end, -6);
@@ -303,7 +303,7 @@ function buildTabValues(byDate, dataThrough, todayStr, sbSd = {}) {
   blank();
 
   // Monthly history — complete months, newest first
-  section('MONTHLY HISTORY (newest first)');
+  section('MONTHLY HISTORY (Sponsored Products, newest first)');
   header();
   for (let m = lm; m >= monthOf(ADS_HISTORY_START); m = prevMonthOf(m)) {
     const partial = m === monthOf(ADS_HISTORY_START);
