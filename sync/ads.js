@@ -360,7 +360,16 @@ async function createBrandAdsReport(profileId, token, adProduct, reportTypeId, s
       if (m[1] > endDate) return null; // whole window predates retention — nothing to pull
       console.log(`[Ads] ${reportTypeId}: clamping start ${startDate} → ${m[1]} (retention)`);
       res = await make(m[1]);
+      startDate = m[1];
     }
+  }
+  // Report creation throttles when several report types queue at once (SP daily
+  // + 4 SB/SD requests back-to-back). Creation is cheap to retry — back off.
+  for (let attempt = 0; res.status === 429 && attempt < 4; attempt++) {
+    const wait = 60000 * (attempt + 1);
+    console.log(`[Ads] ${reportTypeId}: 429 throttled, retrying in ${wait / 1000}s...`);
+    await sleep(wait);
+    res = await make(startDate);
   }
   if (res.status === 200 && res.body.reportId) return res.body.reportId;
   if (res.status === 425) {
