@@ -2749,7 +2749,7 @@ function adsDateChunks(from, to) {
 }
 
 async function syncDailyAdSpend({ windowDays = 30, includeToday = true } = {}) {
-  const { pullAdSpendDaily } = require('./sync/ads');
+  const { pullAdSpendDaily, pullBrandAdsDaily } = require('./sync/ads');
   const today = pstDateStr();
   const endDate = includeToday ? today : pstSubtractDays(today, 1);
   const from    = pstSubtractDays(today, windowDays);
@@ -2758,10 +2758,17 @@ async function syncDailyAdSpend({ windowDays = 30, includeToday = true } = {}) {
   if (chunks.length > 1) console.log(`[AdsDaily] ${from} → ${endDate} split into ${chunks.length} chunks (Amazon caps ranges at ${ADS_MAX_RANGE_DAYS} days)`);
 
   const merged = {};
+  const brandAds = {};
+  const brandAdsWindows = []; // chunks whose SB/SD pull succeeded — safe to clear stale dates in
   for (const [cFrom, cTo] of chunks) {
     console.log(`[AdsDaily] pulling ${cFrom} → ${cTo}...`);
     const part = await pullAdSpendDaily(cFrom, cTo);   // throws on failure — do NOT swallow
     Object.assign(merged, part);
+    // SB/SD are secondary — a failure there must not lose the SP write.
+    try {
+      Object.assign(brandAds, await pullBrandAdsDaily(cFrom, cTo));
+      brandAdsWindows.push([cFrom, cTo]);
+    } catch (e) { console.warn(`[AdsDaily] SB/SD pull failed for ${cFrom} → ${cTo}:`, e.message); }
   }
 
   const { brands } = await loadBrands();
@@ -2777,9 +2784,12 @@ async function syncDailyAdSpend({ windowDays = 30, includeToday = true } = {}) {
       spend_usd:            Math.round((d.spendUsd || 0) * 100) / 100,
       attributed_sales_cad: Math.round((d.salesCad || 0) * 100) / 100,
       attributed_sales_usd: Math.round((d.salesUsd || 0) * 100) / 100,
+      attributed_sales_7d_cad: Math.round((d.sales7Cad || 0) * 100) / 100,
+      attributed_sales_7d_usd: Math.round((d.sales7Usd || 0) * 100) / 100,
       ad_clicks:      d.clicks      || 0,
       ad_impressions: d.impressions || 0,
       ad_orders:      d.orders      || 0,
+      ad_orders_7d:   d.orders7     || 0,
     })).filter(r =>
       r.spend_cad > 0 || r.spend_usd > 0 ||
       r.ad_clicks > 0 || r.ad_impressions > 0 || r.ad_orders > 0
@@ -2793,7 +2803,42 @@ async function syncDailyAdSpend({ windowDays = 30, includeToday = true } = {}) {
     await metricsMp.replaceDay(supabase, date, 'ads', metricsMp.adsRows(date, asins, asinBrand), `ads ${date}`);
   }
   console.log(`[AdsDaily] Wrote ad spend + engagement on ${rowCount} (asin,date) rows`);
-  return { rowCount, datesTouched: Object.keys(merged).length };
+
+  // SB/SD → daily_brand_ads, delete-then-insert per date so campaigns that
+  // vanish from a re-pull don't leave stale rows. Every date inside a
+  // successfully pulled window gets cleared — including dates the report
+  // returned no rows for (all campaigns quiet that day).
+  let brandAdRows = 0;
+  const brandAdDates = new Set(Object.keys(brandAds));
+  for (const [wFrom, wTo] of brandAdsWindows) {
+    for (let d = wFrom; d <= wTo; d = pstSubtractDays(d, -1)) brandAdDates.add(d);
+  }
+  for (const date of brandAdDates) {
+    const byBrand = brandAds[date] || {};
+    const rows = [];
+    for (const [brand_id, kinds] of Object.entries(byBrand)) {
+      for (const [ad_product, e] of Object.entries(kinds)) {
+        rows.push({
+          date, brand_id, ad_product,
+          spend_cad: Math.round(e.spendCad * 100) / 100,
+          spend_usd: Math.round(e.spendUsd * 100) / 100,
+          sales_cad: Math.round(e.salesCad * 100) / 100,
+          sales_usd: Math.round(e.salesUsd * 100) / 100,
+          clicks: e.clicks, impressions: e.impressions, orders: e.orders,
+        });
+      }
+    }
+    const { error: delErr } = await supabase.from('daily_brand_ads').delete().eq('date', date);
+    if (delErr) { console.warn(`[AdsDaily] daily_brand_ads clear error ${date}:`, delErr.message); continue; }
+    if (rows.length) {
+      const { error: insErr } = await supabase.from('daily_brand_ads').insert(rows);
+      if (insErr) console.warn(`[AdsDaily] daily_brand_ads insert error ${date}:`, insErr.message);
+      else brandAdRows += rows.length;
+    }
+  }
+  if (brandAdRows) console.log(`[AdsDaily] Wrote ${brandAdRows} SB/SD (date,brand,product) rows`);
+
+  return { rowCount, brandAdRows, datesTouched: Object.keys(merged).length };
 }
 
 // Manual trigger. The window is chunked internally (see syncDailyAdSpend), so
@@ -2816,6 +2861,21 @@ app.post('/api/ads/sync-daily', async (req, res) => {
   setImmediate(async () => {
     try { const r = await syncDailyAdSpend({ windowDays }); console.log('[AdsDaily] Done:', JSON.stringify(r)); }
     catch (e) { console.error('[AdsDaily] Manual sync error:', e.message); }
+  });
+});
+
+// Ads-accuracy check — fresh Amazon reports vs daily_metrics. Reports bake
+// ~15 min, so POST fires and forgets; GET returns the last completed result.
+let lastAdsAccuracy = null;
+app.get('/api/ads/verify', (req, res) => res.json(lastAdsAccuracy || { state: 'never-run' }));
+app.post('/api/ads/verify', (req, res) => {
+  if (process.env.SYNC_ENABLED !== 'true') return res.status(403).json({ error: 'SYNC_ENABLED is false' });
+  res.json({ status: 'started', note: 'Reports take ~15 min. Poll GET /api/ads/verify for the result.' });
+  setImmediate(async () => {
+    try {
+      const { verifyAdsAccuracy } = require('./sync/adsAccuracy');
+      lastAdsAccuracy = await verifyAdsAccuracy(supabase);
+    } catch (e) { console.error('[AdsAccuracy] Manual run error:', e.message); lastAdsAccuracy = { error: e.message, checkedAt: new Date().toISOString() }; }
   });
 });
 
@@ -6138,7 +6198,21 @@ function scheduleDailySync() {
       .catch(err => console.warn('[MasterSheets] cron error:', err.message));
   });
 
-  console.log('[AutoSync] Crons scheduled: sync 6am/9am/12pm UTC, Slack digest 7am UTC, Orders poll */15min, Orders hourly-rebuild :05, Yesterday-finalize 8:30 UTC, Backfill 8am UTC, Audit 9am UTC, AdsDaily 9:10 UTC + */2h :20, Refunds 9:15 UTC, Images backfill 10 UTC + :30 hourly refresh, AdsTerms Mon 11 UTC, AdsStructure 11:15 UTC, DataDive Mon 11:45 UTC, ListingContent Mon 12:15 UTC, MasterSheets Mon 13 UTC');
+  // Ads-accuracy loop: Monday 13:20 UTC, right after the master-sheet write.
+  // Pulls fresh SUMMARY reports from the Ads API (read-only) and diffs them
+  // against daily_metrics — Slack alert on any drift. Reports take ~15 min to
+  // bake, so this finishes mid-afternoon UTC; the result is also kept for
+  // GET /api/ads/verify.
+  cron.schedule('20 13 * * 1', () => {
+    if (process.env.SYNC_ENABLED !== 'true') return;
+    console.log('[AdsAccuracy] Monday 13:20 UTC cron fired');
+    const { verifyAdsAccuracy } = require('./sync/adsAccuracy');
+    verifyAdsAccuracy(supabase)
+      .then(r => { lastAdsAccuracy = r; })
+      .catch(err => console.warn('[AdsAccuracy] cron error:', err.message));
+  });
+
+  console.log('[AutoSync] Crons scheduled: sync 6am/9am/12pm UTC, Slack digest 7am UTC, Orders poll */15min, Orders hourly-rebuild :05, Yesterday-finalize 8:30 UTC, Backfill 8am UTC, Audit 9am UTC, AdsDaily 9:10 UTC + */2h :20, Refunds 9:15 UTC, Images backfill 10 UTC + :30 hourly refresh, AdsTerms Mon 11 UTC, AdsStructure 11:15 UTC, DataDive Mon 11:45 UTC, ListingContent Mon 12:15 UTC, MasterSheets Mon 13 UTC, AdsAccuracy Mon 13:20 UTC');
 
   // Load image cache at startup so first requests see images.
   refreshImagesCache().catch(err => console.warn('[Images] Startup load:', err.message));

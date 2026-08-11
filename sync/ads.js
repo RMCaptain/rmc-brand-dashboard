@@ -208,6 +208,11 @@ async function syncAdMetrics(startDate, endDate) {
 // ── Daily-granularity puller ─────────────────────────────────────────────────
 // timeUnit:'DAILY' + 'date' column → one row per (asin, date, marketplace).
 // Used by the dedicated daily ad-spend cron that writes to daily_metrics.
+//
+// Both attribution windows are pulled: the Ads console shows SELLERS a 7-day
+// window for Sponsored Products, so sales7d/purchases7d are what May reconciles
+// against campaign manager; sales14d/purchases14d remain the dashboard's
+// historical convention. One report carries both — same cost, same bake time.
 async function createDailyAdReport(profileId, token, startDate, endDate) {
   const res = await adsReq('POST', '/reporting/reports', profileId, token, {
     name:      `SP-ASIN-DAILY-${startDate}-${endDate}-${Date.now()}`,
@@ -216,7 +221,7 @@ async function createDailyAdReport(profileId, token, startDate, endDate) {
     configuration: {
       adProduct:    'SPONSORED_PRODUCTS',
       groupBy:      ['advertiser'],
-      columns:      ['date', 'advertisedAsin', 'cost', 'sales14d', 'clicks', 'impressions', 'purchases14d'],
+      columns:      ['date', 'advertisedAsin', 'cost', 'sales7d', 'sales14d', 'clicks', 'impressions', 'purchases7d', 'purchases14d'],
       reportTypeId: 'spAdvertisedProduct',
       timeUnit:     'DAILY',
       format:       'GZIP_JSON',
@@ -231,7 +236,7 @@ async function createDailyAdReport(profileId, token, startDate, endDate) {
   throw new Error(`Ads daily report create failed (${res.status}): ${JSON.stringify(res.body)}`);
 }
 
-// Returns { [date]: { [asin]: { spend, sales, clicks, impressions, orders } } }
+// Returns { [date]: { [asin]: { spend, sales, sales7, clicks, impressions, orders, orders7 } } }
 function parseDailyAdReport(rows) {
   const byDate = {};
   for (const row of (rows || [])) {
@@ -239,13 +244,15 @@ function parseDailyAdReport(rows) {
     const asin = row.advertisedAsin;
     if (!date || !asin) continue;
     if (!byDate[date])           byDate[date]           = {};
-    if (!byDate[date][asin])     byDate[date][asin]     = { spend: 0, sales: 0, clicks: 0, impressions: 0, orders: 0 };
+    if (!byDate[date][asin])     byDate[date][asin]     = { spend: 0, sales: 0, sales7: 0, clicks: 0, impressions: 0, orders: 0, orders7: 0 };
     const e = byDate[date][asin];
     e.spend       += Number(row.cost         || 0);
     e.sales       += Number(row.sales14d     || 0);
+    e.sales7      += Number(row.sales7d      || 0);
     e.clicks      += Number(row.clicks       || 0);
     e.impressions += Number(row.impressions  || 0);
     e.orders      += Number(row.purchases14d || 0);
+    e.orders7     += Number(row.purchases7d  || 0);
   }
   return byDate;
 }
@@ -273,7 +280,8 @@ async function pullAdSpendDaily(startDate, endDate) {
   const merged = {};
   const newEntry = () => ({
     spendCad: 0, spendUsd: 0, salesCad: 0, salesUsd: 0,
-    clicks: 0, impressions: 0, orders: 0,
+    sales7Cad: 0, sales7Usd: 0,
+    clicks: 0, impressions: 0, orders: 0, orders7: 0,
   });
   for (const [date, asins] of Object.entries(caDaily)) {
     if (!merged[date]) merged[date] = {};
@@ -281,9 +289,11 @@ async function pullAdSpendDaily(startDate, endDate) {
       if (!merged[date][asin]) merged[date][asin] = newEntry();
       merged[date][asin].spendCad    += d.spend;
       merged[date][asin].salesCad    += d.sales;
+      merged[date][asin].sales7Cad   += d.sales7;
       merged[date][asin].clicks      += d.clicks;
       merged[date][asin].impressions += d.impressions;
       merged[date][asin].orders      += d.orders;
+      merged[date][asin].orders7     += d.orders7;
     }
   }
   for (const [date, asins] of Object.entries(usDaily)) {
@@ -292,15 +302,108 @@ async function pullAdSpendDaily(startDate, endDate) {
       if (!merged[date][asin]) merged[date][asin] = newEntry();
       merged[date][asin].spendUsd    += d.spend;
       merged[date][asin].salesUsd    += d.sales;
+      merged[date][asin].sales7Usd   += d.sales7;
       merged[date][asin].clicks      += d.clicks;
       merged[date][asin].impressions += d.impressions;
       merged[date][asin].orders      += d.orders;
+      merged[date][asin].orders7     += d.orders7;
     }
   }
   let totDates = Object.keys(merged).length;
   let totAsins = 0;
   for (const d of Object.values(merged)) totAsins += Object.keys(d).length;
   console.log(`[Ads] Daily merged: ${totDates} dates, ${totAsins} (date,asin) rows`);
+  return merged;
+}
+
+// ── Sponsored Brands / Sponsored Display (campaign-level) ────────────────────
+// SB/SD campaigns aren't advertised-ASIN scoped, so they can't join
+// daily_metrics — they roll up per (date, brand, product) into daily_brand_ads.
+// Brand comes from the campaign-name prefix the team uses ("ACURE - …",
+// "PW - …", "BLC - …"); unmapped names land on 'unknown-brand' so account
+// totals still reconcile against the console. Retention is much shorter than
+// SP (~60d); a 400 naming the retention start date clamps and retries.
+
+const CAMPAIGN_BRAND_PREFIXES = {
+  'ACURE': 'acure', 'PW': 'purewine', 'PUREWINE': 'purewine',
+  'BLC': 'big-league-chew', 'ZELLIES': 'zellies', 'ZEL': 'zellies',
+  'TRIMAX': 'trimax', 'SUPREME': 'supreme-petfoods', 'KS': 'kidstar-nutrients',
+  'KIDSTAR': 'kidstar-nutrients', 'MO': 'maison-orph-e', 'MAISON': 'maison-orph-e',
+  'VIVA': 'viva', 'ZEST': 'zest',
+};
+
+function brandFromCampaignName(name) {
+  const prefix = String(name || '').split(/[\s_-]+/)[0].toUpperCase();
+  return CAMPAIGN_BRAND_PREFIXES[prefix] || 'unknown-brand';
+}
+
+async function createBrandAdsReport(profileId, token, adProduct, reportTypeId, startDate, endDate) {
+  const make = (s) => adsReq('POST', '/reporting/reports', profileId, token, {
+    name: `${reportTypeId}-DAILY-${s}-${endDate}-${Date.now()}`,
+    startDate: s,
+    endDate,
+    configuration: {
+      adProduct,
+      groupBy:      ['campaign'],
+      columns:      ['date', 'campaignName', 'cost', 'sales', 'clicks', 'impressions', 'purchases'],
+      reportTypeId,
+      timeUnit:     'DAILY',
+      format:       'GZIP_JSON',
+    },
+  }, { 'Content-Type': 'application/vnd.createasyncreportrequest.v3+json' });
+
+  let res = await make(startDate);
+  if (res.status === 400) {
+    // "startDate (…) must be equal to or after report type data retention start date (YYYY-MM-DD)"
+    const m = String(res.body?.detail || '').match(/retention start date \((\d{4}-\d{2}-\d{2})\)/);
+    if (m) {
+      if (m[1] > endDate) return null; // whole window predates retention — nothing to pull
+      console.log(`[Ads] ${reportTypeId}: clamping start ${startDate} → ${m[1]} (retention)`);
+      res = await make(m[1]);
+    }
+  }
+  if (res.status === 200 && res.body.reportId) return res.body.reportId;
+  if (res.status === 425) {
+    const m = String(res.body?.detail || '').match(/([0-9a-f-]{36})/i);
+    if (m) { console.log(`[Ads] Reusing existing ${reportTypeId} report ${m[1]}`); return m[1]; }
+  }
+  throw new Error(`${reportTypeId} report create failed (${res.status}): ${JSON.stringify(res.body)}`);
+}
+
+// Returns { [date]: { [brandId]: { SB: {spend,sales,clicks,impressions,orders}, SD: {...} } } }
+// per marketplace-merged: spend/sales split CA/USD by caller via marketplace loop.
+async function pullBrandAdsDaily(startDate, endDate) {
+  const token = await getAdsToken();
+  const KINDS = [
+    ['SB', 'SPONSORED_BRANDS',  'sbCampaigns'],
+    ['SD', 'SPONSORED_DISPLAY', 'sdCampaigns'],
+  ];
+  // { [date]: { [brand]: { [kind]: entry } } }
+  const merged = {};
+  const entry = () => ({ spendCad: 0, spendUsd: 0, salesCad: 0, salesUsd: 0, clicks: 0, impressions: 0, orders: 0 });
+
+  for (const [mp, profileId] of Object.entries(PROFILES)) {
+    for (const [kind, adProduct, reportTypeId] of KINDS) {
+      const reportId = await createBrandAdsReport(profileId, token, adProduct, reportTypeId, startDate, endDate);
+      if (!reportId) continue;
+      const url  = await waitForAdReport(reportId, profileId, token);
+      const rows = await downloadAdReport(url);
+      for (const row of (rows || [])) {
+        if (!row.date) continue;
+        const cost = Number(row.cost || 0), sales = Number(row.sales || 0);
+        const clicks = Number(row.clicks || 0), impressions = Number(row.impressions || 0), orders = Number(row.purchases || 0);
+        if (!cost && !sales && !clicks && !impressions && !orders) continue;
+        const brand = brandFromCampaignName(row.campaignName);
+        const d = merged[row.date]      || (merged[row.date] = {});
+        const b = d[brand]              || (d[brand] = {});
+        const e = b[kind]               || (b[kind] = entry());
+        if (mp === 'CA') { e.spendCad += cost; e.salesCad += sales; }
+        else             { e.spendUsd += cost; e.salesUsd += sales; }
+        e.clicks += clicks; e.impressions += impressions; e.orders += orders;
+      }
+    }
+  }
+  console.log(`[Ads] SB/SD daily merged: ${Object.keys(merged).length} dates`);
   return merged;
 }
 
@@ -344,6 +447,7 @@ function mergeAdData(caData, usData) {
 
 module.exports = {
   syncAdMetrics, startAdReports, finishAdReports, pullAdSpendDaily,
+  pullBrandAdsDaily, brandFromCampaignName,
   // Low-level helpers shared by adsSearchTerms.js / adsCampaigns.js
   getAdsToken, adsReq, waitForAdReport, downloadAdReport, PROFILES,
 };

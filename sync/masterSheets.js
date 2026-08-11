@@ -101,31 +101,86 @@ function fmtMonth(ym) {
 // ── Data ──────────────────────────────────────────────────────────────────────
 
 // Per-date brand aggregates from daily_metrics (paginated past the 1000-row cap).
+//
+// Sales/orders prefer the 7-DAY attribution columns — that's what the Ads
+// console shows sellers for Sponsored Products, so the tab reconciles against
+// May's campaign-manager view. Rows older than Amazon's ~95d retention predate
+// the 7d backfill (NULL) and fall back to 14d — only April–early-May 2026.
+//
+// Pagination is ordered by (date, asin) — a UNIQUE key, so page boundaries are
+// stable even while other syncs write. Ordering by date alone lets Postgres
+// return same-date rows in any physical order per request, which under
+// concurrent writes double-serves early rows and drops the tail. The count and
+// duplicate guards turn any such shred into a loud failure instead of a
+// silently wrong sheet.
 async function fetchBrandDaily(supabase, brandId) {
+  const { count, error: cntErr } = await supabase
+    .from('daily_metrics')
+    .select('*', { count: 'exact', head: true })
+    .eq('brand_id', brandId)
+    .gte('date', ADS_HISTORY_START);
+  if (cntErr) throw new Error(`daily_metrics count (${brandId}): ${cntErr.message}`);
+
   const byDate = {};
+  const seen = new Set();
   const PAGE = 1000;
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await supabase
       .from('daily_metrics')
-      .select('date,spend_cad,spend_usd,attributed_sales_cad,attributed_sales_usd,ad_clicks,ad_impressions,ad_orders')
+      .select('date,asin,spend_cad,spend_usd,attributed_sales_cad,attributed_sales_usd,attributed_sales_7d_cad,attributed_sales_7d_usd,ad_clicks,ad_impressions,ad_orders,ad_orders_7d')
       .eq('brand_id', brandId)
       .gte('date', ADS_HISTORY_START)
       .order('date', { ascending: true })
+      .order('asin', { ascending: true })
       .range(from, from + PAGE - 1);
     if (error) throw new Error(`daily_metrics fetch (${brandId}): ${error.message}`);
     for (const r of (data || [])) {
+      const k = `${r.date}|${r.asin}`;
+      if (seen.has(k)) throw new Error(`daily_metrics read shred (${brandId}): duplicate ${k} across pages — table changing under the read, retry later`);
+      seen.add(k);
       const e = byDate[r.date] || (byDate[r.date] = { spendCad: 0, spendUsd: 0, salesCad: 0, salesUsd: 0, clicks: 0, impressions: 0, orders: 0 });
-      e.spendCad    += Number(r.spend_cad            || 0);
-      e.spendUsd    += Number(r.spend_usd            || 0);
-      e.salesCad    += Number(r.attributed_sales_cad || 0);
-      e.salesUsd    += Number(r.attributed_sales_usd || 0);
-      e.clicks      += Number(r.ad_clicks            || 0);
-      e.impressions += Number(r.ad_impressions       || 0);
-      e.orders      += Number(r.ad_orders            || 0);
+      e.spendCad    += Number(r.spend_cad || 0);
+      e.spendUsd    += Number(r.spend_usd || 0);
+      e.salesCad    += Number(r.attributed_sales_7d_cad ?? r.attributed_sales_cad ?? 0);
+      e.salesUsd    += Number(r.attributed_sales_7d_usd ?? r.attributed_sales_usd ?? 0);
+      e.clicks      += Number(r.ad_clicks      || 0);
+      e.impressions += Number(r.ad_impressions || 0);
+      e.orders      += Number(r.ad_orders_7d   ?? r.ad_orders ?? 0);
     }
     if (!data || data.length < PAGE) break;
   }
+  if (seen.size !== count) {
+    throw new Error(`daily_metrics read shred (${brandId}): paged ${seen.size} rows but count says ${count} — table changing under the read, retry later`);
+  }
   return byDate;
+}
+
+// SB/SD campaign-level rollups from daily_brand_ads → { [ym]: { SB: t, SD: t } }
+// (t matches the metricRow shape). Small table — one page covers years.
+async function fetchBrandSbSd(supabase, brandId) {
+  const byMonth = {};
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from('daily_brand_ads')
+      .select('date,ad_product,spend_cad,spend_usd,sales_cad,sales_usd,clicks,impressions,orders')
+      .eq('brand_id', brandId)
+      .order('date', { ascending: true })
+      .order('ad_product', { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(`daily_brand_ads fetch (${brandId}): ${error.message}`);
+    for (const r of (data || [])) {
+      const ym = r.date.slice(0, 7);
+      const m = byMonth[ym] || (byMonth[ym] = {});
+      const e = m[r.ad_product] || (m[r.ad_product] = { spendCad: 0, spendUsd: 0, salesCad: 0, salesUsd: 0, clicks: 0, impressions: 0, orders: 0, days: 0 });
+      e.spendCad += Number(r.spend_cad || 0); e.spendUsd += Number(r.spend_usd || 0);
+      e.salesCad += Number(r.sales_cad || 0); e.salesUsd += Number(r.sales_usd || 0);
+      e.clicks += Number(r.clicks || 0); e.impressions += Number(r.impressions || 0); e.orders += Number(r.orders || 0);
+      e.days++;
+    }
+    if (!data || data.length < PAGE) break;
+  }
+  return byMonth;
 }
 
 function sumRange(byDate, from, to) {
@@ -184,7 +239,7 @@ const ADS_BANDS = [
 ];
 const ADS_WIDTHS = [{ c0: 0, c1: 1, px: 300 }, { c0: 1, c1: 12, px: 105 }];
 
-function buildTabValues(byDate, dataThrough, todayStr) {
+function buildTabValues(byDate, dataThrough, todayStr, sbSd = {}) {
   const values = [];
   const boldRows = [], headerRows = [], deltaRows = [];
   const push = row => { values.push(row); return values.length - 1; };
@@ -192,8 +247,8 @@ function buildTabValues(byDate, dataThrough, todayStr) {
   const header  = () => headerRows.push(push(HEADER));
   const blank   = () => push([]);
 
-  boldRows.push(push(['SPONSORED PRODUCTS (CA + US) — AUTO-GENERATED. Do not edit: this tab is rebuilt every Monday by the RMC dashboard. Manual notes belong on your own tabs.']));
-  push([`Updated ${todayStr} · data through ${dataThrough} · ads history starts ${ADS_HISTORY_START} · source: RMC dashboard daily_metrics (permanent record; last 30 days re-pulled daily so attribution self-corrects)`]);
+  boldRows.push(push(['AMAZON ADS (CA + US) — AUTO-GENERATED. Do not edit: this tab is rebuilt every Monday by the RMC dashboard. Manual notes belong on your own tabs.']));
+  push([`Updated ${todayStr} · data through ${dataThrough} · history starts ${ADS_HISTORY_START} · sales & orders use 7-DAY attribution (what the Ads console shows for Sponsored Products) — before 2026-05-08 only 14-day exists and is shown for those dates · SP sections; SB/Display tracked from Jun 2026 at the bottom`]);
   blank();
 
   // Month to date, paced against the same days of the prior month
@@ -256,6 +311,39 @@ function buildTabValues(byDate, dataThrough, todayStr) {
     push(metricRow(`${fmtMonth(m)}${partial ? ' (partial — history starts Apr 11)' : ''}`, t));
   }
 
+  // Sponsored Brands / Display — campaign-level, so they live in their own
+  // block instead of the ASIN-based SP sections. Console reconciliation:
+  // SP rows above + these = the account's total ad spend for the brand.
+  const SBSD_START = '2026-06';
+  const kinds = ['SB', 'SD'].filter(k => Object.values(sbSd).some(m => m[k]));
+  blank();
+  if (kinds.length === 0) {
+    section('SPONSORED BRANDS + DISPLAY — no activity recorded (tracked from Jun 2026; Amazon retains SB/SD only ~60 days, earlier is unrecoverable)');
+  } else {
+    const KIND_LABEL = { SB: 'Sponsored Brands', SD: 'Sponsored Display' };
+    section('SPONSORED BRANDS + DISPLAY — monthly, newest first (campaign-level; tracked from Jun 2026, earlier is past Amazon\'s ~60d SB/SD retention)');
+    header();
+    for (let m = lm; m >= SBSD_START; m = prevMonthOf(m)) {
+      for (const k of kinds) {
+        const t = sbSd[m]?.[k];
+        push(metricRow(`${fmtMonth(m)} — ${KIND_LABEL[k]}`, t));
+      }
+    }
+    blank();
+    section('ALL AD TYPES — SP + SB + SD combined, monthly (matches the console\'s all-campaigns totals)');
+    header();
+    for (let m = lm; m >= SBSD_START; m = prevMonthOf(m)) {
+      const sp = sumRange(byDate, monthStart(m), monthEnd(m));
+      const t = { ...sp };
+      for (const k of kinds) {
+        const e = sbSd[m]?.[k];
+        if (!e) continue;
+        for (const key of ['spendCad', 'spendUsd', 'salesCad', 'salesUsd', 'clicks', 'impressions', 'orders']) t[key] += e[key];
+      }
+      push(metricRow(fmtMonth(m), t));
+    }
+  }
+
   return { values, boldRows, headerRows, deltaRows, bands: ADS_BANDS, colWidths: ADS_WIDTHS };
 }
 
@@ -287,6 +375,7 @@ async function fetchInventoryHistory(supabase, brandId, fromDate) {
       .gte('date', fromDate)
       .not('inventory_on_hand', 'is', null)
       .order('date', { ascending: true })
+      .order('asin', { ascending: true }) // unique (date,asin) order → stable pages under concurrent writes
       .range(from, from + PAGE - 1);
     if (error) throw new Error(`inventory history (${brandId}): ${error.message}`);
     for (const r of (data || [])) {
@@ -321,6 +410,7 @@ async function fetchInvExtras(supabase, brandId, fromDate) {
     .gte('date', fromDate)
     .not('inventory_reserved', 'is', null)
     .order('date', { ascending: true })
+    .order('asin', { ascending: true })
     .limit(5000);
   if (error) throw new Error(`inventory extras (${brandId}): ${error.message}`);
   for (const r of (data || [])) {
@@ -477,6 +567,32 @@ async function writeTab(sheets, spreadsheetId, tabName, built) {
     requestBody: { values: built.values },
   });
   await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests: formatRequests(sheetId, built) } });
+
+  // Read the tab back and compare cell-by-cell against what was built. A
+  // mismatch means the projection layer corrupted data in flight — fail the
+  // brand loudly (it lands in results.failed → Slack) instead of leaving a
+  // wrong sheet for the team to trust.
+  const check = await sheets.spreadsheets.values.get({
+    spreadsheetId, range: `'${tabName}'`, valueRenderOption: 'UNFORMATTED_VALUE',
+  });
+  verifyReadBack(built.values, check.data.values || [], tabName);
+}
+
+function verifyReadBack(expected, actual, tabName) {
+  for (let i = 0; i < expected.length; i++) {
+    const e = expected[i] || [], a = actual[i] || [];
+    for (let j = 0; j < e.length; j++) {
+      const ev = e[j], av = a[j]; // values.get trims trailing empties → undefined ≈ ''
+      const empty = v => v === '' || v == null;
+      if (empty(ev)) {
+        if (!empty(av)) throw new Error(`${tabName} read-back mismatch R${i + 1}C${j + 1}: wrote empty, sheet has ${JSON.stringify(av)}`);
+      } else if (typeof ev === 'number') {
+        if (typeof av !== 'number' || Math.abs(ev - av) > 1e-6) throw new Error(`${tabName} read-back mismatch R${i + 1}C${j + 1}: wrote ${ev}, sheet has ${JSON.stringify(av)}`);
+      } else if (String(av) !== String(ev)) {
+        throw new Error(`${tabName} read-back mismatch R${i + 1}C${j + 1}: wrote ${JSON.stringify(ev)}, sheet has ${JSON.stringify(av)}`);
+      }
+    }
+  }
 }
 
 // ── Main export ───────────────────────────────────────────────────────────────
@@ -497,7 +613,8 @@ async function syncMasterSheets(supabase) {
   for (const [brandId, spreadsheetId] of Object.entries(BRAND_SHEETS)) {
     try {
       const byDate = await fetchBrandDaily(supabase, brandId);
-      const ads = buildTabValues(byDate, dataThrough, todayStr);
+      const sbSd   = await fetchBrandSbSd(supabase, brandId);
+      const ads = buildTabValues(byDate, dataThrough, todayStr, sbSd);
       await writeTab(sheets, spreadsheetId, TAB_ADS, ads);
 
       const spend7ByAsin = {};
@@ -521,6 +638,15 @@ async function syncMasterSheets(supabase) {
     }
   }
   console.log(`[MasterSheets] Done: ${results.ok.length} ok, ${results.failed.length} failed`);
+  if (results.failed.length) {
+    try {
+      const { postSlackAlert } = require('../slack/alert');
+      await postSlackAlert(
+        `:warning: *Master-sheet write failed for ${results.failed.length} brand(s)* — those tabs still show LAST week's data.`,
+        results.failed.map(f => `${f.brandId}: ${f.error}`).join('\n')
+      );
+    } catch (e) { console.warn('[MasterSheets] Slack alert failed:', e.message); }
+  }
   return results;
 }
 
