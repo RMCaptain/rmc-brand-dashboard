@@ -127,7 +127,7 @@ async function fetchBrandDaily(supabase, brandId) {
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await supabase
       .from('daily_metrics')
-      .select('date,asin,spend_cad,spend_usd,attributed_sales_cad,attributed_sales_usd,attributed_sales_7d_cad,attributed_sales_7d_usd,ad_clicks,ad_impressions,ad_orders,ad_orders_7d')
+      .select('date,asin,spend_cad,spend_usd,attributed_sales_cad,attributed_sales_usd,attributed_sales_7d_cad,attributed_sales_7d_usd,ad_clicks,ad_impressions,ad_orders,ad_orders_7d,revenue_cad,revenue_usd')
       .eq('brand_id', brandId)
       .gte('date', ADS_HISTORY_START)
       .order('date', { ascending: true })
@@ -138,7 +138,7 @@ async function fetchBrandDaily(supabase, brandId) {
       const k = `${r.date}|${r.asin}`;
       if (seen.has(k)) throw new Error(`daily_metrics read shred (${brandId}): duplicate ${k} across pages — table changing under the read, retry later`);
       seen.add(k);
-      const e = byDate[r.date] || (byDate[r.date] = { spendCad: 0, spendUsd: 0, salesCad: 0, salesUsd: 0, clicks: 0, impressions: 0, orders: 0 });
+      const e = byDate[r.date] || (byDate[r.date] = { spendCad: 0, spendUsd: 0, salesCad: 0, salesUsd: 0, clicks: 0, impressions: 0, orders: 0, revCad: 0, revUsd: 0 });
       e.spendCad    += Number(r.spend_cad || 0);
       e.spendUsd    += Number(r.spend_usd || 0);
       e.salesCad    += Number(r.attributed_sales_7d_cad ?? r.attributed_sales_cad ?? 0);
@@ -146,6 +146,8 @@ async function fetchBrandDaily(supabase, brandId) {
       e.clicks      += Number(r.ad_clicks      || 0);
       e.impressions += Number(r.ad_impressions || 0);
       e.orders      += Number(r.ad_orders_7d   ?? r.ad_orders ?? 0);
+      e.revCad      += Number(r.revenue_cad || 0); // total revenue → TACOS denominator
+      e.revUsd      += Number(r.revenue_usd || 0);
     }
     if (!data || data.length < PAGE) break;
   }
@@ -184,12 +186,12 @@ async function fetchBrandSbSd(supabase, brandId) {
 }
 
 function sumRange(byDate, from, to) {
-  const t = { spendCad: 0, spendUsd: 0, salesCad: 0, salesUsd: 0, clicks: 0, impressions: 0, orders: 0, days: 0 };
+  const t = { spendCad: 0, spendUsd: 0, salesCad: 0, salesUsd: 0, clicks: 0, impressions: 0, orders: 0, revCad: 0, revUsd: 0, days: 0 };
   for (let d = from; d <= to; d = addDays(d, 1)) {
     const e = byDate[d];
     if (!e) continue;
     t.days++;
-    for (const k of ['spendCad','spendUsd','salesCad','salesUsd','clicks','impressions','orders']) t[k] += e[k];
+    for (const k of ['spendCad','spendUsd','salesCad','salesUsd','clicks','impressions','orders','revCad','revUsd']) t[k] += e[k] || 0;
   }
   return t;
 }
@@ -326,25 +328,41 @@ function buildTabValues(byDate, dataThrough, todayStr, sbSd = {}) {
     for (let m = lm; m >= SBSD_START; m = prevMonthOf(m)) {
       for (const k of kinds) {
         const t = sbSd[m]?.[k];
-        push(metricRow(`${fmtMonth(m)} — ${KIND_LABEL[k]}`, t));
+        push(metricRow(`${fmtMonth(m)}${m === SBSD_START ? ' (partial — tracking begins mid-June)' : ''} — ${KIND_LABEL[k]}`, t));
       }
-    }
-    blank();
-    section('ALL AD TYPES — SP + SB + SD combined, monthly (matches the console\'s all-campaigns totals)');
-    header();
-    for (let m = lm; m >= SBSD_START; m = prevMonthOf(m)) {
-      const sp = sumRange(byDate, monthStart(m), monthEnd(m));
-      const t = { ...sp };
-      for (const k of kinds) {
-        const e = sbSd[m]?.[k];
-        if (!e) continue;
-        for (const key of ['spendCad', 'spendUsd', 'salesCad', 'salesUsd', 'clicks', 'impressions', 'orders']) t[key] += e[key];
-      }
-      push(metricRow(fmtMonth(m), t));
     }
   }
 
-  return { values, boldRows, headerRows, deltaRows, bands: ADS_BANDS, colWidths: ADS_WIDTHS };
+  // TACOS block — total ad spend (SP + SB + SD) over TOTAL revenue, the number
+  // May computes for bid/budget planning. Starts where SB/SD tracking starts:
+  // earlier months can't prove their spend is complete (SB/SD past retention),
+  // and an understated TACOS is exactly the failure this section replaces.
+  blank();
+  section('ALL AD TYPES + TACOS — SP + SB + SD combined, monthly (TACOS = total ad spend ÷ total sales revenue, per marketplace)');
+  headerRows.push(push([...HEADER, 'TACOS CA', 'TACOS US']));
+  const tacosStart = values.length;
+  for (let m = lm; m >= SBSD_START; m = prevMonthOf(m)) {
+    const sp = sumRange(byDate, monthStart(m), monthEnd(m));
+    const t = { ...sp };
+    for (const k of kinds) {
+      const e = sbSd[m]?.[k];
+      if (!e) continue;
+      for (const key of ['spendCad', 'spendUsd', 'salesCad', 'salesUsd', 'clicks', 'impressions', 'orders']) t[key] += e[key];
+    }
+    const row = metricRow(`${fmtMonth(m)}${m === SBSD_START && kinds.length ? ' (partial — SB/SD from mid-June)' : ''}`, t);
+    row.push(t.revCad > 0 ? t.spendCad / t.revCad : '');
+    row.push(t.revUsd > 0 ? t.spendUsd / t.revUsd : '');
+    push(row);
+  }
+
+  return {
+    values, boldRows, headerRows, deltaRows,
+    bands: [
+      ...ADS_BANDS,
+      { c0: 12, c1: 14, r0: tacosStart, r1: values.length, pattern: '0.0%', type: 'PERCENT' },
+    ],
+    colWidths: ADS_WIDTHS,
+  };
 }
 
 // ── Inventory tab ─────────────────────────────────────────────────────────────
