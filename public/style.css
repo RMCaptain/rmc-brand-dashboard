@@ -461,6 +461,11 @@ input[type=number] { -moz-appearance: textfield; }
      Action rows (Save / PDF / Download …) wrap instead of overflowing. */
   .mobile-wrap { flex-wrap: wrap !important; }
 
+  /* Custom date range (dashboard + brands): the two 128px inline-width date
+     inputs + Apply don't fit a phone row. Take the full row and split it. */
+  #customDateRow { width: 100%; flex-wrap: wrap; }
+  #customDateRow .rmc-input { flex: 1 1 120px; width: auto !important; min-width: 110px; }
+
   /* ── Touch targets ────────────────────────────────────────────────────
      Apple/Google both recommend ≥44px. Bump interactive controls so they're
      tappable without zooming. */
@@ -484,6 +489,9 @@ input[type=number] { -moz-appearance: textfield; }
      at arm's length. */
   .rmc-table th { font-size: 11px; }             /* headers can stay compact */
   .rmc-table td { font-size: 13px; padding: 11px 12px; }  /* roomier rows, readable body */
+  /* Metric columns tighter than the identity column — fits ~1 more column of
+     numbers beside the pinned product cell (Mike, 2026-08-13). */
+  .rmc-table th:not(:first-child), .rmc-table td:not(:first-child) { padding-left: 7px; padding-right: 7px; }
   .text-xs { font-size: 12px; }
 
   /* ── Dense tables: pin the identity column, scroll the metrics ─────────

@@ -56,14 +56,14 @@
     <!-- Bottom table -->
     <div class="rmc-card overflow-hidden">
       <div class="px-5 py-3 flex items-center justify-between flex-wrap gap-2" style="border-bottom:1px solid var(--border)">
-        <div class="flex items-center gap-4">
+        <div class="flex items-center gap-4 mobile-wrap">
           <!-- View tabs -->
           <div class="view-tabs">
             <button onclick="setTableView('products')" id="view-products" class="view-tab">Products</button>
             <button onclick="setTableView('brands')"   id="view-brands"   class="view-tab">Brands</button>
           </div>
           <!-- Period selector -->
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-2 mobile-wrap">
             <select id="presetSelect" onchange="onPresetChange(this.value)" class="rmc-select" style="width:auto;min-width:140px;color-scheme:dark">
               <option value="today">Today</option>
               <option value="yesterday">Yesterday</option>
@@ -648,7 +648,7 @@
                 <div class="text-slate-200 text-xs mt-0.5 max-w-xs truncate">${s.title}</div>
                 <div class="flex items-center gap-2 mt-0.5">
                   <span class="text-slate-500 text-xs">${s.brand}</span>
-                  <span class="${statusColor} text-xs">${s.status || '—'}</span>
+                  ${s.status ? `<span class="${statusColor} text-xs">${s.status}</span>` : ''}
                 </div>
               </div>
             </div>

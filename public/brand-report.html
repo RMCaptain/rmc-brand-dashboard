@@ -427,6 +427,14 @@
       .rpt-header { flex-direction: column; gap: 12px; }
       .rpt-header-meta { text-align: left; }
       .rpt-logo { height: 64px; }
+      /* Slightly wider side gutters so cards don't touch the screen edges. */
+      .rpt-layout { padding: 14px 22px; }
+      /* YTD: the shared renderer's chart+stats grid is inline-styled 1fr/200px —
+         on a phone the canvas can push the stat cards off-screen (only their
+         rounded edges peek in). Stack: chart full width, stats 2-up below. */
+      .ytd-wrap { grid-template-columns: 1fr !important; gap: 14px !important; }
+      .ytd-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+      .ytd-stats .ad-stat { margin-bottom: 0 !important; }
       .tiles { grid-template-columns: 1fr 1fr; }   /* 2-up tiles instead of 3 */
       .ad-grid, .ad-grid-3 { grid-template-columns: 1fr 1fr; }  /* 4-col + 3-col ad stats both 2-up */
       .rpt-section { padding: 16px 14px; }

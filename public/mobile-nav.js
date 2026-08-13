@@ -27,8 +27,12 @@
       btn.setAttribute('aria-expanded', open ? 'true' : 'false');
     });
 
-    // Sit at the far-right of the top bar, in the actions group.
-    (inner.lastElementChild || inner).appendChild(btn);
+    // Sit at the far-right of the top bar on EVERY page. Pages with an actions
+    // group (currency toggle, sync) get the button appended inside it; pages
+    // whose nav is only logo+links (brand-report, report) have a single child
+    // group — appending there would park the button next to the logo, so it
+    // goes on the justify-between container itself and lands far right.
+    (inner.children.length > 1 ? inner.lastElementChild : inner).appendChild(btn);
 
     // Close on link tap or tap-outside.
     linkRow.addEventListener('click', function (e) {

@@ -458,9 +458,9 @@ const SHARED_RENDERERS = {
                        : (pyCov.state === 'partial' ? `Partial — data begins ${fmtDay(pyCov.boundary)}` : '—'));
 
     return `
-      <div style="display:grid;grid-template-columns:1fr 200px;gap:24px;align-items:start;">
+      <div class="ytd-wrap" style="display:grid;grid-template-columns:1fr 200px;gap:24px;align-items:start;">
         <div class="chart-wrap" style="height:240px"><canvas id="ytdChart"></canvas></div>
-        <div>
+        <div class="ytd-stats">
           <div class="ad-stat" style="margin-bottom:10px"><div class="ad-stat-label">Current YTD</div><div class="ad-stat-value">${fmtC(cyTotal, '$')}</div><div class="ad-stat-sub">${cy.length} days</div></div>
           <div class="ad-stat"><div class="ad-stat-label">Prior YTD</div><div class="ad-stat-value${pyKnown ? '' : ' ad-stat-nodata'}">${pyValue}</div><div class="ad-stat-sub">${pySub}</div></div>
         </div>

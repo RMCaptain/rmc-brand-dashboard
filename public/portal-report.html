@@ -127,6 +127,11 @@
       .rpt-table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; white-space: nowrap; }
       .pie-wrap { grid-template-columns: 1fr; }
       header.bar { flex-wrap: wrap; }
+      /* YTD chart+stats grid is inline-styled in the shared renderer; stack it
+         on phones (chart full width, the two stat cards 2-up below). */
+      .ytd-wrap { grid-template-columns: 1fr !important; gap: 14px !important; }
+      .ytd-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+      .ytd-stats .ad-stat { margin-bottom: 0 !important; }
     }
   </style>
 </head>
