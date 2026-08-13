@@ -409,7 +409,12 @@ input[type=number] { -moz-appearance: textfield; }
   .rmc-nav > div { padding-left: 14px !important; padding-right: 14px !important;
                    padding-top: 10px !important; padding-bottom: 10px !important;
                    gap: 10px; }
-  .rmc-nav > div > div { min-width: 0; }              /* allow children to shrink */
+  /* min-width: allow children to shrink. position: the utility sheet makes
+     these flex groups position:relative, which turned the logo group into the
+     containing block for the absolute .nav-menu — a 40px-wide anchor, so the
+     open menu rendered as a narrow strip with links spilling over the page.
+     Static them so the menu anchors to the full-width bar instead. */
+  .rmc-nav > div > div { min-width: 0; position: static; }
   .nav-logo img { height: 40px; }
 
   /* Hamburger button (injected by mobile-nav.js) */
@@ -493,11 +498,26 @@ input[type=number] { -moz-appearance: textfield; }
     background: var(--bg-surface);
     box-shadow: 8px 0 12px -8px rgba(0,0,0,0.6);
     /* Override desktop min-w-64 (256px) so the pinned column leaves room for
-       the metrics to scroll beside it. Selector beats the .min-w-64 utility. */
-    min-width: 130px; max-width: 172px;
+       the metrics to scroll beside it. Selector beats the .min-w-64 utility.
+       width (not just max-width) because the scroll wrapper gives the table
+       unlimited room — auto table layout then sizes columns to max-content
+       and max-width alone never constrains; an explicit width does (floored
+       only by min-content, which the inner truncate caps keep ~124px).
+       !important: products.html puts min-width:280px INLINE on its first th. */
+    width: 172px !important; min-width: 130px !important; max-width: 172px !important;
     white-space: normal;   /* let long product names wrap within the cap */
   }
   .rmc-table thead th:first-child { z-index: 3; }
+  /* The row-hover rule paints a TRANSLUCENT background over every td — on the
+     sticky first cell that replaces its opaque backing, so a tapped row (touch
+     :hover sticks) lets the scrolled metrics bleed through the product name.
+     Keep the pinned cell opaque on hover. */
+  .rmc-table tbody tr:hover td:first-child { background: var(--bg-surface); }
+  /* Table auto-layout sizes the pinned cell to its content's min-width, and
+     the inner truncate elements carry desktop caps (max-w-xs = 320px) — which
+     silently beat the 172px cell cap and squeezed the metrics to a sliver on
+     Products. Tighten every inner cap so the cell cap actually wins. */
+  .rmc-table td:first-child [class*="max-w"] { max-width: 100px !important; }
 
   /* Scroll affordance: a soft fade on the right edge of table scrollers so it
      reads as "more columns this way". Pseudo sits on the wrapper, not scrolled. */
