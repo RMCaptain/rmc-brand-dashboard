@@ -20,12 +20,25 @@ function sanitize(text) {
 }
 
 /**
- * Post a one-line operational alert to SLACK_WEBHOOK_URL.
+ * Post a one-line operational alert to SLACK_WEBHOOK_URL (#account-health).
  * `title` is trusted app-authored mrkdwn (kept as-is, newline-separated);
  * `detail` is untrusted (error messages, API bodies) — sanitized and capped.
  */
 async function postSlackAlert(title, detail = null) {
-  const webhook = process.env.SLACK_WEBHOOK_URL;
+  return postTo(process.env.SLACK_WEBHOOK_URL, title, detail);
+}
+
+/**
+ * Data-quality alerts (ads accuracy, master-sheet writes, mirror drift) belong
+ * in #data-integrity — SLACK_INTEGRITY_WEBHOOK_URL, the same channel the
+ * nightly integrity checks and the revenue reconciler post to. Falls back to
+ * the health webhook so an alert never silently drops.
+ */
+async function postDataIntegrityAlert(title, detail = null) {
+  return postTo(process.env.SLACK_INTEGRITY_WEBHOOK_URL || process.env.SLACK_WEBHOOK_URL, title, detail);
+}
+
+async function postTo(webhook, title, detail) {
   if (!webhook) return { posted: false, reason: 'no_webhook' };
 
   let text = String(title ?? '').trim();
@@ -51,4 +64,4 @@ async function postSlackAlert(title, detail = null) {
   }
 }
 
-module.exports = { postSlackAlert, sanitize, MAX_ALERT_CHARS };
+module.exports = { postSlackAlert, postDataIntegrityAlert, sanitize, MAX_ALERT_CHARS };

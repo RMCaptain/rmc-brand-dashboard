@@ -658,8 +658,8 @@ async function syncMasterSheets(supabase) {
   console.log(`[MasterSheets] Done: ${results.ok.length} ok, ${results.failed.length} failed`);
   if (results.failed.length) {
     try {
-      const { postSlackAlert } = require('../slack/alert');
-      await postSlackAlert(
+      const { postDataIntegrityAlert } = require('../slack/alert');
+      await postDataIntegrityAlert(
         `:warning: *Master-sheet write failed for ${results.failed.length} brand(s)* — those tabs still show LAST week's data.`,
         results.failed.map(f => `${f.brandId}: ${f.error}`).join('\n')
       );

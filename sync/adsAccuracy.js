@@ -163,8 +163,8 @@ async function verifyAdsAccuracy(supabase) {
   result.ok = result.breaches.length === 0;
   if (!result.ok) {
     try {
-      const { postSlackAlert } = require('../slack/alert');
-      await postSlackAlert(
+      const { postDataIntegrityAlert } = require('../slack/alert');
+      await postDataIntegrityAlert(
         `:rotating_light: *Ads data drifted from Amazon* — ${result.breaches.length} check(s) failed. Master-sheet tabs and dashboard ad numbers may be off until re-synced.`,
         result.breaches.join('\n')
       );
