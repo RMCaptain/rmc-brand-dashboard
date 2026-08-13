@@ -58,6 +58,12 @@ function mountPublic(app, { supabase, loadBrands, generateBrandReportPdf, buildB
   // Logo without Basic Auth — the login page renders before any identity exists.
   app.get('/portal/logo.png', (req, res) =>
     res.sendFile(path.join(__dirname, '..', 'public', 'rmc-logo.png')));
+  // Shared report renderers, also without Basic Auth: /portal/report loads this
+  // file, but a brand session doesn't pass the team-guarded static middleware —
+  // without this route the live report never gets past its spinner. Pure
+  // rendering code, no data or secrets, same exposure class as the logo.
+  app.get('/report-render.js', (req, res) =>
+    res.sendFile(path.join(__dirname, '..', 'public', 'report-render.js')));
 
   app.get('/portal', requireSession, (req, res) =>
     res.sendFile(path.join(__dirname, '..', 'public', 'portal.html')));

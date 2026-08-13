@@ -40,7 +40,10 @@
       background: #fff; border: 1px solid var(--border); border-radius: 8px;
       padding: 9px 12px; font-size: 14px; color: var(--text); font-family: 'Inter', sans-serif; cursor: pointer;
     }
-    .pdf-btn {
+    /* a.pdf-btn (0-1-1), not .pdf-btn (0-1-0): must outrank `.bar-right a`
+       above, whose background:none otherwise wins and leaves this button
+       white-on-white — invisible. */
+    a.pdf-btn {
       background: var(--green); color: #fff !important; border: none; border-radius: 8px;
       padding: 9px 14px; font-size: 13px; font-weight: 600; cursor: pointer;
       font-family: 'Inter', sans-serif; text-decoration: none !important;
