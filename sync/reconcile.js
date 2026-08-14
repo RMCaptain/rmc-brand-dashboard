@@ -12,7 +12,7 @@
 const { getAccessToken, getMarketplaceIds, createReport, waitForReport, downloadReport, sleep } = require('./amazon');
 const { pstMidnightAsUTC, pstEndOfDayAsUTC } = require('./dateUtils');
 
-const MARKETPLACE_CURRENCY = { 'A2EUQ1WTGCTBG2': 'CAD', 'ATVPDKIKX0DER': 'USD' };
+const MARKETPLACE_CURRENCY = require('./marketplaces').currencyMap();
 // Tolerance is asymmetric because the two sources measure differently: S&T
 // "ordered product sales" counts orders at placement and is never restated
 // when they cancel, while daily_metrics deliberately excludes cancelled

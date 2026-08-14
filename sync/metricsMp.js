@@ -13,8 +13,9 @@
  * that feeds the dashboards. Failures log loudly and return 0.
  */
 
-const MP_CA = 'A2EUQ1WTGCTBG2'; // amazon.ca  (CAD)
-const MP_US = 'ATVPDKIKX0DER';  // amazon.com (USD)
+const { idByCode } = require('./marketplaces');
+const MP_CA = idByCode('CA'); // amazon.ca  (CAD)
+const MP_US = idByCode('US'); // amazon.com (USD)
 
 // One NaN in a payload becomes null on the wire and fails the whole batch
 // atomically — same lesson as persistOrdersDay (the 2026-07-22 wipe).

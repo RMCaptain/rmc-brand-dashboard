@@ -54,6 +54,11 @@ const ADS_HOSTS = {
 const SP_REFRESH_TOKEN_ENV = { na: 'SP_API_REFRESH_TOKEN', eu: 'SP_API_REFRESH_TOKEN_EU' };
 
 const active   = () => Object.entries(MARKETPLACES).filter(([, m]) => m.active).map(([id, m]) => ({ id, ...m }));
+const all      = () => Object.entries(MARKETPLACES).map(([id, m]) => ({ id, ...m }));
+// Plain lookup maps for modules that want the old literal-object shape.
+const currencyMap = () => Object.fromEntries(Object.entries(MARKETPLACES).map(([id, m]) => [id, m.currency]));
+const codeMap     = () => Object.fromEntries(Object.entries(MARKETPLACES).map(([id, m]) => [id, m.code]));
+const idByCode    = code => { const m = byCode(code); return m ? m.id : null; };
 const byId     = id => MARKETPLACES[id] || null;
 const byCode   = code => {
   const hit = Object.entries(MARKETPLACES).find(([, m]) => m.code === (code || '').toUpperCase());
@@ -64,5 +69,5 @@ const codeOf     = id => MARKETPLACES[id]?.code || null;
 
 module.exports = {
   MARKETPLACES, SP_API_HOSTS, ADS_HOSTS, SP_REFRESH_TOKEN_ENV,
-  active, byId, byCode, currencyOf, codeOf,
+  active, all, byId, byCode, currencyOf, codeOf, currencyMap, codeMap, idByCode,
 };

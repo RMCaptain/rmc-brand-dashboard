@@ -7,50 +7,66 @@ require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 const https = require('https');
 const zlib  = require('zlib');
 
-const ADS_HOST     = 'advertising-api.amazon.com';
+const MP = require('./marketplaces');
 const TOKEN_URL    = 'https://api.amazon.com/auth/o2/token';
 
-const PROFILES = {
-  CA: process.env.ADS_PROFILE_CA,
-  US: process.env.ADS_PROFILE_US,
-};
+// Ads profile ids by marketplace code, driven by the registry's adsProfileEnv.
+// Codes without a configured profile simply aren't present (UK appears the
+// moment ADS_PROFILE_UK lands in env; Walmart has adsProfileEnv null).
+const PROFILES = Object.fromEntries(
+  MP.all().filter(m => m.adsProfileEnv && process.env[m.adsProfileEnv])
+    .map(m => [m.code, process.env[m.adsProfileEnv]]));
+
+// Region for a profile's marketplace (host + credential selection).
+function adsRegionFor(code) { const m = MP.byCode(code); return (m && m.region) || 'na'; }
+function adsHostFor(region = 'na') { return MP.ADS_HOSTS[region] || MP.ADS_HOSTS.na; }
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
+// Per-region token cache. The UK ads login is a separate grant
+// (ADS_REFRESH_TOKEN_EU); client id/secret fall back to the NA app's unless
+// _EU variants are set (separate login usually means separate creds too).
+const _tokenCaches = {}; // region -> { token, expires }
 
-let _tokenCache = null;
+function adsClientId(region = 'na') {
+  return (region !== 'na' && process.env['ADS_CLIENT_ID_' + region.toUpperCase()]) || process.env.ADS_CLIENT_ID;
+}
 
-async function getAdsToken() {
-  if (_tokenCache && _tokenCache.expires > Date.now()) return _tokenCache.token;
+async function getAdsToken(region = 'na') {
+  const c = _tokenCaches[region];
+  if (c && c.expires > Date.now()) return c.token;
+  const suffix = region === 'na' ? '' : '_' + region.toUpperCase();
+  const refreshToken = process.env['ADS_REFRESH_TOKEN' + suffix];
+  if (!refreshToken) throw new Error(`Ads credentials for region '${region}' are not configured (need ADS_REFRESH_TOKEN${suffix})`);
   const res = await fetch(TOKEN_URL, {
     method:  'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
       grant_type:    'refresh_token',
-      refresh_token: process.env.ADS_REFRESH_TOKEN,
-      client_id:     process.env.ADS_CLIENT_ID,
-      client_secret: process.env.ADS_CLIENT_SECRET,
+      refresh_token: refreshToken,
+      client_id:     adsClientId(region),
+      client_secret: (region !== 'na' && process.env['ADS_CLIENT_SECRET' + suffix]) || process.env.ADS_CLIENT_SECRET,
     }),
   });
   const d = await res.json();
   if (!d.access_token) throw new Error('Ads token error: ' + JSON.stringify(d));
-  _tokenCache = { token: d.access_token, expires: Date.now() + (d.expires_in - 60) * 1000 };
-  return _tokenCache.token;
+  _tokenCaches[region] = { token: d.access_token, expires: Date.now() + (d.expires_in - 60) * 1000 };
+  return _tokenCaches[region].token;
 }
 
 // ── HTTP ──────────────────────────────────────────────────────────────────────
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-async function adsReq(method, path, profileId, token, body = null, extraHeaders = {}) {
+async function adsReq(method, path, profileId, token, body = null, extraHeaders = {}, region = 'na') {
   const headers = {
     'Authorization': `Bearer ${token}`,
-    'Amazon-Advertising-API-ClientId': process.env.ADS_CLIENT_ID,
+    'Amazon-Advertising-API-ClientId': adsClientId(region),
     'Amazon-Advertising-API-Scope':    String(profileId),
     'Content-Type': 'application/json',
     ...extraHeaders,
   };
 
-  const res = await fetch(`https://${ADS_HOST}${path}`, {
+  const res = await fetch(`https://${adsHostFor(region)}${path}`, {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,

@@ -9,7 +9,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 const { getAccessToken, spRequest, getMarketplaceIds, MARKETPLACE_CODE, sleep, createReport, waitForReport, downloadReport } = require('./amazon');
 const { pstDateStr, pstSubtractDays, pstMidnightAsUTC, pstEndOfDayAsUTC } = require('./dateUtils');
 
-const MARKETPLACE_CURRENCY = { 'A2EUQ1WTGCTBG2': 'CAD', 'ATVPDKIKX0DER': 'USD' };
+const MARKETPLACE_CURRENCY = require('./marketplaces').currencyMap();
 
 let running = false;
 function isBackfillRunning() { return running; }
@@ -124,7 +124,13 @@ async function backfillDays(supabase, brands, limit = 15, lookbackDays = 365) {
     if (r.status !== 'fulfilled') { console.warn('[Backfill] Report failed:', r.reason?.message); continue; }
     const { date, mpId, data } = r.value;
     succeeded.add(`${date}|${mpId}`);
-    const currency = MARKETPLACE_CURRENCY[mpId] || 'USD';
+    const currency = MARKETPLACE_CURRENCY[mpId];
+    if (currency !== 'CAD' && currency !== 'USD') {
+      // Never mis-bucket another marketplace as USD (see expansion plan) —
+      // the merge below is binary CAD/USD.
+      console.error(`[Backfill] Marketplace ${mpId} (currency ${currency || 'unknown'}) — skipping; wide-table backfill is CAD/USD only`);
+      continue;
+    }
     if (!byDate[date]) byDate[date] = {};
 
     for (const [asin, d] of Object.entries(data)) {

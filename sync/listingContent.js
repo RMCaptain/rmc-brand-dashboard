@@ -19,7 +19,8 @@
 const { getAccessToken, spRequest, sleep } = require('./amazon');
 
 const EXCLUDED_BRANDS = new Set(['general-wholesale', 'unknown-brand']);
-const MP_ID = { CA: 'A2EUQ1WTGCTBG2', US: 'ATVPDKIKX0DER' };
+const { idByCode } = require('./marketplaces');
+const MP_ID = { CA: idByCode('CA'), US: idByCode('US') };
 
 // Attributes worth keeping structured — the catalog carries hundreds.
 const KEEP_ATTRS = ['flavor', 'size', 'color', 'style', 'unit_count', 'item_package_quantity', 'material', 'scent', 'item_form', 'age_range_description', 'target_species'];

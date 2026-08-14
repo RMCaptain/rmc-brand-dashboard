@@ -28,7 +28,7 @@ function lastFullMonth() {
   return { start: fmt(firstPrev), end: fmt(lastPrev) };
 }
 
-const MP_CODE = { 'A2EUQ1WTGCTBG2': 'CA', 'ATVPDKIKX0DER': 'US' };
+const MP_CODE = require('./marketplaces').codeMap();
 
 /**
  * Fetch per-ASIN repeat purchase data for the last full month, kept SEPARATE
@@ -98,7 +98,14 @@ async function fetchRepeatPurchase(marketplaceIds, token) {
 // Defaults to CA if unset — every current brand sells .ca only.
 function brandMarketplaces(brand) {
   const raw = (brand.marketplace || 'CA').toUpperCase();
-  return raw.split(',').map(s => s.trim()).filter(s => s === 'CA' || s === 'US');
+  const { byCode } = require('./marketplaces');
+  return raw.split(',').map(s => s.trim()).filter(code => {
+    if (byCode(code)) return true;
+    // Loud, not silent: an unknown code used to fall out of the whitelist and
+    // quietly zero the brand's repeat-purchase data.
+    if (code) console.error(`[RepeatPurchase] brand ${brand.id || brand.name}: unknown marketplace code '${code}' in brand.marketplace — ignored`);
+    return false;
+  });
 }
 
 /**

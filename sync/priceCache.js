@@ -73,8 +73,9 @@ async function getTrailingPrices(force = false) {
 // daily sweep over every brand SKU on both marketplaces — so a sold-out
 // Pending item still gets priced at this morning's listing price.
 
-const MP_CA = 'A2EUQ1WTGCTBG2';
-const MP_US = 'ATVPDKIKX0DER';
+const { idByCode } = require('./marketplaces');
+const MP_CA = idByCode('CA');
+const MP_US = idByCode('US');
 const SNAP_TTL_MS = 30 * 60 * 1000;
 let snapCache = { at: 0, prices: null };
 

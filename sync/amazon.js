@@ -15,17 +15,12 @@ const LISTINGS_CACHE_PATH = path.join(__dirname, '../data/listings-cache.json');
 const LISTINGS_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const IMAGE_CACHE_PATH = path.join(__dirname, '../data/image-cache.json');
 
-const SP_API_HOST = 'sellingpartnerapi-na.amazon.com';
+// Marketplace facts (currency, code, region, hosts) come from the registry —
+// single source of truth for every marketplace the dashboard knows about.
+const MP = require('./marketplaces');
 
-const MARKETPLACE_CURRENCY = {
-  'A2EUQ1WTGCTBG2': 'CAD', // Amazon.ca
-  'ATVPDKIKX0DER':  'USD'  // Amazon.com
-};
-
-const MARKETPLACE_CODE = {
-  'A2EUQ1WTGCTBG2': 'CA',
-  'ATVPDKIKX0DER':  'US'
-};
+const MARKETPLACE_CURRENCY = MP.currencyMap();
+const MARKETPLACE_CODE = MP.codeMap();
 
 function getMarketplaceIds() {
   return (process.env.SP_API_MARKETPLACE_IDS || 'ATVPDKIKX0DER')
@@ -34,24 +29,45 @@ function getMarketplaceIds() {
 
 // ─── HTTP Helpers ────────────────────────────────────────────────────────────
 
-let _cachedToken = null;
-let _tokenExpiry = 0;
+// Per-REGION token cache: refresh tokens (and for the separate UK account,
+// the whole LWA app) are region-scoped. 'na' uses the existing env vars so
+// every current call site behaves exactly as before; 'eu' activates when the
+// _EU credential set lands (see MARKETPLACE-EXPANSION-PLAN.md).
+const _regionTokens = {}; // region -> { token, expiry }
 
-async function getAccessToken() {
-  if (_cachedToken && Date.now() < _tokenExpiry) return _cachedToken;
-  const token = await _fetchAccessToken();
-  _cachedToken = token;
-  _tokenExpiry = Date.now() + 50 * 60 * 1000; // refresh at 50min (tokens last 1h)
+async function getAccessToken(region = 'na') {
+  const c = _regionTokens[region];
+  if (c && Date.now() < c.expiry) return c.token;
+  const token = await _fetchAccessToken(region);
+  _regionTokens[region] = { token, expiry: Date.now() + 50 * 60 * 1000 }; // tokens last 1h
   return token;
 }
 
-async function _fetchAccessToken() {
+// Credential set per region. UK is a SEPARATE seller account with its own app
+// registration, so eu carries its own client id/secret, not just a token.
+function _regionCreds(region) {
+  if (region === 'na') return {
+    refresh_token: process.env.SP_API_REFRESH_TOKEN,
+    client_id: process.env.SP_API_CLIENT_ID,
+    client_secret: process.env.SP_API_CLIENT_SECRET,
+  };
+  const suffix = '_' + region.toUpperCase();
+  const creds = {
+    refresh_token: process.env['SP_API_REFRESH_TOKEN' + suffix],
+    client_id: process.env['SP_API_CLIENT_ID' + suffix],
+    client_secret: process.env['SP_API_CLIENT_SECRET' + suffix],
+  };
+  if (!creds.refresh_token || !creds.client_id || !creds.client_secret) {
+    throw new Error(`SP-API credentials for region '${region}' are not configured (need SP_API_*${suffix} env vars)`);
+  }
+  return creds;
+}
+
+async function _fetchAccessToken(region = 'na') {
   return new Promise((resolve, reject) => {
     const body = new URLSearchParams({
       grant_type: 'refresh_token',
-      refresh_token: process.env.SP_API_REFRESH_TOKEN,
-      client_id: process.env.SP_API_CLIENT_ID,
-      client_secret: process.env.SP_API_CLIENT_SECRET
+      ..._regionCreds(region)
     }).toString();
 
     const req = https.request({
@@ -77,7 +93,7 @@ async function _fetchAccessToken() {
   });
 }
 
-async function spRequest(method, path, token, body = null, timeoutMs = 45000) {
+async function spRequest(method, path, token, body = null, timeoutMs = 45000, { region = 'na' } = {}) {
   const request = new Promise((resolve, reject) => {
     const bodyStr = body ? JSON.stringify(body) : null;
     const headers = {
@@ -87,7 +103,7 @@ async function spRequest(method, path, token, body = null, timeoutMs = 45000) {
     };
     if (bodyStr) headers['Content-Length'] = Buffer.byteLength(bodyStr);
 
-    const req = https.request({ hostname: SP_API_HOST, path, method, headers }, res => {
+    const req = https.request({ hostname: MP.SP_API_HOSTS[region] || MP.SP_API_HOSTS.na, path, method, headers }, res => {
       let data = '';
       res.on('data', c => data += c);
       res.on('end', () => {
@@ -531,6 +547,11 @@ function feeGroup(type) {
 async function getFinancialSummary(startDate, endDate, token) {
   const zero = () => ({ amazonFees: 0, serviceFees: 0, refundAmount: 0, refundFees: 0, adSpend: 0 });
   const result = { CAD: zero(), USD: zero(), refundCount: 0 };
+  // Currencies outside CAD/USD are dropped from this WIDE-shaped summary by
+  // design (new marketplaces ride the mp tables) — but never silently: a GBP
+  // event stream appearing here means UK is live and daily_fees_mp is the
+  // table that must carry it.
+  const droppedCur = new Map(); // currency -> count
   // feeBreakdown tracks totals per display group per currency
   const breakdown = { CAD: {}, USD: {} };
   const addBreakdown = (cur, group, amount) => {
@@ -565,7 +586,8 @@ async function getFinancialSummary(startDate, endDate, token) {
         for (const fee of (item.ItemFeeList || [])) {
           const amount = Math.abs(fee.FeeAmount?.CurrencyAmount || 0);
           const cur = fee.FeeAmount?.CurrencyCode;
-          if (!cur || !result[cur] || amount === 0) continue;
+          if (!cur || amount === 0) continue;
+          if (!result[cur]) { droppedCur.set(cur, (droppedCur.get(cur) || 0) + 1); continue; }
           result[cur].amazonFees += amount;
           addBreakdown(cur, feeGroup(fee.FeeType), amount);
         }
@@ -580,14 +602,14 @@ async function getFinancialSummary(startDate, endDate, token) {
           if (charge.ChargeType === 'Principal') {
             const amount = Math.abs(charge.ChargeAmount?.CurrencyAmount || 0);
             const cur = charge.ChargeAmount?.CurrencyCode;
-            if (cur && result[cur]) result[cur].refundAmount += amount;
+            if (!cur) {} else if (result[cur]) result[cur].refundAmount += amount; else droppedCur.set(cur, (droppedCur.get(cur) || 0) + 1);
           }
         }
         for (const fee of (item.ItemFeeAdjustmentList || [])) {
           const raw = fee.FeeAmount?.CurrencyAmount || 0;
           if (raw < 0) {
             const cur = fee.FeeAmount?.CurrencyCode;
-            if (cur && result[cur]) result[cur].refundFees += Math.abs(raw);
+            if (!cur) {} else if (result[cur]) result[cur].refundFees += Math.abs(raw); else droppedCur.set(cur, (droppedCur.get(cur) || 0) + 1);
           }
         }
       }
@@ -598,7 +620,8 @@ async function getFinancialSummary(startDate, endDate, token) {
       for (const fee of (svc.FeeList || [])) {
         const amount = fee.FeeAmount?.CurrencyAmount || 0;
         const cur = fee.FeeAmount?.CurrencyCode;
-        if (!cur || !result[cur] || amount >= 0) continue;
+        if (!cur || amount >= 0) continue;
+        if (!result[cur]) { droppedCur.set(cur, (droppedCur.get(cur) || 0) + 1); continue; }
         result[cur].serviceFees += Math.abs(amount);
         addBreakdown(cur, feeGroup(fee.FeeType), Math.abs(amount));
       }
@@ -609,7 +632,7 @@ async function getFinancialSummary(startDate, endDate, token) {
       if ((adsEvent.TransactionType || '').toLowerCase() === 'charge') {
         const amount = Math.abs(adsEvent.TransactionValue?.CurrencyAmount || 0);
         const cur = adsEvent.TransactionValue?.CurrencyCode;
-        if (cur && result[cur]) result[cur].adSpend += amount;
+        if (!cur) {} else if (result[cur]) result[cur].adSpend += amount; else droppedCur.set(cur, (droppedCur.get(cur) || 0) + 1);
       }
     }
 
@@ -634,6 +657,9 @@ async function getFinancialSummary(startDate, endDate, token) {
   }
   result.CAD.breakdown = breakdown.CAD;
   result.USD.breakdown = breakdown.USD;
+  if (droppedCur.size) {
+    console.error(`[Finances] getFinancialSummary DROPPED events in unsupported currencies: ${[...droppedCur.entries()].map(([c, n]) => `${c}×${n}`).join(', ')} — these belong in daily_fees_mp, not the wide summary`);
+  }
   return result;
 }
 
@@ -719,7 +745,15 @@ function buildPresetMetrics(brands, stDatasets, marketplaceIds, listingsData, in
   // Merge S&T data — split revenue by currency
   const stData = {};
   for (let i = 0; i < stDatasets.length; i++) {
-    const currency = MARKETPLACE_CURRENCY[marketplaceIds[i]] || 'USD';
+    const currency = MARKETPLACE_CURRENCY[marketplaceIds[i]];
+    if (currency !== 'CAD' && currency !== 'USD') {
+      // NEVER default another marketplace into the USD bucket — the else
+      // branch below is binary CAD/USD, so GBP (or an unknown id) would be
+      // silently booked as Amazon.com revenue. New marketplaces ride
+      // daily_metrics_mp, not these currency-suffixed aggregates.
+      console.error(`[Sync] buildPresetMetrics: marketplace ${marketplaceIds[i]} (currency ${currency || 'unknown'}) — skipping; wide-table path is CAD/USD only`);
+      continue;
+    }
     for (const [asin, d] of Object.entries(stDatasets[i])) {
       if (!stData[asin]) {
         stData[asin] = { revenueCad: 0, revenueUsd: 0, units: 0, unitsCad: 0, unitsUsd: 0, sessions: 0, sessionsCad: 0, sessionsUsd: 0, pageViews: 0, buyBoxSamples: [], cvrSamples: [] };
