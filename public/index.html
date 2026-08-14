@@ -28,7 +28,13 @@
         </div>
       </div>
       <div class="flex items-center gap-3">
-        <div class="cur-toggle">
+        <!-- Marketplace filter (Sellerboard-style): scope every number to one
+             marketplace in its native currency, or blend all. Options come
+             from /api/marketplaces so new marketplaces appear on activation. -->
+        <select id="mpSwitch" class="rmc-select" style="width:auto;color-scheme:dark;font-size:12px;padding:6px 10px" onchange="setMpFilter(this.value)" title="Marketplace">
+          <option value="all">🌐 All marketplaces</option>
+        </select>
+        <div class="cur-toggle" id="curToggle">
           <button id="toggleCAD" onclick="setCurrency('CAD')" class="cur-btn">CA$</button>
           <button id="toggleUSD" onclick="setCurrency('USD')" class="cur-btn">US$</button>
         </div>
@@ -179,21 +185,48 @@
 
     // ── Formatting ────────────────────────────────────────────────────────────
     function fmtMoney(cad, usd = 0) {
-      if (currency === 'CAD') {
-        const t = (cad || 0) + (usd || 0) * fxRate.usdToCad;
-        return 'CA$' + t.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      }
-      const t = (usd || 0) + (cad || 0) * fxRate.cadToUsd;
-      return 'US$' + t.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      return fmtDisplay(getNum(cad, usd));
+    }
+    // Format a value ALREADY in display space (scoped/converted) — use this
+    // for computed numbers like gross profit; fmtMoney(v, 0) would zero them
+    // under a US marketplace filter.
+    function fmtDisplay(v) {
+      const dc = displayCurrency();
+      return curSym() + (v || 0).toLocaleString(dc === 'CAD' ? 'en-CA' : 'en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
 
     function fmtPct(val) {
       return val != null ? val.toFixed(2) + '%' : '—';
     }
 
+    // ── Marketplace filter (Sellerboard-style) ────────────────────────────────
+    // 'all' blends every marketplace FX-converted into the display currency;
+    // a single marketplace shows ITS slice in ITS native currency (the CA$/US$
+    // toggle only applies to the All view). Menu is registry-driven via
+    // /api/marketplaces — new marketplaces appear when their data path lands.
+    let mpFilter = localStorage.getItem('mpFilter') || 'all';
+    let mpRegistry = [];
+    const mpScoped = () => mpFilter !== 'all';
+    function displayCurrency() {
+      if (mpFilter === 'CA') return 'CAD';
+      if (mpFilter === 'US') return 'USD';
+      return currency;
+    }
+    function curSym() { return displayCurrency() === 'CAD' ? 'CA$' : 'US$'; }
+
     function getNum(cad, usd = 0) {
+      if (mpFilter === 'CA') return (cad || 0);
+      if (mpFilter === 'US') return (usd || 0);
       if (currency === 'CAD') return (cad || 0) + (usd || 0) * fxRate.usdToCad;
       return (usd || 0) + (cad || 0) * fxRate.cadToUsd;
+    }
+
+    // Per-marketplace units for a sku row; falls back to the brand's home
+    // marketplace when the split fields are absent (single-marketplace brands).
+    function skuUnitsFor(sku, brand, code) {
+      if (code === 'CA') return sku.unitsCad != null ? sku.unitsCad : ((brand?.marketplace || 'CA') !== 'US' ? (sku.units || 0) : 0);
+      if (code === 'US') return sku.unitsUsd != null ? sku.unitsUsd : ((brand?.marketplace || 'CA') === 'US' ? (sku.units || 0) : 0);
+      return sku.units || 0;
     }
 
 
@@ -222,10 +255,16 @@
 
       // Aggregate across all brands
       let revCad = 0, revUsd = 0, units = 0, sessions = 0, refundUnits = 0;
-      for (const bm of Object.values(preset.brands || {})) {
+      for (const [brandId, bm] of Object.entries(preset.brands || {})) {
         revCad += bm.summary?.revenueCad || 0;
         revUsd += bm.summary?.revenueUsd || 0;
-        units  += bm.summary?.units || 0;
+        if (mpScoped()) {
+          // Brand summaries carry only blended units — sum the sku splits.
+          const brand = brandsData.find(b => b.id === brandId);
+          for (const sku of (bm.skus || [])) units += skuUnitsFor(sku, brand, mpFilter);
+        } else {
+          units += bm.summary?.units || 0;
+        }
         sessions += bm.summary?.sessions || 0;
       }
 
@@ -241,7 +280,11 @@
       const serviceFees = getNum(fCad.serviceFees || 0, fUsd.serviceFees || 0);
       const refunds     = getNum(fCad.refundAmount, fUsd.refundAmount);
       const refundFee   = getNum(fCad.refundFees, fUsd.refundFees);
-      const refundCount = fin.refundCount || 0;
+      // Per-currency counts only exist on rows collected after 2026-08-13 —
+      // under a marketplace filter show the split when known, else '—'.
+      const refundCount = mpScoped()
+        ? ((mpFilter === 'CA' ? fCad.refundCount : fUsd.refundCount) ?? null)
+        : (fin.refundCount || 0);
       const adSpend     = getNum(fCad.adSpend, fUsd.adSpend);
       const cogsTotal   = getNum(cogs.cad, cogs.usd);
 
@@ -254,8 +297,8 @@
       const pctRefunds  = sales > 0 ? (refunds / sales) * 100 : null;
 
       const fmtC = v => {
-        const sym = currency === 'CAD' ? 'CA$' : 'US$';
-        return sym + Math.abs(v).toLocaleString(currency === 'CAD' ? 'en-CA' : 'en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const dc = displayCurrency();
+        return curSym() + Math.abs(v).toLocaleString(dc === 'CAD' ? 'en-CA' : 'en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       };
 
       return {
@@ -333,7 +376,7 @@
           <div class="overflow-y-auto flex-1 px-4 py-1">
             ${row('Sales', fmtC(m.sales))}
             ${row('Units', m.units.toLocaleString())}
-            ${row('Refunds', m.refundCount.toLocaleString(), m.refundCount > 0 ? 'text-red-400' : 'text-slate-500')}
+            ${row('Refunds', m.refundCount == null ? '—' : m.refundCount.toLocaleString(), m.refundCount > 0 ? 'text-red-400' : 'text-slate-500')}
             ${row('Adv. cost', m.adSpend > 0 ? '-' + fmtC(m.adSpend) : '—', m.adSpend > 0 ? 'text-red-400' : 'text-slate-500')}
             ${row('Refund cost', m.refundFee > 0 ? '-' + fmtC(m.refundFee) : '—', m.refundFee > 0 ? 'text-red-400' : 'text-slate-500')}
             <div class="flex items-center justify-between py-2 cursor-pointer hover:opacity-80 -mx-4 px-4" style="border-bottom:1px solid rgba(255,255,255,0.05)"
@@ -381,7 +424,7 @@
               </div>
               <div>
                 <div class="text-xs mb-0.5" style="color:var(--text-3)">Refunds</div>
-                <div class="text-sm font-semibold ${m.refundCount > 0 ? 'text-red-400' : ''}" style="${m.refundCount === 0 ? 'color:var(--text-3)' : ''}">${m.refundCount.toLocaleString()}</div>
+                <div class="text-sm font-semibold ${m.refundCount > 0 ? 'text-red-400' : ''}" style="${!m.refundCount ? 'color:var(--text-3)' : ''}">${m.refundCount == null ? '—' : m.refundCount.toLocaleString()}</div>
               </div>
               <div>
                 <div class="text-xs mb-0.5" style="color:var(--text-3)">Adv. cost</div>
@@ -604,7 +647,9 @@
 
     function renderProductTable() {
       const tbody = document.getElementById('productTableBody');
-      const skus = getAllSkus(getActiveTableData());
+      // Rows are already one-per-(asin, marketplace) — scoping is a filter.
+      const skus = getAllSkus(getActiveTableData())
+        .filter(s => !mpScoped() || s.marketplace === mpFilter);
 
       if (!skus.length) {
         tbody.innerHTML = '<tr><td colspan="10" class="text-center text-slate-500 py-8">No data — run sync first</td></tr>';
@@ -623,7 +668,7 @@
       if (productPage > totalPages) productPage = totalPages;
       const paginated = sorted.slice((productPage - 1) * pageSize, productPage * pageSize);
 
-      const sym = currency === 'CAD' ? 'CA$' : 'US$';
+      const sym = curSym();
       const fmtN = v => v != null ? sym + Math.abs(v).toLocaleString(currency === 'CAD' ? 'en-CA' : 'en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
 
       tbody.innerHTML = paginated.map(s => {
@@ -776,8 +821,13 @@
           cogsNum = getNum(cogs.cad, cogs.usd);
           grossProfit = rev - cogsNum;
           margin = rev > 0 && cogsNum > 0 ? (grossProfit / rev) * 100 : null;
-          units = s.units || 0;
-          sessions = s.sessions || 0;
+          if (mpScoped()) {
+            units = (bm.skus || []).reduce((t, sku) => t + skuUnitsFor(sku, brand, mpFilter), 0);
+            sessions = null; // sessions aren't marketplace-split in this payload — never fake it
+          } else {
+            units = s.units || 0;
+            sessions = s.sessions || 0;
+          }
           buyBox = s.buyBox ?? null;
         }
         return { brand, s, rev, cogs, cogsNum, grossProfit, margin, units, sessions, buyBox };
@@ -795,7 +845,7 @@
       if (brandPage > brandTotalPages) brandPage = brandTotalPages;
       const paginatedBrands = brandItems.slice((brandPage - 1) * pageSize, brandPage * pageSize);
 
-      tbody.innerHTML = paginatedBrands.map(({ brand, s, rev, cogs, cogsNum, grossProfit, margin, sessions, buyBox }) => {
+      tbody.innerHTML = paginatedBrands.map(({ brand, s, rev, cogs, cogsNum, grossProfit, margin, units, sessions, buyBox }) => {
         if (!s) {
           return `<tr class="cursor-pointer" onclick="location.href='/brand.html?id=${brand.id}'">
             <td class="px-5 py-3">
@@ -819,12 +869,12 @@
               <span class="text-slate-600 text-xs">${brand.marketplace} · ${brand.asins.length} ASINs</span>
             </div>
           </td>
-          <td class="px-4 py-3 text-right text-slate-200 font-medium">${fmtMoney(s.revenueCad, s.revenueUsd)}</td>
-          <td class="px-4 py-3 text-right text-slate-400">${(s.units || 0).toLocaleString()}</td>
-          <td class="px-4 py-3 text-right ${cogsNum > 0 ? 'text-slate-400' : 'text-slate-600'}">${cogsNum > 0 ? fmtMoney(cogs.cad, cogs.usd) : '—'}</td>
-          <td class="px-4 py-3 text-right ${profitColor} font-medium">${cogsNum > 0 ? fmtMoney(grossProfit, 0) : '—'}</td>
+          <td class="px-4 py-3 text-right text-slate-200 font-medium">${fmtDisplay(rev)}</td>
+          <td class="px-4 py-3 text-right text-slate-400">${(units || 0).toLocaleString()}</td>
+          <td class="px-4 py-3 text-right ${cogsNum > 0 ? 'text-slate-400' : 'text-slate-600'}">${cogsNum > 0 ? fmtDisplay(cogsNum) : '—'}</td>
+          <td class="px-4 py-3 text-right ${profitColor} font-medium">${cogsNum > 0 ? fmtDisplay(grossProfit) : '—'}</td>
           <td class="px-4 py-3 text-right ${margin != null ? (margin > 0 ? 'text-emerald-400' : 'text-red-400') : 'text-slate-600'}">${margin != null ? margin.toFixed(1) + '%' : '—'}</td>
-          <td class="px-4 py-3 text-right text-slate-400">${(s.sessions || 0).toLocaleString()}</td>
+          <td class="px-4 py-3 text-right text-slate-400">${sessions == null ? '—' : (sessions || 0).toLocaleString()}</td>
           <td class="px-4 py-3 text-right ${buyBox >= 90 ? 'text-emerald-400' : buyBox >= 70 ? 'text-amber-400' : buyBox != null ? 'text-red-400' : 'text-slate-600'}">${buyBox != null ? buyBox.toFixed(1) + '%' : '—'}</td>
         </tr>`;
       }).join('');
@@ -862,6 +912,50 @@
       renderBrandTable();
       renderProductTable();
     }
+
+    // ── Marketplace switcher ──────────────────────────────────────────────────
+    function setMpFilter(v) {
+      mpFilter = v;
+      localStorage.setItem('mpFilter', v);
+      updateMpUI();
+      renderTiles();
+      renderBrandTable();
+      renderProductTable();
+    }
+
+    function updateMpUI() {
+      const sel = document.getElementById('mpSwitch');
+      if (sel && sel.value !== mpFilter) sel.value = mpFilter;
+      // Display currency follows the marketplace when scoped — the CA$/US$
+      // toggle only means something in the All view.
+      const tog = document.getElementById('curToggle');
+      if (tog) {
+        tog.style.opacity = mpScoped() ? '0.35' : '';
+        tog.style.pointerEvents = mpScoped() ? 'none' : '';
+        tog.title = mpScoped() ? 'Single marketplace shows its native currency' : '';
+      }
+    }
+
+    async function loadMarketplaces() {
+      try {
+        const list = await fetch('/api/marketplaces').then(r => r.json());
+        mpRegistry = list;
+        const sel = document.getElementById('mpSwitch');
+        if (!sel) return;
+        // The wide-shaped payload can only scope CA/US today; other actives
+        // join the menu when the per-marketplace read path lands.
+        const scopable = new Set(['CA', 'US']);
+        for (const m of list.filter(m => m.active && scopable.has(m.code))) {
+          const opt = document.createElement('option');
+          opt.value = m.code;
+          opt.textContent = `${m.flag} ${m.label}`;
+          sel.appendChild(opt);
+        }
+        if (mpFilter !== 'all' && ![...sel.options].some(o => o.value === mpFilter)) mpFilter = 'all';
+        updateMpUI();
+      } catch (e) { console.warn('marketplaces load failed:', e.message); }
+    }
+    loadMarketplaces();
 
     // ── Sync ──────────────────────────────────────────────────────────────────
     async function triggerSync() {

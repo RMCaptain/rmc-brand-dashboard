@@ -19,21 +19,25 @@
 const MARKETPLACES = {
   A2EUQ1WTGCTBG2: {
     code: 'CA', platform: 'amazon', currency: 'CAD', region: 'na',
+    label: 'Amazon.ca', flag: '🇨🇦',
     storefront: 'https://www.amazon.ca', sellerCentral: 'https://sellercentral.amazon.ca',
     adsProfileEnv: 'ADS_PROFILE_CA', active: true,
   },
   ATVPDKIKX0DER: {
     code: 'US', platform: 'amazon', currency: 'USD', region: 'na',
+    label: 'Amazon.com', flag: '🇺🇸',
     storefront: 'https://www.amazon.com', sellerCentral: 'https://sellercentral.amazon.com',
     adsProfileEnv: 'ADS_PROFILE_US', active: true,
   },
   A1F83G8C2ARO7P: {
     code: 'UK', platform: 'amazon', currency: 'GBP', region: 'eu',
+    label: 'Amazon.co.uk', flag: '🇬🇧',
     storefront: 'https://www.amazon.co.uk', sellerCentral: 'https://sellercentral.amazon.co.uk',
     adsProfileEnv: 'ADS_PROFILE_UK', active: false,   // flip when EU creds land
   },
   walmart_ca: {
     code: 'WMCA', platform: 'walmart', currency: 'CAD', region: null,
+    label: 'Walmart.ca', flag: '🇨🇦',
     storefront: 'https://www.walmart.ca', sellerCentral: 'https://seller.walmart.ca',
     adsProfileEnv: null,                              // Walmart Connect CA is partner-gated
     active: false,

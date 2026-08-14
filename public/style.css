@@ -475,6 +475,12 @@ input[type=number] { -moz-appearance: textfield; }
   .cur-btn { min-height: 34px; padding: 7px 12px; }
   .preset-btn, .bp-btn, .view-tab { min-height: 34px; padding: 8px 14px; font-size: 12px; }
   .rmc-input, .rmc-select { min-height: 44px; font-size: 16px; }  /* 16px stops iOS zoom-on-focus */
+  /* Marketplace switcher lives in the nav bar — compact the whole actions
+     group so switcher + currency toggle + sync + hamburger fit one phone row. */
+  #mpSwitch { max-width: 90px; min-height: 34px; font-size: 13px; padding: 6px 6px; }
+  .rmc-nav .cur-btn { padding: 7px 9px; }
+  .rmc-nav .btn-primary { min-height: 34px; padding: 7px 10px !important; }
+  .rmc-nav .flex.items-center.gap-3 { gap: 8px; }
   /* Icon/action buttons inside tables & cards get a real hit area */
   .rmc-table button, .rmc-table a.btn-ghost { min-height: 36px; }
 

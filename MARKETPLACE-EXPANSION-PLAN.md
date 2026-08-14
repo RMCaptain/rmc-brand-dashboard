@@ -93,6 +93,16 @@ XML APIs' migration deadline was 2026-07-31 — already passed):
 
 ## Build phases
 
+*Progress 2026-08-13: Phase 1 plumbing SHIPPED except the two CHECK-constraint
+drops (sql/drop-ads-profile-checks.sql is written but NOT run — ALTER needs
+Mike's go-ahead; required before the first UK ads sync). daily_fees_mp is live
++ backfilled + double-written. Phase 3's switcher is live on the dashboard:
+registry-driven menu (/api/marketplaces), scoped tiles/tables in native
+currency, currency toggle = All-view only. CA/US scope client-side off the
+wide-shaped payload; UK/Walmart join the menu when readers migrate to
+daily_metrics_mp (Phase 2) — the scopable-set gate lives in index.html's
+loadMarketplaces().*
+
 **Phase 1 — plumbing (no new data yet):**
 - Wire `sync/marketplaces.js` as the single source of truth; delete the 7
   duplicate `MARKETPLACE_CURRENCY`/`MP_CODE` maps (amazon.js, backfill.js,

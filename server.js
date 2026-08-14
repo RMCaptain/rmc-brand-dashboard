@@ -2128,6 +2128,18 @@ app.post('/api/patch-ad-spend', async (req, res) => {
 
 app.get('/api/fx', async (req, res) => res.json(await fetchFxRate()));
 
+// Marketplace registry for the UI (switcher menus, badges, storefront links).
+// Single source of truth: sync/marketplaces.js — a new marketplace activated
+// there appears in every registry-driven menu without frontend edits.
+app.get('/api/marketplaces', (req, res) => {
+  const reg = require('./sync/marketplaces');
+  res.json(reg.all().map(m => ({
+    id: m.id, code: m.code, label: m.label, flag: m.flag,
+    platform: m.platform, currency: m.currency, storefront: m.storefront,
+    active: m.active,
+  })));
+});
+
 app.get('/api/download/settlement', (req, res) => {
   const filePath = path.join(DATA_DIR, 'settlement-report.txt');
   if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'No settlement report found. Run the download script first.' });
