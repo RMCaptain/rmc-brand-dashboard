@@ -545,7 +545,7 @@ function feeGroup(type) {
 }
 
 async function getFinancialSummary(startDate, endDate, token) {
-  const zero = () => ({ amazonFees: 0, serviceFees: 0, refundAmount: 0, refundFees: 0, adSpend: 0 });
+  const zero = () => ({ amazonFees: 0, serviceFees: 0, refundAmount: 0, refundFees: 0, adSpend: 0, refundCount: 0 });
   const result = { CAD: zero(), USD: zero(), refundCount: 0 };
   // Currencies outside CAD/USD are dropped from this WIDE-shaped summary by
   // design (new marketplaces ride the mp tables) — but never silently: a GBP
@@ -602,7 +602,7 @@ async function getFinancialSummary(startDate, endDate, token) {
           if (charge.ChargeType === 'Principal') {
             const amount = Math.abs(charge.ChargeAmount?.CurrencyAmount || 0);
             const cur = charge.ChargeAmount?.CurrencyCode;
-            if (!cur) {} else if (result[cur]) result[cur].refundAmount += amount; else droppedCur.set(cur, (droppedCur.get(cur) || 0) + 1);
+            if (!cur) {} else if (result[cur]) { result[cur].refundAmount += amount; result[cur].refundCount++; } else droppedCur.set(cur, (droppedCur.get(cur) || 0) + 1);
           }
         }
         for (const fee of (item.ItemFeeAdjustmentList || [])) {
