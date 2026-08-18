@@ -3,11 +3,13 @@
  * Marketplace registry — the single source of truth for every marketplace
  * the dashboard knows about. See MARKETPLACE-EXPANSION-PLAN.md.
  *
- * NOT YET WIRED IN (2026-08-07): seven modules still carry their own private
- * CA/US maps (amazon.js, backfill.js, reconcile.js, repeatPurchase.js,
- * listingContent.js, priceCache.js, metricsMp.js). Phase 1 of the expansion
- * replaces those with imports from here. Until then this file is inert —
- * safe to ship, nothing depends on it.
+ * WIRED IN (Phase 1 shipped): ~10 modules import this registry — amazon.js,
+ * ads.js, backfill.js, dailyFees.js, listingContent.js, metricsMp.js,
+ * priceCache.js, reconcile.js, repeatPurchase.js, plus /api/marketplaces in
+ * server.js. This is live, depended-on code: changing ids, codes, or the
+ * export shape breaks the sync pipeline. mp_ids are also persisted in
+ * daily_metrics_mp / daily_fees_mp / sns_daily / sku_prices rows — never
+ * rename an id.
  *
  * Keys are mp_ids as stored in daily_metrics_mp / sns_daily / sku_prices:
  * raw SP-API marketplace ids for Amazon, 'walmart_ca' style for others.

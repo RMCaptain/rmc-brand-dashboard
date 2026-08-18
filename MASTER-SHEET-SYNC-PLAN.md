@@ -1,7 +1,19 @@
 # Master Sheet Ads Sync — Approved Plan (2026-08-04)
 
-Weekly job that writes each brand's ad performance into its Google Drive "master sheet."
-Scoped with Mike 2026-08-04. **Plan approved; nothing built yet.** Execute from this doc.
+> **SUPERSEDED — shipped differently. Source of truth: `sync/masterSheets.js`.**
+> The delivered version diverges from this plan on three points:
+> 1. **No frozen zone.** The plan assumed the sheet would be the only copy of
+>    history older than Amazon's ~90-day ads window. In practice the DB keeps the
+>    permanent history (`daily_metrics`, ASIN-level daily since 2026-04-11, with a
+>    daily trailing-30d re-pull that self-corrects attribution restatements), so
+>    the tabs are read-only projections, **fully rebuilt every run** — disposable.
+> 2. **No `master_sheets` DB table.** Brand→spreadsheet mapping is the in-code
+>    `BRAND_SHEETS` map in `masterSheets.js`; enablement = sharing the sheet with
+>    the service account + adding a row there.
+> 3. **Tabs are "Ads (auto)" + "Inventory (auto)"**, not the captured
+>    "Ads Performance" workbook format described below.
+> The rest (Monday cron, service-account auth, Slack failure alerts) shipped as
+> planned. Kept for the format spec + decision history.
 
 ## Architecture (settled)
 
