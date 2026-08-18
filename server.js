@@ -2152,6 +2152,52 @@ app.get('/api/preset-metrics', async (req, res) => {
   res.json(await loadPresetMetrics());
 });
 
+// Per-ASIN posted Amazon fees + refund money for a date range (daily_fees_asin).
+// Returns { byAsin: { asin: { feesCad, feesUsd, refundCad, refundUsd } }, days }
+// where days = distinct dates with rows (coverage signal — the backfill may not
+// have reached the whole range). Refund figures include non-returned commission
+// (refund_fees). Missing table / failure → { byAsin: {}, days: 0 }: callers
+// attach nulls and the frontend shows — instead of a fee-less fake margin.
+async function fetchFeesByAsin(fromDate, toDate) {
+  const byAsin = {};
+  const days = new Set();
+  try {
+    for (let off = 0; ; off += 1000) {
+      const { data, error } = await supabase.from('daily_fees_asin')
+        .select('date,asin,currency,fees,refund_amount,refund_fees')
+        .gte('date', fromDate).lte('date', toDate).range(off, off + 999);
+      if (error) throw new Error(error.message);
+      for (const r of (data || [])) {
+        days.add(r.date);
+        const a = byAsin[r.asin] || (byAsin[r.asin] = { feesCad: 0, feesUsd: 0, refundCad: 0, refundUsd: 0 });
+        const refund = (Number(r.refund_amount) || 0) + (Number(r.refund_fees) || 0);
+        if (r.currency === 'CAD')      { a.feesCad += Number(r.fees) || 0; a.refundCad += refund; }
+        else if (r.currency === 'USD') { a.feesUsd += Number(r.fees) || 0; a.refundUsd += refund; }
+      }
+      if (!data || data.length < 1000) break;
+    }
+  } catch (e) {
+    console.warn('[FeesByAsin] unavailable:', e.message);
+    return { byAsin: {}, days: 0 };
+  }
+  for (const a of Object.values(byAsin)) {
+    for (const k of Object.keys(a)) a[k] = Math.round(a[k] * 100) / 100;
+  }
+  return { byAsin, days: days.size };
+}
+
+// Attach per-ASIN fee fields to a sku object. When the range has fee coverage,
+// an ASIN with no row genuinely posted $0 fees (posted-date semantics) — attach
+// zeros. No coverage at all → nulls (frontend renders — , never a fake margin).
+function attachSkuFees(sku, feesData, asin) {
+  const covered = feesData.days > 0;
+  const fa = feesData.byAsin[asin];
+  sku.feesCad         = covered ? (fa?.feesCad   || 0) : null;
+  sku.feesUsd         = covered ? (fa?.feesUsd   || 0) : null;
+  sku.refundPostedCad = covered ? (fa?.refundCad || 0) : null;
+  sku.refundPostedUsd = covered ? (fa?.refundUsd || 0) : null;
+}
+
 // Yesterday data — sourced from daily_metrics (Supabase). Persistent across restarts.
 // Sync writes daily_metrics 3x/day (6/9/12 UTC crons). For listing-health alerts and
 // title/image fallbacks, we still consult the S&T preset cache.
@@ -2161,6 +2207,7 @@ app.get('/api/metrics/yesterday', async (req, res) => {
   const pm = await loadPresetMetrics();
   const fx = await fetchFxRate();
   const stPreset = pm.presets?.yesterday || {};
+  const feesData = await fetchFeesByAsin(yest, yest);
 
   const { data: rows, error } = await supabase
     .from('daily_metrics')
@@ -2218,7 +2265,7 @@ app.get('/api/metrics/yesterday', async (req, res) => {
       const spendTotal = sCad + sUsd * fx.usdToCad;
       const attrTotal  = aCad + aUsd * fx.usdToCad;
 
-      skus.push({
+      const skuRow = {
         asin,
         units: u,
         // Frontend (COGS calc) reads unitsCad/unitsUsd; keep both naming styles for safety.
@@ -2243,7 +2290,9 @@ app.get('/api/metrics/yesterday', async (req, res) => {
                                   reserved: dm.inventory_reserved ?? null, unfulfillable: dm.inventory_unfulfillable ?? null }
                               : (meta.inventory ?? null),
         marketplaces:       [...(ca > 0 ? ['CA'] : []), ...(us > 0 ? ['US'] : [])],
-      });
+      };
+      attachSkuFees(skuRow, feesData, asin);
+      skus.push(skuRow);
     }
 
     const avgBuyBox = buyBoxSamples.length
@@ -3211,6 +3260,8 @@ app.post('/api/backfill', async (req, res) => {
 async function buildBrandMetricsForRange(from, to, presetKey = null) {
   const { brands } = await loadBrands();
   const pm = await loadPresetMetrics();
+  // Per-ASIN posted fees for the range — powers true net margin per product.
+  const feesData = await fetchFeesByAsin(from, to);
 
     // Paginate explicitly — Supabase caps responses at 1000 rows by default.
     // A 30-day window with ~400 rows/day = 12k rows; without pagination we'd
@@ -3349,6 +3400,7 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
         sku.supplierName = supplierName || null;
         sku.amazonTitle  = meta.title || brand.asinTitles?.[asin] || '';
         sku.imageUrl = imagesByAsin[asin] || meta.imageUrl || null;
+        attachSkuFees(sku, feesData, asin);
         skus.push(sku);
         bUnits += a.units; bUnitsCa += a.units_ca; bUnitsUs += a.units_us;
         bRevCad += a.revenue_cad; bRevUsd += a.revenue_usd;
@@ -3529,6 +3581,11 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
       startDate: from, endDate: to,
       brands: resultBrands,
       financials,
+      // Fee-coverage signal: distinct days with per-ASIN fee rows vs days in
+      // range. Frontend flags partial coverage instead of showing a fee-less
+      // fake margin (backfill may not have reached the whole range yet).
+      feesDays: feesData.days,
+      rangeDays: Math.round((new Date(to) - new Date(from)) / 86400000) + 1,
     };
 }
 

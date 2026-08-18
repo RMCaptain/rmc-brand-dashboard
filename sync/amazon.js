@@ -547,6 +547,15 @@ function feeGroup(type) {
 async function getFinancialSummary(startDate, endDate, token) {
   const zero = () => ({ amazonFees: 0, serviceFees: 0, refundAmount: 0, refundFees: 0, adSpend: 0, refundCount: 0 });
   const result = { CAD: zero(), USD: zero(), refundCount: 0 };
+  // Per-SKU aggregation of the SAME events (zero extra API calls) — feeds
+  // daily_fees_asin for true per-product net margin. Keyed sku|currency;
+  // currency doubles as the CA/US marketplace signal, matching the wide row.
+  const perSku = new Map();
+  const skuAcc = (sku, cur) => {
+    const key = `${sku || ''}|${cur}`;
+    if (!perSku.has(key)) perSku.set(key, { sku: sku || null, currency: cur, fees: 0, refundAmount: 0, refundFees: 0, refundCount: 0, breakdown: {} });
+    return perSku.get(key);
+  };
   // Currencies outside CAD/USD are dropped from this WIDE-shaped summary by
   // design (new marketplaces ride the mp tables) — but never silently: a GBP
   // event stream appearing here means UK is live and daily_fees_mp is the
@@ -590,6 +599,10 @@ async function getFinancialSummary(startDate, endDate, token) {
           if (!result[cur]) { droppedCur.set(cur, (droppedCur.get(cur) || 0) + 1); continue; }
           result[cur].amazonFees += amount;
           addBreakdown(cur, feeGroup(fee.FeeType), amount);
+          const acc = skuAcc(item.SellerSKU, cur);
+          acc.fees += amount;
+          const grp = feeGroup(fee.FeeType);
+          acc.breakdown[grp] = (acc.breakdown[grp] || 0) + amount;
         }
       }
     }
@@ -602,14 +615,21 @@ async function getFinancialSummary(startDate, endDate, token) {
           if (charge.ChargeType === 'Principal') {
             const amount = Math.abs(charge.ChargeAmount?.CurrencyAmount || 0);
             const cur = charge.ChargeAmount?.CurrencyCode;
-            if (!cur) {} else if (result[cur]) { result[cur].refundAmount += amount; result[cur].refundCount++; } else droppedCur.set(cur, (droppedCur.get(cur) || 0) + 1);
+            if (!cur) {} else if (result[cur]) {
+              result[cur].refundAmount += amount; result[cur].refundCount++;
+              const acc = skuAcc(item.SellerSKU, cur);
+              acc.refundAmount += amount; acc.refundCount++;
+            } else droppedCur.set(cur, (droppedCur.get(cur) || 0) + 1);
           }
         }
         for (const fee of (item.ItemFeeAdjustmentList || [])) {
           const raw = fee.FeeAmount?.CurrencyAmount || 0;
           if (raw < 0) {
             const cur = fee.FeeAmount?.CurrencyCode;
-            if (!cur) {} else if (result[cur]) result[cur].refundFees += Math.abs(raw); else droppedCur.set(cur, (droppedCur.get(cur) || 0) + 1);
+            if (!cur) {} else if (result[cur]) {
+              result[cur].refundFees += Math.abs(raw);
+              skuAcc(item.SellerSKU, cur).refundFees += Math.abs(raw);
+            } else droppedCur.set(cur, (droppedCur.get(cur) || 0) + 1);
           }
         }
       }
@@ -657,6 +677,14 @@ async function getFinancialSummary(startDate, endDate, token) {
   }
   result.CAD.breakdown = breakdown.CAD;
   result.USD.breakdown = breakdown.USD;
+  // Per-SKU rows (rounded). Callers that don't care simply ignore this field.
+  result.perSku = [...perSku.values()].map(a => ({
+    ...a,
+    fees:         Math.round(a.fees * 100) / 100,
+    refundAmount: Math.round(a.refundAmount * 100) / 100,
+    refundFees:   Math.round(a.refundFees * 100) / 100,
+    breakdown:    Object.fromEntries(Object.entries(a.breakdown).map(([k, v]) => [k, Math.round(v * 100) / 100])),
+  }));
   if (droppedCur.size) {
     console.error(`[Finances] getFinancialSummary DROPPED events in unsupported currencies: ${[...droppedCur.entries()].map(([c, n]) => `${c}×${n}`).join(', ')} — these belong in daily_fees_mp, not the wide summary`);
   }

@@ -106,12 +106,14 @@
               <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('inventory')">Inventory <span class="sort-ind" data-col="inventory"></span></th>
               <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('costPerUnit')">COGS <span class="sort-ind" data-col="costPerUnit"></span></th>
               <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('totalCogs')">Total COGS <span class="sort-ind" data-col="totalCogs"></span></th>
-              <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('grossProfit')">Gross Profit <span class="sort-ind" data-col="grossProfit"></span></th>
-              <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('margin')">Margin <span class="sort-ind" data-col="margin"></span></th>
+              <th id="feesTh" class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('fees')" title="Real Amazon fees posted in the period (referral + FBA + other item fees) from the Finances API">Fees <span class="sort-ind" data-col="fees"></span></th>
+              <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('adSpend')" title="Sponsored Products spend attributed to this ASIN">Ads <span class="sort-ind" data-col="adSpend"></span></th>
+              <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('netProfit')" title="Sales − COGS − Amazon fees − ad spend − refunds">Net Profit <span class="sort-ind" data-col="netProfit"></span></th>
+              <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('margin')" title="Net profit ÷ sales">Margin <span class="sort-ind" data-col="margin"></span></th>
             </tr>
           </thead>
           <tbody id="productTableBody">
-            <tr><td colspan="10" class="text-center py-8" style="color:var(--text-3)">Loading...</td></tr>
+            <tr><td colspan="12" class="text-center py-8" style="color:var(--text-3)">Loading...</td></tr>
           </tbody>
         </table>
         <div id="productPagination"></div>
@@ -126,14 +128,16 @@
               <th class="sortable-brand-th text-right cursor-pointer select-none hover:text-white" onclick="sortBrandBy('revenue')">Revenue <span class="sort-brand-ind" data-col="revenue"></span></th>
               <th class="sortable-brand-th text-right cursor-pointer select-none hover:text-white" onclick="sortBrandBy('units')">Units Sold <span class="sort-brand-ind" data-col="units"></span></th>
               <th class="sortable-brand-th text-right cursor-pointer select-none hover:text-white" onclick="sortBrandBy('cogs')">COGS <span class="sort-brand-ind" data-col="cogs"></span></th>
-              <th class="sortable-brand-th text-right cursor-pointer select-none hover:text-white" onclick="sortBrandBy('grossProfit')">Gross Profit <span class="sort-brand-ind" data-col="grossProfit"></span></th>
-              <th class="sortable-brand-th text-right cursor-pointer select-none hover:text-white" onclick="sortBrandBy('margin')">Margin <span class="sort-brand-ind" data-col="margin"></span></th>
+              <th class="sortable-brand-th text-right cursor-pointer select-none hover:text-white" onclick="sortBrandBy('fees')" title="Real Amazon fees posted in the period (referral + FBA + other item fees)">Fees <span class="sort-brand-ind" data-col="fees"></span></th>
+              <th class="sortable-brand-th text-right cursor-pointer select-none hover:text-white" onclick="sortBrandBy('adSpend')" title="Sponsored Products spend">Ads <span class="sort-brand-ind" data-col="adSpend"></span></th>
+              <th class="sortable-brand-th text-right cursor-pointer select-none hover:text-white" onclick="sortBrandBy('netProfit')" title="Revenue − COGS − Amazon fees − ad spend − refunds">Net Profit <span class="sort-brand-ind" data-col="netProfit"></span></th>
+              <th class="sortable-brand-th text-right cursor-pointer select-none hover:text-white" onclick="sortBrandBy('margin')" title="Net profit ÷ revenue">Margin <span class="sort-brand-ind" data-col="margin"></span></th>
               <th class="sortable-brand-th text-right cursor-pointer select-none hover:text-white" onclick="sortBrandBy('sessions')">Sessions <span class="sort-brand-ind" data-col="sessions"></span></th>
               <th class="sortable-brand-th text-right cursor-pointer select-none hover:text-white" onclick="sortBrandBy('buyBox')">Buy Box <span class="sort-brand-ind" data-col="buyBox"></span></th>
             </tr>
           </thead>
           <tbody id="brandTableBody">
-            <tr><td colspan="8" class="text-center py-8" style="color:var(--text-3)">Loading...</td></tr>
+            <tr><td colspan="10" class="text-center py-8" style="color:var(--text-3)">Loading...</td></tr>
           </tbody>
         </table>
         <div id="brandPagination"></div>
@@ -533,8 +537,19 @@
             const revUsd = isCA ? 0 : (sku.revenueUsd || 0);
             const rev = getNum(revCad, revUsd);
             const totalCogs = unitsMp * costPerUnit;
-            const grossProfit = costPerUnit > 0 ? rev - totalCogs : null;
-            const margin = grossProfit != null && rev > 0 ? (grossProfit / rev) * 100 : null;
+            // Net margin components, each converted to display currency the same
+            // way as revenue (native mp amount through getNum). fees null =
+            // no posted-fee data for the range (today, or backfill gap) — show
+            // — rather than a fee-less fake margin.
+            const disp = v => (isCA ? getNum(v, 0) : getNum(0, v));
+            const feesNative = isCA ? (sku.feesCad ?? null) : (sku.feesUsd ?? null);
+            const fees = feesNative != null ? disp(feesNative) : null;
+            const adSpend = disp(isCA ? (sku.spendCad || 0) : (sku.spendUsd || 0));
+            const refunds = disp(isCA ? (sku.refundPostedCad || 0) : (sku.refundPostedUsd || 0));
+            const cogsDisp = disp(totalCogs);
+            const netProfit = (costPerUnit > 0 && fees != null)
+              ? rev - cogsDisp - fees - adSpend - refunds : null;
+            const margin = netProfit != null && rev > 0 ? (netProfit / rev) * 100 : null;
             const inv = sku.inventory || {};
             const inventory = (inv.onHand ?? 0) + (inv.inbound ?? 0) + (inv.reserved ?? 0) + (inv.researching ?? 0) + (inv.unfulfillable ?? 0);
             skus.push({
@@ -547,7 +562,7 @@
               revenueCad: revCad, revenueUsd: revUsd, revenue: rev,
               sessions: sku.sessions || 0,
               buyBox: sku.buyBox ?? null, cvr: sku.cvr ?? null,
-              inventory, costPerUnit, totalCogs, grossProfit, margin,
+              inventory, costPerUnit, totalCogs, fees, adSpend, refunds, netProfit, margin,
               imageUrl: sku.imageUrl || null
             });
           }
@@ -652,10 +667,32 @@
         .filter(s => !mpScoped() || s.marketplace === mpFilter);
 
       if (!skus.length) {
-        tbody.innerHTML = '<tr><td colspan="10" class="text-center text-slate-500 py-8">No data — run sync first</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="12" class="text-center text-slate-500 py-8">No data — run sync first</td></tr>';
         document.getElementById('productPagination').innerHTML = '';
         updateSortIndicators();
         return;
+      }
+
+      // Fee-coverage flag: warn in the Fees header when the range is only
+      // partially covered by per-ASIN fee rows (backfill still catching up).
+      const activeData = getActiveTableData();
+      const feesTh = document.getElementById('feesTh');
+      if (feesTh) {
+        const partial = activeData?.rangeDays && activeData.feesDays != null
+          && activeData.feesDays > 0 && activeData.feesDays < activeData.rangeDays;
+        let warn = feesTh.querySelector('.fees-coverage-warn');
+        if (partial) {
+          if (!warn) {
+            warn = document.createElement('span');
+            warn.className = 'fees-coverage-warn text-amber-400';
+            feesTh.insertBefore(warn, feesTh.firstChild);
+          }
+          warn.textContent = '⚠ ';
+          feesTh.title = `Fee data covers ${activeData.feesDays} of ${activeData.rangeDays} days in this range — net margins understate fees until the backfill completes`;
+        } else if (warn) {
+          warn.remove();
+          feesTh.title = 'Real Amazon fees posted in the period (referral + FBA + other item fees) from the Finances API';
+        }
       }
 
       const sorted = [...skus].sort((a, b) => {
@@ -673,8 +710,11 @@
 
       tbody.innerHTML = paginated.map(s => {
         const statusColor = s.status === 'active' ? 'text-emerald-400' : s.status === 'inactive' ? 'text-red-400' : 'text-slate-500';
-        const gpColor = s.grossProfit == null ? 'text-slate-600' : s.grossProfit >= 0 ? 'text-emerald-400' : 'text-red-400';
+        const npColor = s.netProfit == null ? 'text-slate-600' : s.netProfit >= 0 ? 'text-emerald-400' : 'text-red-400';
         const marginColor = s.margin == null ? 'text-slate-600' : s.margin >= 0 ? 'text-emerald-400' : 'text-red-400';
+        const npTitle = s.netProfit != null
+          ? `Sales ${fmtN(s.revenue)} − COGS ${fmtN(getNum(s.marketplace === 'CA' ? s.totalCogs : 0, s.marketplace === 'CA' ? 0 : s.totalCogs))} − Fees ${fmtN(s.fees)} − Ads ${fmtN(s.adSpend)} − Refunds ${fmtN(s.refunds)}`
+          : (s.costPerUnit > 0 ? 'No posted-fee data for this period yet' : 'Enter COGS to see net profit');
         const bbColor = s.buyBox == null ? 'text-slate-600' : s.buyBox >= 90 ? 'text-emerald-400' : s.buyBox >= 70 ? 'text-amber-400' : 'text-red-400';
 
         return `<tr class="cursor-pointer" onclick="location.href='/brand.html?id=${s.brandId}'">
@@ -705,7 +745,9 @@
           <td class="px-4 py-3 text-right text-slate-400">${s.inventory.toLocaleString()}</td>
           <td class="px-4 py-3 text-right ${s.costPerUnit > 0 ? 'text-slate-400' : 'text-slate-600'}">${s.costPerUnit > 0 ? fmtN(s.costPerUnit) : '—'}</td>
           <td class="px-4 py-3 text-right ${s.totalCogs > 0 ? 'text-slate-400' : 'text-slate-600'}">${s.costPerUnit > 0 ? fmtN(s.totalCogs) : '—'}</td>
-          <td class="px-4 py-3 text-right ${gpColor} font-medium">${s.grossProfit != null ? (s.grossProfit < 0 ? '-' : '') + fmtN(s.grossProfit) : '—'}</td>
+          <td class="px-4 py-3 text-right ${s.fees != null ? 'text-slate-400' : 'text-slate-600'}">${s.fees != null ? fmtN(s.fees) : '—'}</td>
+          <td class="px-4 py-3 text-right ${s.adSpend > 0 ? 'text-slate-400' : 'text-slate-600'}">${s.adSpend > 0 ? fmtN(s.adSpend) : '—'}</td>
+          <td class="px-4 py-3 text-right ${npColor} font-medium" title="${npTitle}">${s.netProfit != null ? (s.netProfit < 0 ? '-' : '') + fmtN(s.netProfit) : '—'}</td>
           <td class="px-4 py-3 text-right ${marginColor}">${s.margin != null ? s.margin.toFixed(1) + '%' : '—'}</td>
         </tr>`;
       }).join('');
@@ -814,13 +856,26 @@
       const brandItems = brandsData.map(brand => {
         const bm = preset?.brands?.[brand.id];
         const s = bm?.summary;
-        let rev = 0, cogsNum = 0, grossProfit = 0, margin = null, units = 0, sessions = 0, buyBox = null, cogs = { cad: 0, usd: 0 };
+        let rev = 0, cogsNum = 0, fees = null, adSpend = 0, refunds = 0, netProfit = null, margin = null,
+            units = 0, sessions = 0, buyBox = null, cogs = { cad: 0, usd: 0 };
         if (s) {
           cogs = calcBrandCogs(brand, getActiveTableData());
           rev = getNum(s.revenueCad, s.revenueUsd);
           cogsNum = getNum(cogs.cad, cogs.usd);
-          grossProfit = rev - cogsNum;
-          margin = rev > 0 && cogsNum > 0 ? (grossProfit / rev) * 100 : null;
+          // Sum fee/ad/refund components from the brand's skus. Fees stay null
+          // (— in the UI) when the range has no posted-fee coverage at all.
+          let fCad = 0, fUsd = 0, feesKnown = false;
+          let aCad = 0, aUsd = 0, rCad = 0, rUsd = 0;
+          for (const sku of (bm.skus || [])) {
+            if (sku.feesCad != null || sku.feesUsd != null) { feesKnown = true; fCad += sku.feesCad || 0; fUsd += sku.feesUsd || 0; }
+            aCad += sku.spendCad || 0; aUsd += sku.spendUsd || 0;
+            rCad += sku.refundPostedCad || 0; rUsd += sku.refundPostedUsd || 0;
+          }
+          fees = feesKnown ? getNum(fCad, fUsd) : null;
+          adSpend = getNum(aCad, aUsd);
+          refunds = getNum(rCad, rUsd);
+          netProfit = (cogsNum > 0 && fees != null) ? rev - cogsNum - fees - adSpend - refunds : null;
+          margin = netProfit != null && rev > 0 ? (netProfit / rev) * 100 : null;
           if (mpScoped()) {
             units = (bm.skus || []).reduce((t, sku) => t + skuUnitsFor(sku, brand, mpFilter), 0);
             sessions = null; // sessions aren't marketplace-split in this payload — never fake it
@@ -830,12 +885,12 @@
           }
           buyBox = s.buyBox ?? null;
         }
-        return { brand, s, rev, cogs, cogsNum, grossProfit, margin, units, sessions, buyBox };
+        return { brand, s, rev, cogs, cogsNum, fees, adSpend, refunds, netProfit, margin, units, sessions, buyBox };
       });
 
       brandItems.sort((a, b) => {
-        let av = { name: a.brand.name, revenue: a.rev, units: a.units, cogs: a.cogsNum, grossProfit: a.grossProfit, margin: a.margin, sessions: a.sessions, buyBox: a.buyBox }[brandSortCol];
-        let bv = { name: b.brand.name, revenue: b.rev, units: b.units, cogs: b.cogsNum, grossProfit: b.grossProfit, margin: b.margin, sessions: b.sessions, buyBox: b.buyBox }[brandSortCol];
+        let av = { name: a.brand.name, revenue: a.rev, units: a.units, cogs: a.cogsNum, fees: a.fees, adSpend: a.adSpend, netProfit: a.netProfit, margin: a.margin, sessions: a.sessions, buyBox: a.buyBox }[brandSortCol];
+        let bv = { name: b.brand.name, revenue: b.rev, units: b.units, cogs: b.cogsNum, fees: b.fees, adSpend: b.adSpend, netProfit: b.netProfit, margin: b.margin, sessions: b.sessions, buyBox: b.buyBox }[brandSortCol];
         if (typeof av === 'string') return brandSortDir * av.localeCompare(bv || '');
         av = av ?? -Infinity; bv = bv ?? -Infinity;
         return brandSortDir * (av < bv ? -1 : av > bv ? 1 : 0);
@@ -845,7 +900,7 @@
       if (brandPage > brandTotalPages) brandPage = brandTotalPages;
       const paginatedBrands = brandItems.slice((brandPage - 1) * pageSize, brandPage * pageSize);
 
-      tbody.innerHTML = paginatedBrands.map(({ brand, s, rev, cogs, cogsNum, grossProfit, margin, units, sessions, buyBox }) => {
+      tbody.innerHTML = paginatedBrands.map(({ brand, s, rev, cogs, cogsNum, fees, adSpend, refunds, netProfit, margin, units, sessions, buyBox }) => {
         if (!s) {
           return `<tr class="cursor-pointer" onclick="location.href='/brand.html?id=${brand.id}'">
             <td class="px-5 py-3">
@@ -855,11 +910,14 @@
                 <span class="text-slate-600 text-xs">${brand.marketplace}</span>
               </div>
             </td>
-            <td colspan="7" class="px-4 py-3 text-slate-600 text-center">No data</td>
+            <td colspan="9" class="px-4 py-3 text-slate-600 text-center">No data</td>
           </tr>`;
         }
 
-        const profitColor = grossProfit > 0 ? 'text-emerald-400' : grossProfit < 0 ? 'text-red-400' : 'text-slate-400';
+        const profitColor = netProfit == null ? 'text-slate-600' : netProfit > 0 ? 'text-emerald-400' : netProfit < 0 ? 'text-red-400' : 'text-slate-400';
+        const npTitle = netProfit != null
+          ? `Revenue ${fmtDisplay(rev)} − COGS ${fmtDisplay(cogsNum)} − Fees ${fmtDisplay(fees)} − Ads ${fmtDisplay(adSpend)} − Refunds ${fmtDisplay(refunds)}`
+          : (cogsNum > 0 ? 'No posted-fee data for this period yet' : 'Enter COGS to see net profit');
 
         return `<tr class="brand-row border-b border-slate-800 cursor-pointer" onclick="location.href='/brand.html?id=${brand.id}'">
           <td class="px-5 py-3">
@@ -872,7 +930,9 @@
           <td class="px-4 py-3 text-right text-slate-200 font-medium">${fmtDisplay(rev)}</td>
           <td class="px-4 py-3 text-right text-slate-400">${(units || 0).toLocaleString()}</td>
           <td class="px-4 py-3 text-right ${cogsNum > 0 ? 'text-slate-400' : 'text-slate-600'}">${cogsNum > 0 ? fmtDisplay(cogsNum) : '—'}</td>
-          <td class="px-4 py-3 text-right ${profitColor} font-medium">${cogsNum > 0 ? fmtDisplay(grossProfit) : '—'}</td>
+          <td class="px-4 py-3 text-right ${fees != null ? 'text-slate-400' : 'text-slate-600'}">${fees != null ? fmtDisplay(fees) : '—'}</td>
+          <td class="px-4 py-3 text-right ${adSpend > 0 ? 'text-slate-400' : 'text-slate-600'}">${adSpend > 0 ? fmtDisplay(adSpend) : '—'}</td>
+          <td class="px-4 py-3 text-right ${profitColor} font-medium" title="${npTitle}">${netProfit != null ? fmtDisplay(netProfit) : '—'}</td>
           <td class="px-4 py-3 text-right ${margin != null ? (margin > 0 ? 'text-emerald-400' : 'text-red-400') : 'text-slate-600'}">${margin != null ? margin.toFixed(1) + '%' : '—'}</td>
           <td class="px-4 py-3 text-right text-slate-400">${sessions == null ? '—' : (sessions || 0).toLocaleString()}</td>
           <td class="px-4 py-3 text-right ${buyBox >= 90 ? 'text-emerald-400' : buyBox >= 70 ? 'text-amber-400' : buyBox != null ? 'text-red-400' : 'text-slate-600'}">${buyBox != null ? buyBox.toFixed(1) + '%' : '—'}</td>

@@ -14,6 +14,9 @@
 //                 (how $9.8k of Zellies revenue went missing, 2026-08-06).
 //                 Self-clearing — remapping the ASIN in Products moves its
 //                 history, so the alert stops the day it's dealt with.
+//   fees_asin   — per-ASIN fee rows (daily_fees_asin) sum to the wide daily_fees
+//                 totals per day/currency over the last 7 days; warns on fee
+//                 dollars stuck on unmapped SKUs
 //   cogs        — % of last-30d revenue from ASINs with COGS, per brand (warn < 95%)
 
 const { pstDateStr, pstSubtractDays } = require('./dateUtils');
@@ -123,6 +126,46 @@ async function runIntegrityChecks({ supabase, loadBrands }) {
     const top = unknownAsins.slice(0, 5).map(([a, v]) => `${a} $${r2(v.rev)}`).join(', ');
     findings.push({ check: 'unknown', level: 'fail',
       detail: `$${r2(totRev)} / ${totU} unit(s) in last 30d on ${unknownAsins.length} unmapped ASIN(s) — no brand report shows this. Remap in Products: ${top}${unknownAsins.length > 5 ? ', …' : ''}` });
+  }
+
+  // fees_asin — per-ASIN fee rows must sum to the day's wide daily_fees totals
+  // (both are built from the SAME Finances ItemFeeList events; service fees are
+  // account-level and live only in the wide row, so they're excluded here).
+  // Only days that HAVE asin rows are compared — days the backfill hasn't
+  // reached yet aren't failures. Yesterday missing entirely = warn (cron gap).
+  const from7 = pstSubtractDays(yesterday, 6);
+  const asinFees = await fetchAll(supabase, 'daily_fees_asin', 'date,currency,fees,asin', from7, yesterday);
+  if (asinFees.length) {
+    const wideFees = await fetchAll(supabase, 'daily_fees', 'date,fees_cad,fees_usd', from7, yesterday);
+    const wideByDate = Object.fromEntries(wideFees.map(r => [r.date, r]));
+    const asinByDate = {};
+    for (const r of asinFees) {
+      const acc = asinByDate[r.date] || (asinByDate[r.date] = { CAD: 0, USD: 0 });
+      if (acc[r.currency] != null) acc[r.currency] += num(r.fees);
+    }
+    const FEE_TOL = 1.0; // dollars — per-SKU rows round independently of the wide sum
+    for (const [date, sums] of Object.entries(asinByDate)) {
+      const w = wideByDate[date];
+      if (!w) continue;
+      for (const [cur, col] of [['CAD', 'fees_cad'], ['USD', 'fees_usd']]) {
+        if (Math.abs(sums[cur] - num(w[col])) > FEE_TOL) {
+          findings.push({ check: 'fees_asin', level: 'fail',
+            detail: `${date} ${cur}: per-ASIN fees sum ${r2(sums[cur])} ≠ daily_fees ${r2(num(w[col]))} — per-product margins are off for that day.` });
+        }
+      }
+    }
+    if (!asinByDate[yesterday] && num(wideByDate[yesterday]?.fees_cad) + num(wideByDate[yesterday]?.fees_usd) > 0) {
+      findings.push({ check: 'fees_asin', level: 'warn',
+        detail: `No per-ASIN fee rows for ${yesterday} though wide fees exist — fees cron may not have written daily_fees_asin.` });
+    }
+    // Unmapped SKUs carry real fee dollars no product row will show
+    const unmapped = asinFees.filter(r => r.asin.startsWith('sku:'));
+    const unmappedTotal = unmapped.reduce((s, r) => s + num(r.fees), 0);
+    if (unmappedTotal > 5) {
+      const skus = [...new Set(unmapped.map(r => r.asin))].slice(0, 5).join(', ');
+      findings.push({ check: 'fees_asin', level: 'warn',
+        detail: `$${r2(unmappedTotal)} of last-7d fees on unmapped SKUs (${skus}) — add them to sku_prices/brand mapping.` });
+    }
   }
 
   // cogs — revenue-weighted coverage per brand (warn only; posts Mondays)
