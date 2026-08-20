@@ -5561,12 +5561,46 @@ app.post('/api/bulk-update', async (req, res) => {
   }
 });
 
+// ── Boot-time schema ensure ───────────────────────────────────────────────────
+// Runs idempotent migrations from sql/ when DATABASE_URL is present in the
+// environment (Render). Machines without the db password skip cleanly — the
+// standing scripts/run-migration.js flow still covers everything else. Only
+// migrations listed here run, and each MUST be safe to re-run on every boot
+// (CREATE TABLE / CREATE INDEX IF NOT EXISTS only — no data rewrites).
+const BOOT_MIGRATIONS = ['sql/daily-fees-asin.sql'];
+async function ensureBootMigrations() {
+  if (!process.env.DATABASE_URL) {
+    console.log('[BootMigrate] DATABASE_URL not set — skipped (use scripts/run-migration.js)');
+    return;
+  }
+  const { Client } = require('pg');
+  const fsMod = require('fs');
+  const pathMod = require('path');
+  const client = new Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+  try {
+    await client.connect();
+    for (const file of BOOT_MIGRATIONS) {
+      const sql = fsMod.readFileSync(pathMod.join(__dirname, file), 'utf8');
+      await client.query('BEGIN');
+      await client.query(sql);
+      await client.query('COMMIT');
+      console.log(`[BootMigrate] ensured ${file}`);
+    }
+  } catch (e) {
+    try { await client.query('ROLLBACK'); } catch {}
+    console.error('[BootMigrate] failed (non-fatal, dashboard runs without it):', e.message);
+  } finally {
+    try { await client.end(); } catch {}
+  }
+}
+
 app.listen(PORT, () => {
   console.log(`RMC Brand Dashboard → http://localhost:${PORT}`);
+  ensureBootMigrations();
   if (process.env.SYNC_ENABLED === 'true') {
     scheduleDailySync();
   } else {
-    console.log('[AutoSync] Disabled (SYNC_ENABLED != true) — set SYNC_ENABLED=true on VPS to enable');
+    console.log('[AutoSync] Disabled (SYNC_ENABLED != true) — set SYNC_ENABLED=true on Render to enable');
   }
 });
 
