@@ -2410,6 +2410,72 @@ app.get('/api/metrics/yesterday', async (req, res) => {
   });
 });
 
+// Trailing per-ASIN fee rates for intraday estimation — same philosophy as the
+// Pending-order revenue ladder: estimate from known history, then the real
+// posted fees replace the estimate within 24-48h (10:00 UTC fees cron).
+// Rate = fees ÷ units over the trailing 14 full days (fees/unit is stable for
+// FBA: flat fulfillment fee + referral % of a stable price). Fallback for
+// ASINs with thin history: account-level fee-% of revenue per currency.
+// Cached 10 min — the dashboard polls /api/metrics/today frequently.
+let _feeRatesCache = { at: 0, rates: null };
+async function getTrailingFeeRates() {
+  if (_feeRatesCache.rates && Date.now() - _feeRatesCache.at < 10 * 60 * 1000) return _feeRatesCache.rates;
+  const yest = pstSubtractDays(pstDateStr(), 1);
+  const from = pstSubtractDays(yest, 13);
+  const empty = { perAsin: {}, acctPct: { CAD: 0.22, USD: 0.22 } }; // conservative default if no history
+  try {
+    const fees = [];
+    for (let off = 0; ; off += 1000) {
+      const { data, error } = await supabase.from('daily_fees_asin')
+        .select('asin,currency,fees').gte('date', from).lte('date', yest).range(off, off + 999);
+      if (error) throw new Error(error.message);
+      fees.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+    if (!fees.length) return empty;
+    const units = [];
+    for (let off = 0; ; off += 1000) {
+      const { data, error } = await supabase.from('daily_metrics')
+        .select('asin,units_ca,units_us,revenue_cad,revenue_usd').gte('date', from).lte('date', yest).range(off, off + 999);
+      if (error) throw new Error(error.message);
+      units.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+    const agg = {}; // asin -> { feesCad, feesUsd, unitsCa, unitsUs }
+    let totFeesCad = 0, totFeesUsd = 0, totRevCad = 0, totRevUsd = 0;
+    for (const r of fees) {
+      const a = agg[r.asin] || (agg[r.asin] = { feesCad: 0, feesUsd: 0, unitsCa: 0, unitsUs: 0 });
+      if (r.currency === 'CAD') { a.feesCad += Number(r.fees) || 0; totFeesCad += Number(r.fees) || 0; }
+      else if (r.currency === 'USD') { a.feesUsd += Number(r.fees) || 0; totFeesUsd += Number(r.fees) || 0; }
+    }
+    for (const r of units) {
+      const a = agg[r.asin] || (agg[r.asin] = { feesCad: 0, feesUsd: 0, unitsCa: 0, unitsUs: 0 });
+      a.unitsCa += r.units_ca || 0; a.unitsUs += r.units_us || 0;
+      totRevCad += r.revenue_cad || 0; totRevUsd += r.revenue_usd || 0;
+    }
+    const perAsin = {};
+    for (const [asin, a] of Object.entries(agg)) {
+      perAsin[asin] = {
+        // Need a few units of history for a trustworthy per-unit rate
+        cadPerUnit: a.unitsCa >= 3 && a.feesCad > 0 ? a.feesCad / a.unitsCa : null,
+        usdPerUnit: a.unitsUs >= 3 && a.feesUsd > 0 ? a.feesUsd / a.unitsUs : null,
+      };
+    }
+    const rates = {
+      perAsin,
+      acctPct: {
+        CAD: totRevCad > 0 ? totFeesCad / totRevCad : 0.22,
+        USD: totRevUsd > 0 ? totFeesUsd / totRevUsd : 0.22,
+      },
+    };
+    _feeRatesCache = { at: Date.now(), rates };
+    return rates;
+  } catch (e) {
+    console.warn('[FeeRates] estimation unavailable:', e.message);
+    return empty;
+  }
+}
+
 // Today data — prefers in-memory orders poller state (most current), falls back to
 // daily_metrics (persisted across restarts) when the in-memory state hasn't rebuilt yet.
 // Persistence is written after every poll/rebuild via persistOrdersTodayState().
@@ -2420,6 +2486,32 @@ app.get('/api/metrics/today', async (req, res) => {
   // systematically understate today by whatever hasn't shipped yet.
   const todayState = await ordersPoller.getEstimatedState();
   const { brands } = await loadBrands();
+
+  // Intraday margin inputs: trailing fee rates (estimation) + today's REAL ad
+  // spend (the 2-hourly ads cron writes today's spend_cad/spend_usd into
+  // daily_metrics — it was just never passed through here).
+  const [feeRates, { data: todaySpendRows }] = await Promise.all([
+    getTrailingFeeRates(),
+    supabase.from('daily_metrics').select('asin,spend_cad,spend_usd').eq('date', today),
+  ]);
+  const spendByAsin = {};
+  for (const r of (todaySpendRows || [])) spendByAsin[r.asin] = { cad: r.spend_cad || 0, usd: r.spend_usd || 0 };
+
+  // Estimated fees for one sku: per-unit trailing rate, else account fee-% of
+  // revenue. Marked feesEstimated so the UI renders ~ and explains itself.
+  // Replaced by Amazon-posted reality within 24-48h; refunds excluded intraday.
+  const r2c = v => Math.round(v * 100) / 100;
+  function attachIntradayEconomics(sku, asin, unitsCa, unitsUs, revCad, revUsd) {
+    const pr = feeRates.perAsin[asin] || {};
+    sku.feesCad = r2c(unitsCa > 0 ? (pr.cadPerUnit != null ? unitsCa * pr.cadPerUnit : revCad * feeRates.acctPct.CAD) : 0);
+    sku.feesUsd = r2c(unitsUs > 0 ? (pr.usdPerUnit != null ? unitsUs * pr.usdPerUnit : revUsd * feeRates.acctPct.USD) : 0);
+    sku.feesEstimated = true;
+    sku.refundPostedCad = 0;
+    sku.refundPostedUsd = 0;
+    const sp = spendByAsin[asin];
+    sku.spendCad = sp ? r2c(sp.cad) : 0;
+    sku.spendUsd = sp ? r2c(sp.usd) : 0;
+  }
 
   // Build ASIN lookup — prefer in-memory if populated, else load from daily_metrics
   let byAsin = {};
@@ -2451,7 +2543,7 @@ app.get('/api/metrics/today', async (req, res) => {
       const u = d?.units || 0, ca = d?.unitsCa || 0, us = d?.unitsUs || 0;
       const rc = d?.revenueCad || 0, ru = d?.revenueUsd || 0;
       units += u; unitsCa += ca; unitsUs += us; revCad += rc; revUsd += ru;
-      skus.push({
+      const skuRow = {
         asin,
         units: u,
         unitsCa: ca, unitsUs: us, unitsCad: ca, unitsUsd: us,
@@ -2459,12 +2551,14 @@ app.get('/api/metrics/today', async (req, res) => {
         revenueUsd: Math.round(ru * 100) / 100,
         // Fields not available intraday — frontend shows —
         sessions: null, pageViews: null, buyBox: null, cvr: null,
-        spendCad: null, spendUsd: null, attributedSalesCad: null, attributedSalesUsd: null, acos: null,
+        attributedSalesCad: null, attributedSalesUsd: null, acos: null,
         title: brand.asinTitles?.[asin] || '',
         imageUrl: imagesByAsin[asin] || null,
         marketplaces: [...(ca > 0 ? ['CA'] : []), ...(us > 0 ? ['US'] : [])],
         inventory: null,
-      });
+      };
+      attachIntradayEconomics(skuRow, asin, ca, us, rc, ru);
+      skus.push(skuRow);
     }
     byBrand[brand.id] = {
       summary: {
@@ -2489,16 +2583,18 @@ app.get('/api/metrics/today', async (req, res) => {
     const rc = d?.revenueCad || 0, ru = d?.revenueUsd || 0;
     if (!u && !rc && !ru) continue;
     uUnits += u; uCa += ca; uUs += us; uRevCad += rc; uRevUsd += ru;
-    uSkus.push({
+    const uSkuRow = {
       asin, units: u,
       unitsCa: ca, unitsUs: us, unitsCad: ca, unitsUsd: us,
       revenueCad: Math.round(rc * 100) / 100,
       revenueUsd: Math.round(ru * 100) / 100,
       sessions: null, pageViews: null, buyBox: null, cvr: null,
-      spendCad: null, spendUsd: null, attributedSalesCad: null, attributedSalesUsd: null, acos: null,
+      attributedSalesCad: null, attributedSalesUsd: null, acos: null,
       title: '', imageUrl: imagesByAsin[asin] || null, inventory: null,
       marketplaces: [...(ca > 0 ? ['CA'] : []), ...(us > 0 ? ['US'] : [])],
-    });
+    };
+    attachIntradayEconomics(uSkuRow, asin, ca, us, rc, ru);
+    uSkus.push(uSkuRow);
   }
   if (uSkus.length > 0) {
     byBrand['unknown-brand'] = {

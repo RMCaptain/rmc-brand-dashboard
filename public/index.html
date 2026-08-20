@@ -544,6 +544,7 @@
             const disp = v => (isCA ? getNum(v, 0) : getNum(0, v));
             const feesNative = isCA ? (sku.feesCad ?? null) : (sku.feesUsd ?? null);
             const fees = feesNative != null ? disp(feesNative) : null;
+            const feesEstimated = !!sku.feesEstimated;
             const adSpend = disp(isCA ? (sku.spendCad || 0) : (sku.spendUsd || 0));
             const refunds = disp(isCA ? (sku.refundPostedCad || 0) : (sku.refundPostedUsd || 0));
             const cogsDisp = disp(totalCogs);
@@ -562,7 +563,7 @@
               revenueCad: revCad, revenueUsd: revUsd, revenue: rev,
               sessions: sku.sessions || 0,
               buyBox: sku.buyBox ?? null, cvr: sku.cvr ?? null,
-              inventory, costPerUnit, totalCogs, fees, adSpend, refunds, netProfit, margin,
+              inventory, costPerUnit, totalCogs, fees, feesEstimated, adSpend, refunds, netProfit, margin,
               imageUrl: sku.imageUrl || null
             });
           }
@@ -712,8 +713,10 @@
         const statusColor = s.status === 'active' ? 'text-emerald-400' : s.status === 'inactive' ? 'text-red-400' : 'text-slate-500';
         const npColor = s.netProfit == null ? 'text-slate-600' : s.netProfit >= 0 ? 'text-emerald-400' : 'text-red-400';
         const marginColor = s.margin == null ? 'text-slate-600' : s.margin >= 0 ? 'text-emerald-400' : 'text-red-400';
+        const est = s.feesEstimated;
+        const tilde = est ? '~' : '';
         const npTitle = s.netProfit != null
-          ? `Sales ${fmtN(s.revenue)} − COGS ${fmtN(getNum(s.marketplace === 'CA' ? s.totalCogs : 0, s.marketplace === 'CA' ? 0 : s.totalCogs))} − Fees ${fmtN(s.fees)} − Ads ${fmtN(s.adSpend)} − Refunds ${fmtN(s.refunds)}`
+          ? `Sales ${fmtN(s.revenue)} − COGS ${fmtN(getNum(s.marketplace === 'CA' ? s.totalCogs : 0, s.marketplace === 'CA' ? 0 : s.totalCogs))} − Fees ${tilde}${fmtN(s.fees)} − Ads ${fmtN(s.adSpend)} − Refunds ${fmtN(s.refunds)}${est ? '. Fees estimated from trailing 14-day per-unit rates — replaced with Amazon-posted fees within 24–48h. Refunds excluded intraday.' : ''}`
           : (s.costPerUnit > 0 ? 'No posted-fee data for this period yet' : 'Enter COGS to see net profit');
         const bbColor = s.buyBox == null ? 'text-slate-600' : s.buyBox >= 90 ? 'text-emerald-400' : s.buyBox >= 70 ? 'text-amber-400' : 'text-red-400';
 
@@ -745,10 +748,10 @@
           <td class="px-4 py-3 text-right text-slate-400">${s.inventory.toLocaleString()}</td>
           <td class="px-4 py-3 text-right ${s.costPerUnit > 0 ? 'text-slate-400' : 'text-slate-600'}">${s.costPerUnit > 0 ? fmtN(s.costPerUnit) : '—'}</td>
           <td class="px-4 py-3 text-right ${s.totalCogs > 0 ? 'text-slate-400' : 'text-slate-600'}">${s.costPerUnit > 0 ? fmtN(s.totalCogs) : '—'}</td>
-          <td class="px-4 py-3 text-right ${s.fees != null ? 'text-slate-400' : 'text-slate-600'}">${s.fees != null ? fmtN(s.fees) : '—'}</td>
+          <td class="px-4 py-3 text-right ${s.fees != null ? 'text-slate-400' : 'text-slate-600'}">${s.fees != null ? tilde + fmtN(s.fees) : '—'}</td>
           <td class="px-4 py-3 text-right ${s.adSpend > 0 ? 'text-slate-400' : 'text-slate-600'}">${s.adSpend > 0 ? fmtN(s.adSpend) : '—'}</td>
-          <td class="px-4 py-3 text-right ${npColor} font-medium" title="${npTitle}">${s.netProfit != null ? (s.netProfit < 0 ? '-' : '') + fmtN(s.netProfit) : '—'}</td>
-          <td class="px-4 py-3 text-right ${marginColor}">${s.margin != null ? s.margin.toFixed(1) + '%' : '—'}</td>
+          <td class="px-4 py-3 text-right ${npColor} font-medium" title="${npTitle}">${s.netProfit != null ? tilde + (s.netProfit < 0 ? '-' : '') + fmtN(s.netProfit) : '—'}</td>
+          <td class="px-4 py-3 text-right ${marginColor}">${s.margin != null ? tilde + s.margin.toFixed(1) + '%' : '—'}</td>
         </tr>`;
       }).join('');
 
@@ -864,10 +867,11 @@
           cogsNum = getNum(cogs.cad, cogs.usd);
           // Sum fee/ad/refund components from the brand's skus. Fees stay null
           // (— in the UI) when the range has no posted-fee coverage at all.
-          let fCad = 0, fUsd = 0, feesKnown = false;
+          let fCad = 0, fUsd = 0, feesKnown = false, feesEstimated = false;
           let aCad = 0, aUsd = 0, rCad = 0, rUsd = 0;
           for (const sku of (bm.skus || [])) {
             if (sku.feesCad != null || sku.feesUsd != null) { feesKnown = true; fCad += sku.feesCad || 0; fUsd += sku.feesUsd || 0; }
+            if (sku.feesEstimated) feesEstimated = true;
             aCad += sku.spendCad || 0; aUsd += sku.spendUsd || 0;
             rCad += sku.refundPostedCad || 0; rUsd += sku.refundPostedUsd || 0;
           }
@@ -885,7 +889,7 @@
           }
           buyBox = s.buyBox ?? null;
         }
-        return { brand, s, rev, cogs, cogsNum, fees, adSpend, refunds, netProfit, margin, units, sessions, buyBox };
+        return { brand, s, rev, cogs, cogsNum, fees, feesEstimated, adSpend, refunds, netProfit, margin, units, sessions, buyBox };
       });
 
       brandItems.sort((a, b) => {
@@ -900,7 +904,7 @@
       if (brandPage > brandTotalPages) brandPage = brandTotalPages;
       const paginatedBrands = brandItems.slice((brandPage - 1) * pageSize, brandPage * pageSize);
 
-      tbody.innerHTML = paginatedBrands.map(({ brand, s, rev, cogs, cogsNum, fees, adSpend, refunds, netProfit, margin, units, sessions, buyBox }) => {
+      tbody.innerHTML = paginatedBrands.map(({ brand, s, rev, cogs, cogsNum, fees, feesEstimated, adSpend, refunds, netProfit, margin, units, sessions, buyBox }) => {
         if (!s) {
           return `<tr class="cursor-pointer" onclick="location.href='/brand.html?id=${brand.id}'">
             <td class="px-5 py-3">
@@ -915,8 +919,9 @@
         }
 
         const profitColor = netProfit == null ? 'text-slate-600' : netProfit > 0 ? 'text-emerald-400' : netProfit < 0 ? 'text-red-400' : 'text-slate-400';
+        const bTilde = feesEstimated ? '~' : '';
         const npTitle = netProfit != null
-          ? `Revenue ${fmtDisplay(rev)} − COGS ${fmtDisplay(cogsNum)} − Fees ${fmtDisplay(fees)} − Ads ${fmtDisplay(adSpend)} − Refunds ${fmtDisplay(refunds)}`
+          ? `Revenue ${fmtDisplay(rev)} − COGS ${fmtDisplay(cogsNum)} − Fees ${bTilde}${fmtDisplay(fees)} − Ads ${fmtDisplay(adSpend)} − Refunds ${fmtDisplay(refunds)}${feesEstimated ? '. Fees estimated from trailing 14-day rates — replaced with posted fees within 24–48h.' : ''}`
           : (cogsNum > 0 ? 'No posted-fee data for this period yet' : 'Enter COGS to see net profit');
 
         return `<tr class="brand-row border-b border-slate-800 cursor-pointer" onclick="location.href='/brand.html?id=${brand.id}'">
@@ -930,10 +935,10 @@
           <td class="px-4 py-3 text-right text-slate-200 font-medium">${fmtDisplay(rev)}</td>
           <td class="px-4 py-3 text-right text-slate-400">${(units || 0).toLocaleString()}</td>
           <td class="px-4 py-3 text-right ${cogsNum > 0 ? 'text-slate-400' : 'text-slate-600'}">${cogsNum > 0 ? fmtDisplay(cogsNum) : '—'}</td>
-          <td class="px-4 py-3 text-right ${fees != null ? 'text-slate-400' : 'text-slate-600'}">${fees != null ? fmtDisplay(fees) : '—'}</td>
+          <td class="px-4 py-3 text-right ${fees != null ? 'text-slate-400' : 'text-slate-600'}">${fees != null ? bTilde + fmtDisplay(fees) : '—'}</td>
           <td class="px-4 py-3 text-right ${adSpend > 0 ? 'text-slate-400' : 'text-slate-600'}">${adSpend > 0 ? fmtDisplay(adSpend) : '—'}</td>
-          <td class="px-4 py-3 text-right ${profitColor} font-medium" title="${npTitle}">${netProfit != null ? fmtDisplay(netProfit) : '—'}</td>
-          <td class="px-4 py-3 text-right ${margin != null ? (margin > 0 ? 'text-emerald-400' : 'text-red-400') : 'text-slate-600'}">${margin != null ? margin.toFixed(1) + '%' : '—'}</td>
+          <td class="px-4 py-3 text-right ${profitColor} font-medium" title="${npTitle}">${netProfit != null ? bTilde + fmtDisplay(netProfit) : '—'}</td>
+          <td class="px-4 py-3 text-right ${margin != null ? (margin > 0 ? 'text-emerald-400' : 'text-red-400') : 'text-slate-600'}">${margin != null ? bTilde + margin.toFixed(1) + '%' : '—'}</td>
           <td class="px-4 py-3 text-right text-slate-400">${sessions == null ? '—' : (sessions || 0).toLocaleString()}</td>
           <td class="px-4 py-3 text-right ${buyBox >= 90 ? 'text-emerald-400' : buyBox >= 70 ? 'text-amber-400' : buyBox != null ? 'text-red-400' : 'text-slate-600'}">${buyBox != null ? buyBox.toFixed(1) + '%' : '—'}</td>
         </tr>`;
