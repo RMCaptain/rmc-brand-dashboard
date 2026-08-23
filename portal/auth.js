@@ -161,8 +161,23 @@ async function revokeSession(supabase, rawSession) {
  * deploy (Render), so memory is fine. Caps both per-email and per-IP.
  */
 const _buckets = new Map();
+const _BUCKETS_MAX = 10000; // bound memory: attacker-rotated keys can't grow the map forever
+let _lastSweep = 0;
 function rateLimited(key, max, windowMs) {
   const now = Date.now();
+  // Periodic sweep: drop buckets whose newest hit is older than any window we
+  // use (30 min covers all callers). Without this, one entry per distinct key
+  // was retained forever — attacker-driven unbounded memory growth.
+  if (now - _lastSweep > 5 * 60 * 1000 || _buckets.size > _BUCKETS_MAX) {
+    _lastSweep = now;
+    for (const [k, hits] of _buckets) {
+      if (!hits.length || now - hits[hits.length - 1] > 30 * 60 * 1000) _buckets.delete(k);
+    }
+    // Still oversized after the sweep (active flood): drop oldest wholesale.
+    if (_buckets.size > _BUCKETS_MAX) {
+      for (const k of _buckets.keys()) { _buckets.delete(k); if (_buckets.size <= _BUCKETS_MAX / 2) break; }
+    }
+  }
   const hits = (_buckets.get(key) || []).filter(t => now - t < windowMs);
   if (hits.length >= max) { _buckets.set(key, hits); return true; }
   hits.push(now);

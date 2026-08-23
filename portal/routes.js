@@ -26,10 +26,26 @@ const EXPIRES_MINUTES = Math.round(auth.LOGIN_TOKEN_TTL_MS / 60000);
 const PORTAL_PERIODS = new Set(['lastMonth', 'mtd', 'last7d', 'last30d', 'last90d']);
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
+// Hosts allowed to appear in emailed links. The Host header is
+// attacker-controlled: without this allowlist, POST /api/portal/request-link
+// with Host: evil.example put a genuine single-use login token inside a
+// legitimate-looking RMC email pointing at the attacker's server — one click
+// = account takeover. PORTAL_BASE_URL (env) beats everything when set.
+const ALLOWED_HOSTS = new Set([
+  'app.rockymountainco.ca',
+  'rmc-brand-dashboard-1.onrender.com',
+  ...(process.env.PORTAL_EXTRA_HOSTS ? process.env.PORTAL_EXTRA_HOSTS.split(',').map(h => h.trim().toLowerCase()).filter(Boolean) : []),
+]);
 function baseUrl(req) {
   if (process.env.PORTAL_BASE_URL) return process.env.PORTAL_BASE_URL.replace(/\/$/, '');
-  const proto = req.headers['x-forwarded-proto'] || (req.secure ? 'https' : 'http');
-  return `${proto}://${req.get('host')}`;
+  const host = String(req.get('host') || '').toLowerCase();
+  const isLocal = host.startsWith('localhost') || host.startsWith('127.0.0.1');
+  if (!isLocal && !ALLOWED_HOSTS.has(host)) {
+    console.warn(`[Portal] refusing to build link for unrecognized host '${host}' — using primary`);
+    return 'https://app.rockymountainco.ca';
+  }
+  const proto = isLocal ? 'http' : 'https';
+  return `${proto}://${host}`;
 }
 
 function mountPublic(app, { supabase, loadBrands, generateBrandReportPdf, buildBrandReportDataset, trySelectSummary, express }) {
@@ -82,7 +98,9 @@ function mountPublic(app, { supabase, loadBrands, generateBrandReportPdf, buildB
   app.post('/api/portal/login', json, async (req, res) => {
     try {
       const ident = String(req.body?.identifier || '').trim().toLowerCase();
-      const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || 'unknown';
+      // req.ip only (trust proxy is set in server.js): the leftmost XFF value
+      // is attacker-supplied — rotating it per request defeated the IP bucket.
+      const ip = req.ip || 'unknown';
       if (auth.rateLimited(`pw:${ident}`, 10, 15 * 60 * 1000) ||
           auth.rateLimited(`pwip:${ip}`, 30, 15 * 60 * 1000)) {
         return res.status(429).json({ error: 'Too many attempts — try again in a few minutes.' });
@@ -148,7 +166,7 @@ function mountPublic(app, { supabase, loadBrands, generateBrandReportPdf, buildB
       const reqEmail = String(req.body?.email || '').trim().toLowerCase();
       if (!reqEmail || !reqEmail.includes('@')) return res.json(generic);
 
-      const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || 'unknown';
+      const ip = req.ip || 'unknown'; // trust proxy set; never trust client XFF directly
       if (auth.rateLimited(`email:${reqEmail}`, 5, 15 * 60 * 1000) ||
           auth.rateLimited(`ip:${ip}`, 20, 15 * 60 * 1000)) {
         return res.status(429).json({ error: 'Too many requests — try again in a few minutes.' });
@@ -284,7 +302,11 @@ function mountAdmin(app, { supabase, loadBrands }) {
       const emailAddr = String(req.body?.email || '').trim().toLowerCase();
       const brandId = String(req.body?.brand_id || '').trim();
       const displayName = String(req.body?.display_name || '').trim() || null;
-      if (!emailAddr.includes('@')) return res.status(400).json({ error: 'Valid email required' });
+      // Real shape check, not just includes('@'): the old check accepted HTML
+      // payloads as the local part, which portal-setup rendered via innerHTML.
+      if (!/^[^\s<>"']+@[^\s<>"']+\.[^\s<>"']+$/.test(emailAddr)) {
+        return res.status(400).json({ error: 'Valid email required' });
+      }
       // Username the team hands the brand ("I generate a username for them").
       // Defaults to the brand id. Stored lowercase; login accepts it or email.
       const username = (String(req.body?.username || '').trim() || brandId).toLowerCase();

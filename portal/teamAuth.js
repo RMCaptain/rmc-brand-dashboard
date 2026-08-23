@@ -170,7 +170,16 @@ function mountTeamAuth(app, { supabase, express }) {
 function teamAuthGate({ supabase, basicAuthCheck }) {
   return async function teamAuth(req, res, next) {
     const basicConfigured = !!(process.env.AUTH_USERNAME && process.env.AUTH_PASSWORD);
-    if (!basicConfigured && !googleEnabled()) return next(); // local dev
+    if (!basicConfigured && !googleEnabled()) {
+      // FAIL CLOSED in production: with no auth configured at all, this used
+      // to serve every route (admin included) to anonymous users — one typo'd
+      // env var on Render silently published the whole dashboard.
+      if (process.env.NODE_ENV === 'production') {
+        console.error('[TeamAuth] PRODUCTION with no auth configured (AUTH_USERNAME/AUTH_PASSWORD and GOOGLE_CLIENT_ID all unset) — refusing all requests');
+        return res.status(503).send('Auth not configured');
+      }
+      return next(); // local dev
+    }
 
     if (googleEnabled()) {
       try {

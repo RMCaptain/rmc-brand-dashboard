@@ -60,7 +60,11 @@
         const me = await res.json();
         const who = document.getElementById('who');
         who.style.display = 'block';
-        who.innerHTML = 'Signing in as <strong>' + (me.username || me.email) + '</strong> — ' + me.brandName;
+        // textContent, not innerHTML — identity fields are data, never markup.
+        who.textContent = '';
+        const strong = document.createElement('strong');
+        strong.textContent = me.username || me.email || '';
+        who.append('Signing in as ', strong, ' — ' + (me.brandName || ''));
       } catch { location.href = '/portal/login'; }
     })();
 

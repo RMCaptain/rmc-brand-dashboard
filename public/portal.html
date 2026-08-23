@@ -145,13 +145,14 @@
           box.innerHTML = '<p class="empty">No saved reports yet — your monthly reports will appear here.</p>';
           return;
         }
+        const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
         box.innerHTML = archives.map(a => `
           <div class="archive">
             <div>
-              <div class="label">${a.period_label || (a.period_from + ' – ' + a.period_to)}</div>
+              <div class="label">${esc(a.period_label || (a.period_from + ' – ' + a.period_to))}</div>
               <div class="when">Saved ${new Date(a.generated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</div>
             </div>
-            <button data-from="${a.period_from}" data-to="${a.period_to}" data-label="${(a.period_label || '').replace(/"/g, '')}">Download PDF</button>
+            <button data-from="${esc(a.period_from)}" data-to="${esc(a.period_to)}" data-label="${esc(a.period_label || '')}">Download PDF</button>
           </div>`).join('');
         box.querySelectorAll('button').forEach(btn =>
           btn.addEventListener('click', () =>
