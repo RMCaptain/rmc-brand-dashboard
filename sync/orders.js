@@ -55,6 +55,14 @@ async function fetchOrderItems(token, orderId, attempt = 0) {
     console.warn(`[Orders] fetchOrderItems rate-limited on ${orderId} after retries — order left unmarked for retry`);
     return null;
   }
+  // 5xx/timeout-class errors are transient: return null (like 429) so the
+  // order stays unmarked and retries next poll. Returning [] here marked the
+  // order seen with an empty contribution — its revenue was silently lost
+  // until a full rebuild happened to succeed. 4xx = permanent; keep [].
+  if (res.status >= 500) {
+    console.warn(`[Orders] fetchOrderItems ${res.status} on ${orderId} — left unmarked for retry`);
+    return null;
+  }
   if (res.status !== 200) return [];
   return res.body?.payload?.OrderItems || [];
 }
@@ -224,6 +232,11 @@ async function fetchAndProcess(token, params, mpId, target) {
     }
     if (res.status !== 200) {
       console.warn(`[Orders] Unexpected ${res.status}:`, JSON.stringify(res.body || {}).slice(0, 200));
+      // CRITICAL: mark the pull incomplete. Abandoning pagination mid-list
+      // silently returned a partial order set; downstream, the stale-row
+      // clear then ZEROED every ASIN the missing pages would have produced
+      // (the exact wipe class the Jun-2026 incidents came from).
+      target.listTruncated = true;
       break;
     }
 
@@ -294,6 +307,7 @@ async function rebuildToday() {
   state.seenOrderIds = new Set();
   state.failedOrderIds = new Set();
   state.orderContrib = {};
+  state.listTruncated = false; // fresh rebuild — incompleteness re-detected per pull
   state.skuQueue = new Map();
   state.skuTried = new Set();
   state.estPrice = {};
@@ -477,7 +491,10 @@ async function computeDayFromOrders(pstDate, token = null) {
     estimateMeta: est.meta,
     orderCount: total,
     orderContrib: target.orderContrib,
-    unrecoveredOrders: target.failedOrderIds.size,
+    // Incomplete if any order's items couldn't be fetched OR the order LIST
+    // itself was cut short by a non-200 — either way, absence from this pull
+    // proves nothing and callers must not clear stale rows on it.
+    unrecoveredOrders: target.failedOrderIds.size + (target.listTruncated ? 1 : 0),
   };
 }
 
@@ -660,7 +677,11 @@ async function getEstimatedState() {
     updatedAt:    state.updatedAt,
     byAsin:       est.byAsin,
     estimateMeta: est.meta,
-    asinCount:    Object.keys(est.byAsin).length
+    asinCount:    Object.keys(est.byAsin).length,
+    // True when this state is known-partial (unfetched order items, or the
+    // order list itself was cut short). The persist path must not clear
+    // stale rows on a partial state — absence proves nothing.
+    incomplete:   state.failedOrderIds.size > 0 || !!state.listTruncated,
   };
 }
 

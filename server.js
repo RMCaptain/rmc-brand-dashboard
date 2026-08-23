@@ -31,6 +31,18 @@ const PORT = process.env.PORT || 3000;
 const DATA_DIR = path.join(__dirname, 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
+// Render sits one proxy in front of us: trust it so req.ip reflects the real
+// client (portal rate limiting keys on it) instead of the proxy address.
+app.set('trust proxy', 1);
+
+// Safety net: Express 4 does NOT catch throws from async route handlers — an
+// uncaught rejection would kill the whole process (default Node behavior),
+// taking the in-memory orders-poller state with it. Individual handlers should
+// still try/catch (the request hangs otherwise); this stops the crash.
+process.on('unhandledRejection', (err) => {
+  console.error('[UnhandledRejection]', err?.stack || err);
+});
+
 // Supabase client (service role — server-side only)
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -352,16 +364,25 @@ app.get('/api/brands/:id', async (req, res) => {
   if (brand.asins?.length) {
     const todayPst = pstDateStr();
     const since = pstSubtractDays(todayPst, 14); // most recent 2 weeks is enough
-    const { data: invRows } = await supabase
-      .from('daily_metrics')
-      .select('asin,inventory_inbound,inventory_on_hand,date')
-      .in('asin', brand.asins)
-      .gte('date', since)
-      .order('date', { ascending: false });
-    for (const r of (invRows || [])) {
-      // First (newest) non-null per ASIN wins; subsequent rows ignored.
-      if (inboundByAsin[r.asin] == null && r.inventory_inbound  != null) inboundByAsin[r.asin] = r.inventory_inbound;
-      if (onHandByAsin[r.asin]  == null && r.inventory_on_hand  != null) onHandByAsin[r.asin]  = r.inventory_on_hand;
+    // Paginated + asin tiebreaker: 14 days × N ASINs crosses the 1000-row cap
+    // at ~72 ASINs, and date-only ordering shreds page boundaries. A missed
+    // row here makes the PO Builder skip the on-hand deduction and over-order.
+    for (let off = 0; ; off += 1000) {
+      const { data: invRows, error } = await supabase
+        .from('daily_metrics')
+        .select('asin,inventory_inbound,inventory_on_hand,date')
+        .in('asin', brand.asins)
+        .gte('date', since)
+        .order('date', { ascending: false })
+        .order('asin', { ascending: true })
+        .range(off, off + 999);
+      if (error) { console.warn('[BrandAPI] inventory query failed:', error.message); break; }
+      for (const r of (invRows || [])) {
+        // First (newest) non-null per ASIN wins; subsequent rows ignored.
+        if (inboundByAsin[r.asin] == null && r.inventory_inbound  != null) inboundByAsin[r.asin] = r.inventory_inbound;
+        if (onHandByAsin[r.asin]  == null && r.inventory_on_hand  != null) onHandByAsin[r.asin]  = r.inventory_on_hand;
+      }
+      if (!invRows || invRows.length < 1000) break;
     }
   }
 
@@ -449,7 +470,7 @@ async function reattributeUnknownHistory(asins, toBrandId, tag) {
 
 app.post('/api/brands/:id/asins', async (req, res) => {
   const { asin } = req.body;
-  if (!asin || !/^[A-Z0-9]{10}$/.test(asin.trim().toUpperCase())) {
+  if (!asin || typeof asin !== 'string' || !/^[A-Z0-9]{10}$/.test(asin.trim().toUpperCase())) {
     return res.status(400).json({ error: 'Invalid ASIN format (must be 10 alphanumeric characters)' });
   }
 
@@ -602,7 +623,7 @@ app.put('/api/brands/:id/asins/:asin/upc', async (req, res) => {
   const brand = data.brands.find(b => b.id === req.params.id);
   if (!brand) return res.status(404).json({ error: 'Brand not found' });
   brand.upcs = brand.upcs || {};
-  brand.upcs[req.params.asin.toUpperCase()] = (upc || '').trim();
+  brand.upcs[req.params.asin.toUpperCase()] = String(upc || '').trim();
   await saveBrands(data);
   res.json({ success: true });
 });
@@ -634,13 +655,19 @@ app.post('/api/brands/:id/scrape-upcs', async (req, res) => {
     if (missing.length === 0) return res.json({ updated: 0, message: 'All ASINs already checked' });
 
     const upcMap = await fetchUpcsForAsins(missing);
+    // Re-load AFTER the slow scrape and merge only UPCs — saving the pre-scrape
+    // blob would overwrite any edits made during the minutes it ran.
+    const fresh = await loadBrands();
+    const freshBrand = fresh.brands.find(b => b.id === req.params.id);
+    if (!freshBrand) return res.status(404).json({ error: 'Brand not found' });
+    freshBrand.upcs = freshBrand.upcs || {};
     let updated = 0;
     for (const asin of missing) {
       const upc = upcMap[asin];
-      brand.upcs[asin] = upc || '';  // mark as checked even if not found
+      if (!(asin in freshBrand.upcs) || !freshBrand.upcs[asin]) freshBrand.upcs[asin] = upc || '';
       if (upc) updated++;
     }
-    await saveBrands(data);
+    await saveBrands(fresh);
     res.json({ updated, total: missing.length });
   } catch (err) {
     console.error('[scrape-upcs]', err);
@@ -668,8 +695,11 @@ app.post('/api/scrape-upcs', async (req, res) => {
     const uniqueAsins = [...new Set(toScrape)];
     const upcMap = await fetchUpcsForAsins(uniqueAsins);
 
+    // Re-load AFTER the slow scrape and merge only UPCs (lost-update guard).
+    const fresh = await loadBrands();
     let updated = 0;
-    for (const brand of data.brands) {
+    for (const brand of fresh.brands) {
+      brand.upcs = brand.upcs || {};
       for (const asin of brand.asins) {
         if (!brand.upcs[asin]) {
           brand.upcs[asin] = upcMap[asin] || '';
@@ -677,7 +707,7 @@ app.post('/api/scrape-upcs', async (req, res) => {
         }
       }
     }
-    await saveBrands(data);
+    await saveBrands(fresh);
     res.json({ updated, total: uniqueAsins.length });
   } catch (err) {
     console.error('[scrape-upcs-all]', err);
@@ -816,28 +846,61 @@ async function tryCommitLastPoNumber(expectedCurrent, newValue) {
   return Array.isArray(data) && data.length > 0;
 }
 
+// Update po_settings WITHOUT ever clobbering lastPoNumber. Any full-blob save
+// (settings edit, digest timestamp) that loaded the row before a PO generation
+// committed a new number would write the old counter back — and the next PO
+// would reuse a number already sent to a supplier. This writes guarded by a
+// WHERE on the counter it read; if the counter moved mid-flight, retry fresh.
+async function updatePoSettings(mutate, { retries = 3 } = {}) {
+  for (let i = 0; i < retries; i++) {
+    const current = await loadPoSettings();
+    const next = mutate({ ...current });
+    next.lastPoNumber = current.lastPoNumber; // counter is owned by tryCommitLastPoNumber only
+    const { data, error } = await supabase
+      .from('po_settings')
+      .update({ data: next, updated_at: new Date().toISOString() })
+      .eq('id', 'main')
+      .eq('data->>lastPoNumber', String(current.lastPoNumber))
+      .select();
+    if (error) throw error;
+    if (Array.isArray(data) && data.length > 0) return next;
+    // 0 rows matched: either the counter moved (retry) or the row doesn't exist yet
+    const { data: row } = await supabase.from('po_settings').select('id').eq('id', 'main').maybeSingle();
+    if (!row) { await savePoSettings(next); return next; }
+  }
+  throw new Error('po_settings update kept conflicting with PO number commits — try again');
+}
+
 app.get('/api/po/settings', async (req, res) => {
-  res.json(await loadPoSettings());
+  try {
+    res.json(await loadPoSettings());
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.put('/api/po/settings', async (req, res) => {
   // Only billTo / shipTo are editable here. lastPoNumber is managed atomically inside
   // the PO generation routes via tryCommitLastPoNumber — accepting it from a request body
   // would let any caller rewind or skip the counter.
-  const settings = await loadPoSettings();
-  const { billTo, shipTo } = req.body;
-  if (billTo) settings.billTo = { ...settings.billTo, ...billTo };
-  if (shipTo) settings.shipTo = { ...settings.shipTo, ...shipTo };
-  await savePoSettings(settings);
-  res.json(settings);
+  try {
+    const { billTo, shipTo } = req.body || {};
+    const settings = await updatePoSettings(s => {
+      if (billTo) s.billTo = { ...s.billTo, ...billTo };
+      if (shipTo) s.shipTo = { ...s.shipTo, ...shipTo };
+      return s;
+    });
+    res.json(settings);
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ── Purchase Order CRUD ──────────────────────────────────────────────────────
 
-// Caller identity for audit log. Express's HTTP Basic Auth populates req.user
-// (when the auth middleware extracts it); fall back to anonymous label.
+// Caller identity for the PO audit log. Google team sessions carry an email
+// (req.teamUser, set by teamAuthGate); Basic Auth is a shared credential with
+// no personal identity, so fall back to the frontend-supplied actor header,
+// then a generic 'team' label. (req.user was never set by anything — every
+// audit entry used to read 'anonymous'.)
 function actorFrom(req) {
-  return req.user || req.headers['x-rmc-user'] || 'anonymous';
+  return req.teamUser?.email || req.headers['x-rmc-actor'] || req.headers['x-rmc-user'] || 'team';
 }
 
 // Append an entry to a PO's audit_log JSONB array. Each entry: who, when, what.
@@ -912,14 +975,21 @@ function poDiff(prev, next) {
 app.get('/api/pos', async (req, res) => {
   try {
     const includeDeleted = req.query.includeDeleted === 'true';
-    let q = supabase
-      .from('purchase_orders')
-      .select('id, po_number, brand_id, brand_name, status, created_at, updated_at, deleted_at, deleted_by')
-      .order('updated_at', { ascending: false });
-    if (!includeDeleted) q = q.is('deleted_at', null);
-    const { data, error } = await q;
-    if (error) throw error;
-    res.json(data || []);
+    const out = [];
+    for (let off = 0; ; off += 1000) { // paginated — the saved-PO list truncates past 1000 POs otherwise
+      let q = supabase
+        .from('purchase_orders')
+        .select('id, po_number, brand_id, brand_name, status, created_at, updated_at, deleted_at, deleted_by')
+        .order('updated_at', { ascending: false })
+        .order('id', { ascending: true })
+        .range(off, off + 999);
+      if (!includeDeleted) q = q.is('deleted_at', null);
+      const { data, error } = await q;
+      if (error) throw error;
+      out.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+    res.json(out);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -1008,22 +1078,38 @@ app.get('/api/pos/:id/audit', async (req, res) => {
 // POs in app code (low PO volume; avoids an RPC migration). The PO date lives in
 // data->>'date'; soft-deleted POs are excluded. Bundle-header rows carry $0 so
 // summing extended_cost never double-counts; they're also excluded from units.
+
+// Paginated fetch of non-deleted PO headers — the parent list must page like
+// the lines do, or past 1000 POs the spend reports silently drop rows.
+async function fetchAllPoHeaders(select, status) {
+  const out = [];
+  for (let off = 0; ; off += 1000) {
+    let pq = supabase.from('purchase_orders').select(select)
+      .is('deleted_at', null)
+      .order('id', { ascending: true })
+      .range(off, off + 999);
+    if (status) pq = pq.eq('status', status);
+    const { data, error } = await pq;
+    if (error) throw error;
+    out.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+  return out;
+}
+
+// One shared date accessor so both spend endpoints agree: PO's own date, else
+// created_at (a PO with no data.date must not vanish from one view only).
+const poDateOf = po => po.podate || (po.created_at ? po.created_at.split('T')[0] : null);
+
 app.get('/api/po-report/spend-by-brand', async (req, res) => {
   try {
     const { from, to, status } = req.query;
-
-    let pq = supabase
-      .from('purchase_orders')
-      .select('id, brand_id, brand_name, status, podate:data->>date')
-      .is('deleted_at', null);
-    if (status) pq = pq.eq('status', status);
-    const { data: pos, error: perr } = await pq;
-    if (perr) throw perr;
+    const pos = await fetchAllPoHeaders('id, brand_id, brand_name, status, created_at, podate:data->>date', status);
 
     const inRange = (d) => (!from || (d && d >= from)) && (!to || (d && d <= to));
     const poMeta = new Map();
     for (const po of pos) {
-      if (inRange(po.podate)) poMeta.set(po.id, po);
+      if (inRange(poDateOf(po))) poMeta.set(po.id, po);
     }
 
     // Lines for in-range POs — paginate past Supabase's 1000-row cap.
@@ -1074,17 +1160,10 @@ app.get('/api/po-report/spend', async (req, res) => {
     const { from, to, status } = req.query;
     const groupBy = ['brand', 'month', 'po'].includes(req.query.groupBy) ? req.query.groupBy : 'brand';
 
-    let pq = supabase
-      .from('purchase_orders')
-      .select('id, po_number, brand_id, brand_name, status, created_at, podate:data->>date')
-      .is('deleted_at', null);
-    if (status) pq = pq.eq('status', status);
-    const { data: pos, error: perr } = await pq;
-    if (perr) throw perr;
+    const pos = await fetchAllPoHeaders('id, po_number, brand_id, brand_name, status, created_at, podate:data->>date', status);
 
-    // Prefer the PO's own date; fall back to created_at so a PO with no date
-    // still lands in a month bucket rather than vanishing from the report.
-    const poDateOf = po => po.podate || (po.created_at ? po.created_at.split('T')[0] : null);
+    // poDateOf (shared, above): PO's own date, else created_at — a PO with no
+    // date still lands in a month bucket rather than vanishing.
     const inRange = (d) => (!from || (d && d >= from)) && (!to || (d && d <= to));
     const poMeta = new Map();
     for (const po of pos) {
@@ -1313,7 +1392,7 @@ async function ensureBrowserInstalled() {
 
 async function renderPoPdf({ brand, settings, poNum, lines, status, notes, date, optionalCols }) {
   const puppeteer = require('puppeteer');
-  const poDate = date || new Date().toLocaleDateString('en-CA');
+  const poDate = date || pstDateStr(); // PST business day, not server-UTC (POs created evening MT were stamped tomorrow)
     const statusVal = status || 'Working';
     const isSubmitted = statusVal.toLowerCase() === 'submitted';
     const currency = brand.marketplace === 'US' ? 'USD' : 'CAD';
@@ -1496,25 +1575,31 @@ async function renderPoPdf({ brand, settings, poNum, lines, status, notes, date,
 </html>`;
 
     const execPath = await ensureBrowserInstalled();
-    const browser = await puppeteer.launch({
-      headless: 'new',
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-      executablePath: execPath || (process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath())
-    });
-    const page = await browser.newPage();
-    // 'load' is enough — HTML has no external resources (logo is inlined base64).
-    await page.setContent(html, { waitUntil: 'load' });
-    // Measure actual content height so PDF never clips regardless of item count
-    const contentHeight = await page.evaluate(() => document.body.scrollHeight);
-    const pdfData = await page.pdf({
-      width: '8.5in',
-      height: (contentHeight + 40) + 'px',
-      printBackground: true,
-      margin: { top: '0', right: '0', bottom: '0', left: '0' }
-    });
-    await browser.close();
-
-    return Buffer.isBuffer(pdfData) ? pdfData : Buffer.from(pdfData);
+    // finally-close: any throw after launch (OOM on a big PO, protocol timeout)
+    // used to leak a live headless Chrome per retry — a few failed PDFs could
+    // OOM the Render instance and drop the in-memory orders state.
+    let browser;
+    try {
+      browser = await puppeteer.launch({
+        headless: 'new',
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+        executablePath: execPath || (process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath())
+      });
+      const page = await browser.newPage();
+      // 'load' is enough — HTML has no external resources (logo is inlined base64).
+      await page.setContent(html, { waitUntil: 'load' });
+      // Measure actual content height so PDF never clips regardless of item count
+      const contentHeight = await page.evaluate(() => document.body.scrollHeight);
+      const pdfData = await page.pdf({
+        width: '8.5in',
+        height: (contentHeight + 40) + 'px',
+        printBackground: true,
+        margin: { top: '0', right: '0', bottom: '0', left: '0' }
+      });
+      return Buffer.isBuffer(pdfData) ? pdfData : Buffer.from(pdfData);
+    } finally {
+      if (browser) { try { await browser.close(); } catch {} }
+    }
 }
 
 // Force-save the PO record before returning a generated file. Production guarantee:
@@ -1736,7 +1821,7 @@ async function renderPoExcel({ brand, settings, poNum, lines, status, notes, dat
     dateLabelCell.font = { name: 'Calibri', bold: true, size: 10 };
     dateLabelCell.alignment = right;
     const dateValCell = cell(2, 10);
-    dateValCell.value = safeExcelString(date || new Date().toLocaleDateString('en-CA'));
+    dateValCell.value = safeExcelString(date || pstDateStr());
     dateValCell.font = { name: 'Calibri', bold: true, size: 10 };
     dateValCell.alignment = left;
 
@@ -2042,6 +2127,9 @@ app.post('/api/import/confirm', async (req, res) => {
   const data = await loadBrands();
 
   for (const item of incoming) {
+    if (!item || typeof item.name !== 'string' || !item.name.trim() || !Array.isArray(item.asins)) {
+      return res.status(400).json({ error: 'Each brand needs a name (string) and asins (array)' });
+    }
     const id = item.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     const existing = data.brands.find(b => b.id === id);
 
@@ -2186,11 +2274,19 @@ async function fetchFeesByAsin(fromDate, toDate) {
   return { byAsin, days: days.size };
 }
 
-// Attach per-ASIN fee fields to a sku object. When the range has fee coverage,
-// an ASIN with no row genuinely posted $0 fees (posted-date semantics) — attach
-// zeros. No coverage at all → nulls (frontend renders — , never a fake margin).
-function attachSkuFees(sku, feesData, asin) {
-  const covered = feesData.days > 0;
+// Attach per-ASIN fee fields to a sku object. FULL range coverage is required:
+// with the old any-coverage check, a 31-day window backed by only a few days
+// of daily_fees_asin rows charged the whole window's revenue a fraction of its
+// fees — a real-looking, inflated margin. Full coverage → an ASIN with no row
+// genuinely posted $0 (posted-date semantics). Partial/none → nulls, and the
+// frontend renders — plus the ⚠ coverage warning.
+const FEES_ASIN_EPOCH = '2025-12-31'; // earliest backfilled daily_fees_asin day
+function attachSkuFees(sku, feesData, asin, fromDate, toDate) {
+  const effFrom = fromDate && fromDate > FEES_ASIN_EPOCH ? fromDate : FEES_ASIN_EPOCH;
+  const expected = toDate && toDate >= effFrom
+    ? Math.round((new Date(toDate) - new Date(effFrom)) / 864e5) + 1
+    : 0;
+  const covered = expected > 0 && feesData.days >= expected;
   const fa = feesData.byAsin[asin];
   sku.feesCad         = covered ? (fa?.feesCad   || 0) : null;
   sku.feesUsd         = covered ? (fa?.feesUsd   || 0) : null;
@@ -2209,13 +2305,23 @@ app.get('/api/metrics/yesterday', async (req, res) => {
   const stPreset = pm.presets?.yesterday || {};
   const feesData = await fetchFeesByAsin(yest, yest);
 
-  const { data: rows, error } = await supabase
-    .from('daily_metrics')
-    .select('*')
-    .eq('date', yest);
-
-  if (error) {
-    console.error('[YesterdayAPI] daily_metrics query failed:', error.message);
+  // Paginate the day scan: one row per ASIN per day — past 1000 tracked ASINs
+  // an unpaginated select would silently truncate three aggregations at once.
+  const rows = [];
+  try {
+    for (let off = 0; ; off += 1000) {
+      const { data, error } = await supabase
+        .from('daily_metrics')
+        .select('*')
+        .eq('date', yest)
+        .order('asin', { ascending: true })
+        .range(off, off + 999);
+      if (error) throw new Error(error.message);
+      rows.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+  } catch (err) {
+    console.error('[YesterdayAPI] daily_metrics query failed:', err.message);
     return res.status(500).json({ error: 'Failed to load yesterday data' });
   }
 
@@ -2238,6 +2344,7 @@ app.get('/api/metrics/yesterday', async (req, res) => {
     const stSummary = stBrand.summary || {};
     let units = 0, unitsCa = 0, unitsUs = 0, revCad = 0, revUsd = 0, sessions = 0;
     let spendCad = 0, spendUsd = 0, attrSalesCad = 0, attrSalesUsd = 0;
+    let adClicks = 0, adImpressions = 0, adOrders = 0;
     const buyBoxSamples = [];
     const skus = [];
 
@@ -2260,6 +2367,7 @@ app.get('/api/metrics/yesterday', async (req, res) => {
       units += u; unitsCa += ca; unitsUs += us; revCad += rc; revUsd += ru;
       sessions += sess; spendCad += sCad; spendUsd += sUsd;
       attrSalesCad += aCad; attrSalesUsd += aUsd;
+      adClicks += dm?.ad_clicks || 0; adImpressions += dm?.ad_impressions || 0; adOrders += dm?.ad_orders || 0;
       if (bb != null && bb > 0) buyBoxSamples.push(bb);
 
       const spendTotal = sCad + sUsd * fx.usdToCad;
@@ -2291,7 +2399,7 @@ app.get('/api/metrics/yesterday', async (req, res) => {
                               : (meta.inventory ?? null),
         marketplaces:       [...(ca > 0 ? ['CA'] : []), ...(us > 0 ? ['US'] : [])],
       };
-      attachSkuFees(skuRow, feesData, asin);
+      attachSkuFees(skuRow, feesData, asin, yest, yest);
       skus.push(skuRow);
     }
 
@@ -2307,12 +2415,28 @@ app.get('/api/metrics/yesterday', async (req, res) => {
         sessions:   sessions || null,
         buyBox:     avgBuyBox,
         avgCvr:     (units && sessions) ? Math.round(units / sessions * 10000) / 100 : null,
-        adSummary:  (spendCad + spendUsd) > 0 ? {
-          spendCad:           Math.round(spendCad * 100) / 100,
-          spendUsd:           Math.round(spendUsd * 100) / 100,
-          attributedSalesCad: Math.round(attrSalesCad * 100) / 100,
-          attributedSalesUsd: Math.round(attrSalesUsd * 100) / 100,
-        } : null,
+        adSummary:  (spendCad + spendUsd) > 0 || adClicks > 0 ? (() => {
+          // Full shape, matching buildBrandMetricsForRange — the brand page
+          // reads acos/roas/clicks/ctr/adCvr and used to blank them all out.
+          const totalSpend = spendCad + spendUsd;
+          const totalAttr  = attrSalesCad + attrSalesUsd;
+          const totalRev   = revCad + revUsd;
+          return {
+            spendCad:           Math.round(spendCad * 100) / 100,
+            spendUsd:           Math.round(spendUsd * 100) / 100,
+            attributedSalesCad: Math.round(attrSalesCad * 100) / 100,
+            attributedSalesUsd: Math.round(attrSalesUsd * 100) / 100,
+            clicks:      adClicks,
+            impressions: adImpressions,
+            orders:      adOrders,
+            acos:  (totalSpend > 0 && totalAttr > 0) ? Math.round(totalSpend / totalAttr * 10000) / 100 : null,
+            roas:  totalSpend > 0 ? Math.round(totalAttr / totalSpend * 100) / 100 : null,
+            tacos: totalRev > 0   ? Math.round(totalSpend / totalRev * 10000) / 100 : null,
+            ctr:   adImpressions > 0 ? Math.round(adClicks / adImpressions * 100000) / 1000 : null,
+            cpc:   adClicks > 0   ? Math.round(totalSpend / adClicks * 10000) / 10000 : null,
+            adCvr: adClicks > 0   ? Math.round(adOrders / adClicks * 10000) / 100 : null,
+          };
+        })() : null,
         alerts:     stSummary.alerts ?? {},
       },
       skus,
@@ -2490,12 +2614,25 @@ app.get('/api/metrics/today', async (req, res) => {
   // Intraday margin inputs: trailing fee rates (estimation) + today's REAL ad
   // spend (the 2-hourly ads cron writes today's spend_cad/spend_usd into
   // daily_metrics — it was just never passed through here).
-  const [feeRates, { data: todaySpendRows }] = await Promise.all([
+  async function fetchTodaySpendRows() {
+    // Paginated: one row per ASIN today — latent truncation past 1000 ASINs.
+    const out = [];
+    for (let off = 0; ; off += 1000) {
+      const { data, error } = await supabase.from('daily_metrics')
+        .select('asin,spend_cad,spend_usd').eq('date', today)
+        .order('asin', { ascending: true }).range(off, off + 999);
+      if (error) { console.warn('[TodayAPI] spend query failed:', error.message); break; }
+      out.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+    return out;
+  }
+  const [feeRates, todaySpendRows] = await Promise.all([
     getTrailingFeeRates(),
-    supabase.from('daily_metrics').select('asin,spend_cad,spend_usd').eq('date', today),
+    fetchTodaySpendRows(),
   ]);
   const spendByAsin = {};
-  for (const r of (todaySpendRows || [])) spendByAsin[r.asin] = { cad: r.spend_cad || 0, usd: r.spend_usd || 0 };
+  for (const r of todaySpendRows) spendByAsin[r.asin] = { cad: r.spend_cad || 0, usd: r.spend_usd || 0 };
 
   // Estimated fees for one sku: per-unit trailing rate, else account fee-% of
   // revenue. Marked feesEstimated so the UI renders ~ and explains itself.
@@ -2519,18 +2656,24 @@ app.get('/api/metrics/today', async (req, res) => {
   if (hasInMemory) {
     byAsin = todayState.byAsin;
   } else {
-    const { data: rows } = await supabase
-      .from('daily_metrics')
-      .select('asin,units,units_ca,units_us,revenue_cad,revenue_usd')
-      .eq('date', today);
-    for (const r of (rows || [])) {
-      byAsin[r.asin] = {
-        units:      r.units,
-        unitsCa:    r.units_ca,
-        unitsUs:    r.units_us,
-        revenueCad: r.revenue_cad,
-        revenueUsd: r.revenue_usd,
-      };
+    for (let off = 0; ; off += 1000) { // paginated — latent truncation past 1000 ASINs
+      const { data: rows, error } = await supabase
+        .from('daily_metrics')
+        .select('asin,units,units_ca,units_us,revenue_cad,revenue_usd')
+        .eq('date', today)
+        .order('asin', { ascending: true })
+        .range(off, off + 999);
+      if (error) { console.warn('[TodayAPI] fallback query failed:', error.message); break; }
+      for (const r of (rows || [])) {
+        byAsin[r.asin] = {
+          units:      r.units,
+          unitsCa:    r.units_ca,
+          unitsUs:    r.units_us,
+          revenueCad: r.revenue_cad,
+          revenueUsd: r.revenue_usd,
+        };
+      }
+      if (!rows || rows.length < 1000) break;
     }
   }
 
@@ -2560,13 +2703,24 @@ app.get('/api/metrics/today', async (req, res) => {
       attachIntradayEconomics(skuRow, asin, ca, us, rc, ru);
       skus.push(skuRow);
     }
+    // Brand-level ad rollup from the per-SKU rows (real intraday spend from the
+    // 2-hourly ads cron) — the tiles/brand page read summary.adSummary and used
+    // to show $0/— while the table below showed real per-product numbers.
+    let bSpendCad = 0, bSpendUsd = 0;
+    for (const s of skus) { bSpendCad += s.spendCad || 0; bSpendUsd += s.spendUsd || 0; }
     byBrand[brand.id] = {
       summary: {
         units, unitsCa, unitsUs,
         revenueCad: Math.round(revCad * 100) / 100,
         revenueUsd: Math.round(revUsd * 100) / 100,
         sessions: null, buyBox: null, avgCvr: null,
-        adSummary: null, alerts: {},
+        adSummary: (bSpendCad + bSpendUsd) > 0 ? {
+          spendCad: Math.round(bSpendCad * 100) / 100,
+          spendUsd: Math.round(bSpendUsd * 100) / 100,
+          attributedSalesCad: null, attributedSalesUsd: null,
+          acos: null, roas: null, // attribution lags intraday — never fake it
+        } : null,
+        alerts: {},
       },
       skus,
     };
@@ -2615,6 +2769,24 @@ app.get('/api/metrics/today', async (req, res) => {
     startDate: today,
     endDate:   today,
     brands:    byBrand,
+    // Intraday financials for the dashboard tile: real ad spend + ESTIMATED
+    // Amazon fees (trailing per-unit rates; the same numbers the product rows
+    // show). Without this block the tile claimed $0 fees/$0 ads while the
+    // table below it showed real amounts. Refunds/service fees excluded —
+    // they don't post intraday. financialsEstimated tells the UI to render ~.
+    financials: (() => {
+      let feesCad = 0, feesUsd = 0, adCad = 0, adUsd = 0;
+      for (const bm of Object.values(byBrand)) {
+        for (const s of bm.skus) {
+          feesCad += s.feesCad || 0; feesUsd += s.feesUsd || 0;
+          adCad += s.spendCad || 0;  adUsd += s.spendUsd || 0;
+        }
+      }
+      const r2f = v => Math.round(v * 100) / 100;
+      const side = (fees, ad) => ({ adSpend: r2f(ad), amazonFees: r2f(fees), serviceFees: 0, refundAmount: 0, refundFees: 0, breakdown: {} });
+      return { CAD: side(feesCad, adCad), USD: side(feesUsd, adUsd), refundCount: 0 };
+    })(),
+    financialsEstimated: true,
     // Present only on the in-memory path: how much of today's revenue is
     // estimated (Pending orders priced by the ladder) vs API-reported.
     estimated: hasInMemory ? (todayState.estimateMeta || null) : null,
@@ -2681,16 +2853,40 @@ async function persistOrdersDay(date, byAsin, { allowClear = true } = {}) {
   if (!allowClear) {
     console.warn(`[Orders] ${date}: skipping stale-row clear — rebuild was incomplete`);
   } else try {
-    const keep = rows.map(r => `"${r.asin}"`).join(',');
-    const { data: cleared, error: clearErr } = await supabase
-      .from('daily_metrics')
-      .update({ units: 0, units_ca: 0, units_us: 0, revenue_cad: 0, revenue_usd: 0 })
-      .eq('date', date)
-      .not('asin', 'in', `(${keep})`)
-      .or('units.gt.0,revenue_cad.gt.0,revenue_usd.gt.0')
-      .select('asin');
-    if (clearErr) console.warn(`[Orders] stale-row clear failed for ${date}:`, clearErr.message);
-    else if (cleared?.length) console.log(`[Orders] ${date}: cleared ${cleared.length} stale row(s) (all orders canceled): ${cleared.map(r => r.asin).join(', ')}`);
+    // Compute the stale set in JS and clear in bounded chunks. The old
+    // .not('asin','in',(all-kept-asins)) filter rode the query string — past
+    // ~8KB of ASINs it would 414/truncate and the clear silently stopped
+    // working (stale revenue on canceled-order days, the trimax +9% bug).
+    const keptSet = new Set(rows.map(r => r.asin));
+    const staleAsins = [];
+    for (let off = 0; ; off += 1000) {
+      const { data: existing, error: exErr } = await supabase
+        .from('daily_metrics')
+        .select('asin,units,revenue_cad,revenue_usd')
+        .eq('date', date)
+        .order('asin', { ascending: true })
+        .range(off, off + 999);
+      if (exErr) throw exErr;
+      for (const r of (existing || [])) {
+        if (!keptSet.has(r.asin) && ((r.units || 0) !== 0 || (r.revenue_cad || 0) !== 0 || (r.revenue_usd || 0) !== 0)) {
+          staleAsins.push(r.asin);
+        }
+      }
+      if (!existing || existing.length < 1000) break;
+    }
+    const clearedAsins = [];
+    for (let i = 0; i < staleAsins.length; i += 200) {
+      const chunk = staleAsins.slice(i, i + 200);
+      const { data: cleared, error: clearErr } = await supabase
+        .from('daily_metrics')
+        .update({ units: 0, units_ca: 0, units_us: 0, revenue_cad: 0, revenue_usd: 0 })
+        .eq('date', date)
+        .in('asin', chunk)
+        .select('asin');
+      if (clearErr) { console.warn(`[Orders] stale-row clear failed for ${date}:`, clearErr.message); break; }
+      for (const r of (cleared || [])) clearedAsins.push(r.asin);
+    }
+    if (clearedAsins.length) console.log(`[Orders] ${date}: cleared ${clearedAsins.length} stale row(s) (all orders canceled): ${clearedAsins.join(', ')}`);
   } catch (e) { console.warn(`[Orders] stale-row clear exception for ${date}:`, e.message); }
 
   const metricsMp = require('./sync/metricsMp');
@@ -2714,7 +2910,10 @@ async function persistOrdersTodayState() {
       console.warn(`[Orders] Skipping persist — state.date=${st.date} but today=${today} (stale state, rollover pending)`);
       return;
     }
-    const n = await persistOrdersDay(st.date, st.byAsin);
+    // allowClear only on a COMPLETE state: a rate-limited/truncated rebuild
+    // resolving "successfully" with a partial byAsin used to zero today's
+    // revenue for every ASIN it failed to re-fetch.
+    const n = await persistOrdersDay(st.date, st.byAsin, { allowClear: !st.incomplete });
     if (n > 0) console.log(`[Orders] Persisted ${n} today rows for ${st.date}`);
   } catch (e) {
     console.warn('[Orders] persist exception:', e.message);
@@ -3077,11 +3276,21 @@ async function loadSnapshots(profileFilter) {
 app.get('/api/ads/search-terms', async (req, res) => {
   try {
     const { brand, profile } = req.query;
-    let q = supabase.from('ads_search_terms').select('*').order('cost', { ascending: false }).limit(10000);
-    if (profile) q = q.eq('profile', String(profile).toUpperCase());
-    const { data, error } = await q;
-    if (error) throw new Error(error.message);
-    let rows = data || [];
+    // Paginate: PostgREST caps every response at 1000 rows regardless of
+    // .limit(10000) — a multi-campaign 30-day table is 5k+ rows, and cost-DESC
+    // truncation made small brands read as "no search terms".
+    const rowsAll = [];
+    for (let off = 0; off < 50000; off += 1000) {
+      let q = supabase.from('ads_search_terms').select('*')
+        .order('cost', { ascending: false }).order('id', { ascending: true })
+        .range(off, off + 999);
+      if (profile) q = q.eq('profile', String(profile).toUpperCase());
+      const { data, error } = await q;
+      if (error) throw new Error(error.message);
+      rowsAll.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+    let rows = rowsAll;
     let brandFilter = null;
     if (brand) {
       const { brands } = await loadBrands();
@@ -3496,7 +3705,7 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
         sku.supplierName = supplierName || null;
         sku.amazonTitle  = meta.title || brand.asinTitles?.[asin] || '';
         sku.imageUrl = imagesByAsin[asin] || meta.imageUrl || null;
-        attachSkuFees(sku, feesData, asin);
+        attachSkuFees(sku, feesData, asin, from, to);
         skus.push(sku);
         bUnits += a.units; bUnitsCa += a.units_ca; bUnitsUs += a.units_us;
         bRevCad += a.revenue_cad; bRevUsd += a.revenue_usd;
@@ -4088,8 +4297,13 @@ function resolveReportPeriod(query = {}) {
   }
 
   const preset = query.period || 'lastMonth';
-  const now    = new Date();
-  const y = now.getUTCFullYear(), m = now.getUTCMonth(), d = now.getUTCDate();
+  // PST calendar, not UTC: every daily_metrics date is a PST day. With UTC
+  // parts, the 16:00-24:00 PST window (when UTC is a day ahead) shifted every
+  // rolling preset by a day, made MTD read ~$0 at month-end, and rolled the
+  // default lastMonth report a month early for the last hours of each month —
+  // then froze the wrong period into saved snapshots.
+  const [y, mHuman, d] = pstDateStr().split('-').map(Number);
+  const m = mHuman - 1; // 0-based month for the utc() calendar helper
 
   if (preset === 'lastMonth') {
     // Full previous calendar month; compare to the month before that.
@@ -4110,12 +4324,12 @@ function resolveReportPeriod(query = {}) {
     return { from, to, compFrom, compTo, preset };
   }
 
-  // Rolling windows, ending yesterday (today is always partial).
+  // Rolling windows, ending PST-yesterday (today is always partial).
   const days = REPORT_ROLLING_DAYS[preset] || 30;
-  const to       = fmtISO(new Date(Date.now() - msDay));
-  const from     = fmtISO(new Date(new Date(to) - (days - 1) * msDay));
-  const compTo   = fmtISO(new Date(new Date(from) - msDay));
-  const compFrom = fmtISO(new Date(new Date(compTo) - (days - 1) * msDay));
+  const to       = pstSubtractDays(pstDateStr(), 1);
+  const from     = pstSubtractDays(to, days - 1);
+  const compTo   = pstSubtractDays(from, 1);
+  const compFrom = pstSubtractDays(compTo, days - 1);
   return { from, to, compFrom, compTo, preset };
 }
 
@@ -4536,13 +4750,16 @@ function resolveSummaryRange(req) {
 // GET — returns cached summary or null if none exists yet.
 app.get('/api/brand-report-summary/:brandId', async (req, res) => {
   const { brandId } = req.params;
-  const { from, to } = resolveSummaryRange(req);
+  // resolveSummaryRange throws {status:400} on bad params — it MUST be inside
+  // the try. Express 4 doesn't catch async throws: outside the try this was a
+  // hung request AND a process-killing unhandled rejection.
   try {
+    const { from, to } = resolveSummaryRange(req);
     const row = await trySelectSummary(brandId, from, to);
     res.json({ brand_id: brandId, period_from: from, period_to: to, ...(row || { summary_text: null, edited: false }) });
   } catch (err) {
     console.error('[Summary] GET error:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
@@ -4550,10 +4767,10 @@ app.get('/api/brand-report-summary/:brandId', async (req, res) => {
 // over a previously-saved one (caution: clobbers edited content).
 app.post('/api/brand-report-summary/:brandId', async (req, res) => {
   const { brandId } = req.params;
-  const { from, to } = resolveSummaryRange(req);
   const force = req.query.force === 'true';
 
   try {
+    const { from, to } = resolveSummaryRange(req); // throws {status:400} — keep inside try
     // Respect edited cache unless force=true
     if (!force) {
       const cached = await trySelectSummary(brandId, from, to);
@@ -4591,7 +4808,7 @@ app.post('/api/brand-report-summary/:brandId', async (req, res) => {
     res.json({ brand_id: brandId, period_from: from, period_to: to, summary_text: text, edited: false, generated_at: now, updated_at: now });
   } catch (err) {
     console.error('[Summary] POST error:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
@@ -4599,10 +4816,10 @@ app.post('/api/brand-report-summary/:brandId', async (req, res) => {
 // force=true won't clobber it.
 app.put('/api/brand-report-summary/:brandId', async (req, res) => {
   const { brandId } = req.params;
-  const { from, to } = resolveSummaryRange(req);
   const text = (req.body || {}).summary_text;
   if (typeof text !== 'string') return res.status(400).json({ error: 'summary_text (string) required in body' });
   try {
+    const { from, to } = resolveSummaryRange(req); // throws {status:400} — keep inside try
     const now = new Date().toISOString();
     await trySaveSummary({
       brand_id: brandId, period_from: from, period_to: to,
@@ -4611,7 +4828,7 @@ app.put('/api/brand-report-summary/:brandId', async (req, res) => {
     res.json({ brand_id: brandId, period_from: from, period_to: to, summary_text: text, edited: true, updated_at: now });
   } catch (err) {
     console.error('[Summary] PUT error:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
@@ -4925,7 +5142,7 @@ app.get('/api/report-data/:brandId', async (req, res) => {
     const fmtISO = d => d.toISOString().split('T')[0];
     const fmtLabel = s => new Date(s + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
-    const todayStr = fmtISO(new Date());
+    const todayStr = pstDateStr(); // PST day — daily_metrics dates are PST, UTC default shifted the window in the evening
     const toStr    = req.query.to   || todayStr;
     const fromStr  = req.query.from || fmtISO(new Date(new Date(toStr) - 29 * msDay));
 
@@ -5096,7 +5313,7 @@ app.get('/api/report-ads/:brandId', async (req, res) => {
   const { brandId } = req.params;
   const msDay = 86400000;
   const fmtISO = d => d.toISOString().split('T')[0];
-  const todayStr = fmtISO(new Date());
+  const todayStr = pstDateStr(); // PST day, matching daily_metrics keys
   const toStr   = req.query.to   || todayStr;
   const fromStr = req.query.from || fmtISO(new Date(new Date(toStr) - 29 * msDay));
 
@@ -5517,7 +5734,7 @@ app.post('/api/health/digest', async (req, res) => {
       dashboardUrl: process.env.DASHBOARD_URL || 'http://localhost:3000/brands.html'
     });
     if (result.posted) {
-      await savePoSettings({ ...settings, lastDigestAt: new Date().toISOString() });
+      await updatePoSettings(s => ({ ...s, lastDigestAt: new Date().toISOString() }));
     }
     res.json({ ...result, summary: report.summary });
   } catch (err) {
@@ -5995,17 +6212,23 @@ async function runFullSync(tag = 'Sync') {
     // so we don't block the core S&T sync on them. They'll patch preset-metrics when done.
     setImmediate(() => backgroundUpdateFinancials(tag));
 
-    // Scrape UPCs for any ASINs not yet checked
-    const freshForUpc = await loadBrands();
+    // Scrape UPCs for any ASINs not yet checked.
+    // LOST-UPDATE GUARD: the scrape takes minutes. Saving the blob we loaded
+    // BEFORE it would overwrite any edit made meanwhile (COGS uploads, ASIN
+    // remaps). So: scrape first, then re-load FRESH and merge only the upcs
+    // this pass produced — same discipline as saveSyncResults.
+    const upcScan = await loadBrands();
     const missingUpcs = [];
-    for (const b of freshForUpc.brands) {
-      b.upcs = b.upcs || {};
-      for (const asin of b.asins) { if (!(asin in b.upcs)) missingUpcs.push(asin); }
+    for (const b of upcScan.brands) {
+      const upcs = b.upcs || {};
+      for (const asin of b.asins) { if (!(asin in upcs)) missingUpcs.push(asin); }
     }
     if (missingUpcs.length > 0) {
       const { fetchUpcsForAsins } = require('./sync/amazon');
       const upcMap = await fetchUpcsForAsins([...new Set(missingUpcs)]);
+      const freshForUpc = await loadBrands(); // re-read AFTER the slow scrape
       for (const b of freshForUpc.brands) {
+        b.upcs = b.upcs || {};
         for (const asin of b.asins) { if (!(asin in b.upcs)) b.upcs[asin] = upcMap[asin] || ''; }
       }
       await saveBrands(freshForUpc);
@@ -6014,10 +6237,22 @@ async function runFullSync(tag = 'Sync') {
 
     // Listing health enrichment — buy box owners, content snapshots, variations.
     // Mutates brands.buyBoxOwners / listingSnapshots / recentAlerts in place.
+    // LOST-UPDATE GUARD: enrichment is the longest blob window in the file
+    // (minutes of per-ASIN API calls). Enrich a working copy, then re-load
+    // FRESH and graft only the health-owned fields onto it, so a bulk COGS
+    // upload landing mid-enrichment isn't wiped by the save.
     try {
       const { enrichListingHealth, scrapeSellerNames } = require('./sync/amazon');
-      const freshForHealth = await loadBrands();
-      await enrichListingHealth(freshForHealth.brands);
+      const healthWork = await loadBrands();
+      await enrichListingHealth(healthWork.brands);
+      const HEALTH_FIELDS = ['buyBoxOwners', 'buyBoxOwnerHistory', 'listingSnapshots', 'recentAlerts', 'strandedInventory'];
+      const freshForHealth = await loadBrands(); // re-read AFTER the slow enrichment
+      const workById = Object.fromEntries(healthWork.brands.map(b => [b.id, b]));
+      for (const b of freshForHealth.brands) {
+        const w = workById[b.id];
+        if (!w) continue;
+        for (const f of HEALTH_FIELDS) { if (w[f] !== undefined) b[f] = w[f]; }
+      }
       await saveBrands(freshForHealth);
       console.log(`[${tag}] Listing health enrichment complete`);
 
@@ -6158,7 +6393,7 @@ function scheduleDailySync() {
           dashboardUrl: process.env.DASHBOARD_URL || 'http://localhost:3000/brands.html'
         });
         if (result.posted) {
-          await savePoSettings({ ...settings, lastDigestAt: new Date().toISOString() });
+          await updatePoSettings(s => ({ ...s, lastDigestAt: new Date().toISOString() }));
         }
       } catch (err) {
         console.error('[SlackDigest] cron error:', err.message);
@@ -6195,7 +6430,11 @@ function scheduleDailySync() {
   // their day was finalized vanish from every Pending..Shipped query, leaving
   // phantom revenue in daily_metrics. Ask Amazon for anything canceled in the
   // last 48h (24h cadence + overlap) and re-finalize just the affected days.
-  cron.schedule('0 9 * * *', async () => {
+  // 09:40, not 09:00 — three jobs used to fire at 0 9 * * * on the same SP-API
+  // pool (full sync + this sweep + audit); the resulting 429/503 storm was the
+  // trigger for partial order pulls. Staggered so the sweep runs after the 9am
+  // sync's heaviest phase.
+  cron.schedule('40 9 * * *', async () => {
     if (process.env.SYNC_ENABLED !== 'true') return;
     try {
       const { dates, count } = await ordersPoller.fetchCanceledOrderDates(48);
@@ -6331,10 +6570,10 @@ function scheduleDailySync() {
     })().catch(err => console.warn('[Refunds] cron error:', err.message));
   });
 
-  // Daily data-integrity audit: 9am UTC (after 8:30 finalize). Deterministic checks
-  // + optional Claude review, posts to Slack.
-  cron.schedule('0 9 * * *', () => {
-    console.log('[Audit] 9am UTC cron fired');
+  // Daily data-integrity audit: 09:50 UTC (after the 8:30 finalize and clear of
+  // the 9:00 full sync + 9:40 cancel sweep — no longer stacked on 0 9 * * *).
+  cron.schedule('50 9 * * *', () => {
+    console.log('[Audit] 9:50am UTC cron fired');
     const { runDailyAudit } = require('./audit');
     runDailyAudit(supabase)
       .catch(err => console.warn('[Audit] cron error:', err.message));
