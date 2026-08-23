@@ -859,7 +859,7 @@
       const brandItems = brandsData.map(brand => {
         const bm = preset?.brands?.[brand.id];
         const s = bm?.summary;
-        let rev = 0, cogsNum = 0, fees = null, adSpend = 0, refunds = 0, netProfit = null, margin = null,
+        let rev = 0, cogsNum = 0, fees = null, feesEstimated = false, adSpend = 0, refunds = 0, netProfit = null, margin = null,
             units = 0, sessions = 0, buyBox = null, cogs = { cad: 0, usd: 0 };
         if (s) {
           cogs = calcBrandCogs(brand, getActiveTableData());
@@ -867,7 +867,7 @@
           cogsNum = getNum(cogs.cad, cogs.usd);
           // Sum fee/ad/refund components from the brand's skus. Fees stay null
           // (— in the UI) when the range has no posted-fee coverage at all.
-          let fCad = 0, fUsd = 0, feesKnown = false, feesEstimated = false;
+          let fCad = 0, fUsd = 0, feesKnown = false;
           let aCad = 0, aUsd = 0, rCad = 0, rUsd = 0;
           for (const sku of (bm.skus || [])) {
             if (sku.feesCad != null || sku.feesUsd != null) { feesKnown = true; fCad += sku.feesCad || 0; fUsd += sku.feesUsd || 0; }

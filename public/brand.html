@@ -540,7 +540,7 @@
         const scBase = isCA ? 'https://sellercentral.amazon.ca' : 'https://sellercentral.amazon.com';
         row.innerHTML = [
           m.alerts.suppressedListings > 0
-            ? `<a href="${scBase}/fixyourproducts" target="_blank" rel="noopener"
+            ? `<a href="${scBase}/inventory?viewId=SUPPRESSED" target="_blank" rel="noopener"
                 class="flex items-center gap-2 bg-red-900/30 border border-red-800 rounded-lg px-4 py-2 text-sm text-red-400 hover:bg-red-900/50 transition-colors">
                 <span class="font-semibold">${m.alerts.suppressedListings}</span>
                 suppressed listing${m.alerts.suppressedListings > 1 ? 's' : ''}
