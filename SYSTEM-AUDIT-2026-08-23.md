@@ -9,25 +9,30 @@ plus the multi-marketplace Phase-2 checklist. Triage into the Notion Build Log.
 
 ## Needs Mike (can't be closed from the repo)
 
-1. **MCP token rotation (HIGH).** `mcp/mcp-server.js` ships a committed fallback
-   token that grants the full team read surface (all brands' revenue, ads,
-   backend keywords) to anyone with repo access, no login, no audit trail.
-   Steps: generate a new 48-hex token → set `MCP_TOKEN` in Render env → update
-   the claude.ai connector URL → then delete the code fallback (ask Claude).
-   Not removed unilaterally because it would break the team's live connector.
-2. **Promotions role.** The Promotions API returns 403 — the SP-API app lacks
-   the Promotions role (Seller Central → Apps → your app → edit permissions).
-   The Promos column stays empty until granted. (Code bug also fixed: the
-   response envelope was misread, so the column would have been empty even with
-   the role.)
+1. ~~**MCP token rotation (HIGH).**~~ **DONE 2026-08-24**: token rotated via
+   Render env + claude.ai connector, code fallback removed (`dc458a8`),
+   verified old token 401s and new token 200s on both hosts.
+2. **Promotions role — BLOCKED on Developer Central access.** The Promotions
+   API returns 403 (role missing). Attempting the role edit hits "Access
+   required" on the current Seller Central login: the developer registration
+   lives under a different login/permission. Resolve where the SP-API app's
+   developer profile actually lives (likely the primary account holder user or
+   the US marketplace login), grant the current user the Develop-Apps
+   permission, then: enable the Promotions role → re-authorize → rotate
+   SP_API_REFRESH_TOKEN in Render + both .envs. Until then SP_API_REFRESH_TOKEN
+   stays on the current (valid) token and the Promos column stays empty. (Code
+   envelope bug already fixed.)
 3. **Team data mapping** (integrity checks, recurring): 8 unmapped ASINs carry
    ~$2.5k/30d revenue (top: B0GLZ1448F $1,335); ~6 bundle/set SKUs carry
    ~$930/7d of fees unattributed; COGS gaps: big-league-chew 57%, viva 75%,
    trimax 89%, zest + general-wholesale 0%.
 4. **Optional:** run `sql/drop-ntb-columns.sql` (dead columns); configure
-   `RESEND_API_KEY` before real portal onboarding (Mike deferred 2026-08-23);
-   set `PORTAL_BASE_URL` in Render (belt-and-braces on top of the new host
-   allowlist); add `DATABASE_URL` to Render + this machine's .env.
+   `RESEND_API_KEY` before real portal onboarding (Mike deferred 2026-08-23).
+   ~~PORTAL_BASE_URL~~ + ~~DATABASE_URL (Render)~~ **DONE 2026-08-24** — boot
+   migrations verified live on deploy. This laptop's .env still lacks
+   DATABASE_URL; the OTHER machine's .env now holds the OLD (reset) Supabase
+   db password — both need the new value. Anything else holding the old db
+   password (psql configs, n8n, teammates) is broken until updated.
 
 ## Known-open (deliberately deferred, roughly by priority)
 
