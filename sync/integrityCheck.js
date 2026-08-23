@@ -56,7 +56,7 @@ async function runIntegrityChecks({ supabase, loadBrands }) {
   const from30 = pstSubtractDays(yesterday, 29);
 
   const wide = await fetchAll(supabase, 'daily_metrics',
-    'date,asin,brand_id,units,units_ca,units_us,revenue_cad,revenue_usd,spend_cad,spend_usd,refund_amount_cad,refund_amount_usd',
+    'date,asin,brand_id,units,units_ca,units_us,revenue_cad,revenue_usd,spend_cad,spend_usd,refund_amount_cad,refund_amount_usd,attributed_sales_cad,attributed_sales_usd',
     from30, yesterday);
 
   // freshness — yesterday must have real revenue
@@ -80,25 +80,27 @@ async function runIntegrityChecks({ supabase, loadBrands }) {
 
   // mp_mirror — wide vs long sums by currency over the 30-day window
   const mp = await fetchAll(supabase, 'daily_metrics_mp',
-    'date,currency,units,revenue,ad_spend,refund_amount', from30, yesterday, ['asin', 'mp_id']);
-  const wideSum = { CAD: { units: 0, revenue: 0, ad_spend: 0, refund_amount: 0 },
-                    USD: { units: 0, revenue: 0, ad_spend: 0, refund_amount: 0 } };
+    'date,currency,units,revenue,ad_spend,ad_attributed_sales,refund_amount', from30, yesterday, ['asin', 'mp_id']);
+  const wideSum = { CAD: { units: 0, revenue: 0, ad_spend: 0, ad_attributed_sales: 0, refund_amount: 0 },
+                    USD: { units: 0, revenue: 0, ad_spend: 0, ad_attributed_sales: 0, refund_amount: 0 } };
   for (const r of wide) {
     wideSum.CAD.units += num(r.units_ca);           wideSum.USD.units += num(r.units_us);
     wideSum.CAD.revenue += num(r.revenue_cad);      wideSum.USD.revenue += num(r.revenue_usd);
     wideSum.CAD.ad_spend += num(r.spend_cad);       wideSum.USD.ad_spend += num(r.spend_usd);
+    wideSum.CAD.ad_attributed_sales += num(r.attributed_sales_cad); wideSum.USD.ad_attributed_sales += num(r.attributed_sales_usd);
     wideSum.CAD.refund_amount += num(r.refund_amount_cad); wideSum.USD.refund_amount += num(r.refund_amount_usd);
   }
-  const mpSum = { CAD: { units: 0, revenue: 0, ad_spend: 0, refund_amount: 0 },
-                  USD: { units: 0, revenue: 0, ad_spend: 0, refund_amount: 0 } };
+  const mpSum = { CAD: { units: 0, revenue: 0, ad_spend: 0, ad_attributed_sales: 0, refund_amount: 0 },
+                  USD: { units: 0, revenue: 0, ad_spend: 0, ad_attributed_sales: 0, refund_amount: 0 } };
   for (const r of mp) {
     const side = mpSum[r.currency];
     if (!side) continue;
     side.units += num(r.units); side.revenue += num(r.revenue);
-    side.ad_spend += num(r.ad_spend); side.refund_amount += num(r.refund_amount);
+    side.ad_spend += num(r.ad_spend); side.ad_attributed_sales += num(r.ad_attributed_sales);
+    side.refund_amount += num(r.refund_amount);
   }
   for (const cur of ['CAD', 'USD']) {
-    for (const metric of ['units', 'revenue', 'ad_spend', 'refund_amount']) {
+    for (const metric of ['units', 'revenue', 'ad_spend', 'ad_attributed_sales', 'refund_amount']) {
       const w = wideSum[cur][metric], m = mpSum[cur][metric];
       const tol = metric === 'units' ? 0 : MONEY_TOL;
       if (Math.abs(w - m) > tol) {

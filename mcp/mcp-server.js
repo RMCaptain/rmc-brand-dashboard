@@ -20,10 +20,14 @@ const SUPPORTED_PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 // Tool results land in a chat context window — clamp anything huge.
 const MAX_RESULT_CHARS = 400000;
 
+// Set by mountMcp: per-boot internal token replaces the Basic header so the
+// bridge keeps working when TEAM_BASIC_AUTH=off.
+let _internalToken = null;
 function localApi(pathname) {
   const port = process.env.PORT || 3000;
   const headers = {};
-  if (process.env.AUTH_USERNAME && process.env.AUTH_PASSWORD) {
+  if (_internalToken) headers['x-internal-token'] = _internalToken;
+  else if (process.env.AUTH_USERNAME && process.env.AUTH_PASSWORD) {
     headers.Authorization = 'Basic ' +
       Buffer.from(`${process.env.AUTH_USERNAME}:${process.env.AUTH_PASSWORD}`).toString('base64');
   }
@@ -50,7 +54,7 @@ const TOOLS = [
     description: 'List all RMC brands with their ids (use the id in every other tool). Returns id, name, marketplace per brand.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     handler: async () => {
-      const data = await localApi('/api/brands?preset=30d');
+      const data = await localApi('/api/brands?preset=last30d'); // '30d' was never a valid preset key
       const brands = (data.brands || []).map(b => ({ id: b.id, name: b.name, marketplace: b.marketplace || 'CA' }));
       return {
         lastSync: data.lastSync,
@@ -201,7 +205,8 @@ async function handleMessage(msg) {
   }
 }
 
-function mountMcp(app) {
+function mountMcp(app, { internalToken } = {}) {
+  _internalToken = internalToken || null;
   const path = `/mcp/${TOKEN}`;
 
   app.post(path, express.json({ limit: '2mb' }), async (req, res) => {

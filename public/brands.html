@@ -403,6 +403,7 @@
                 <div class="flex flex-wrap gap-1 justify-end">${alertBadges}</div>
               </div>
               ${m ? `
+              ${m.carriedOver ? '<p class="text-xs mb-2" style="color:var(--warn,#f59e0b)" title="No rows in this window — showing the last data this brand had">⚠ cached — no data in this period</p>' : ''}
               <div class="grid grid-cols-2 gap-3 mb-4">
                 <div><p class="text-xs mb-0.5" style="color:var(--text-3)">Revenue</p><p class="text-lg font-bold" style="color:var(--text)">${fmt(m.revenueCad, m.revenueUsd)}</p></div>
                 <div><p class="text-xs mb-0.5" style="color:var(--text-3)">Units Sold</p><p class="text-lg font-bold" style="color:var(--text)">${(m.units || 0).toLocaleString()}</p></div>

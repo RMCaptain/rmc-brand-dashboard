@@ -56,12 +56,34 @@ let syncState = { status: 'idle', lastSync: null, error: null };
 // rather than only in a log line.
 let presetRebuildState = { ok: null, at: null, error: null };
 
-app.use(cors());
+// CORS restricted to our own origins (was a blanket `*`, which made the
+// no-cookie MCP endpoint script-readable from any origin and answered OPTIONS
+// for every path pre-auth). Same-origin pages don't need CORS at all; the
+// claude.ai MCP connector calls server-side, where CORS doesn't apply.
+app.use(cors({
+  origin: ['https://app.rockymountainco.ca', 'https://rmc-brand-dashboard-1.onrender.com',
+           /^http:\/\/localhost(:\d+)?$/, /^http:\/\/127\.0\.0\.1(:\d+)?$/],
+}));
+
+// Baseline security headers. No full CSP yet — the pages use inline scripts
+// throughout; revisit alongside a templating pass.
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  next();
+});
 
 // Remote MCP connector for claude.ai team chats (read-only dashboard tools).
 // Mounted BEFORE basicAuth: claude.ai can't send Basic Auth, so the secret URL
 // path is the credential. See mcp/mcp-server.js.
-require('./mcp/mcp-server').mountMcp(app);
+// Per-boot internal API token: loopback callers (MCP bridge, AI-summary
+// dataset fetch, Puppeteer PDF render) authenticate with this instead of the
+// shared Basic password, so setting TEAM_BASIC_AUTH=off no longer breaks them.
+// Never leaves the process; regenerated every boot.
+const INTERNAL_API_TOKEN = require('crypto').randomBytes(32).toString('hex');
+
+require('./mcp/mcp-server').mountMcp(app, { internalToken: INTERNAL_API_TOKEN });
 
 // OAuth discovery probes from claude.ai's connector setup must get a clean 404,
 // not basicAuth's 401 — a 401 here makes claude.ai assume the MCP server is
@@ -123,7 +145,7 @@ teamAuth.mountTeamAuth(app, { supabase, express });
 app.get('/team-login.html', (req, res) => res.sendFile(path.join(__dirname, 'public', 'team-login.html')));
 app.get('/rmc-logo.png',    (req, res) => res.sendFile(path.join(__dirname, 'public', 'rmc-logo.png')));
 
-app.use(teamAuth.teamAuthGate({ supabase, basicAuthCheck: basicAuthOk }));
+app.use(teamAuth.teamAuthGate({ supabase, basicAuthCheck: basicAuthOk, internalToken: INTERNAL_API_TOKEN }));
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -3104,7 +3126,24 @@ function adsDateChunks(from, to) {
   return chunks;
 }
 
+// In-process lock: the 9:10 30-day run bakes reports serially and can overrun
+// the next 2-hourly refresh — two concurrent runs interleaved writes on the
+// same rows and the daily_brand_ads delete/insert pairs.
+let _adsDailyRunning = false;
 async function syncDailyAdSpend({ windowDays = 30, includeToday = true } = {}) {
+  if (_adsDailyRunning) {
+    console.warn('[AdsDaily] previous run still in progress — skipping this trigger');
+    return;
+  }
+  _adsDailyRunning = true;
+  try {
+    return await _syncDailyAdSpendInner({ windowDays, includeToday });
+  } finally {
+    _adsDailyRunning = false;
+  }
+}
+
+async function _syncDailyAdSpendInner({ windowDays = 30, includeToday = true } = {}) {
   const { pullAdSpendDaily, pullBrandAdsDaily } = require('./sync/ads');
   const today = pstDateStr();
   const endDate = includeToday ? today : pstSubtractDays(today, 1);
@@ -3132,10 +3171,28 @@ async function syncDailyAdSpend({ windowDays = 30, includeToday = true } = {}) {
   for (const b of brands) for (const a of (b.asins || [])) asinBrand[a] = b.id;
 
   let rowCount = 0;
+  const AD_ZEROS = { spend_cad: 0, spend_usd: 0, attributed_sales_cad: 0, attributed_sales_usd: 0,
+                     attributed_sales_7d_cad: 0, attributed_sales_7d_usd: 0,
+                     ad_clicks: 0, ad_impressions: 0, ad_orders: 0, ad_orders_7d: 0 };
   for (const [date, asins] of Object.entries(merged)) {
+    // Existing rows for the date: powers the wide-table stale-ad clear AND
+    // brand_id preservation (upserting 'unknown-brand' mid-remap used to
+    // clobber the Orders path's correct attribution).
+    const existingRows = [];
+    for (let off = 0; ; off += 1000) {
+      const { data, error } = await supabase.from('daily_metrics')
+        .select('asin,brand_id,spend_cad,spend_usd,ad_clicks,ad_impressions,ad_orders,attributed_sales_cad,attributed_sales_usd')
+        .eq('date', date).order('asin', { ascending: true }).range(off, off + 999);
+      if (error) { console.warn(`[AdsDaily] ${date} existing-rows read failed:`, error.message); break; }
+      existingRows.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+    const existingBrand = {};
+    for (const r of existingRows) existingBrand[r.asin] = r.brand_id;
+
     const rows = Object.entries(asins).map(([asin, d]) => ({
       asin, date,
-      brand_id: asinBrand[asin] || 'unknown-brand',
+      brand_id: asinBrand[asin] || existingBrand[asin] || 'unknown-brand',
       spend_cad:            Math.round((d.spendCad || 0) * 100) / 100,
       spend_usd:            Math.round((d.spendUsd || 0) * 100) / 100,
       attributed_sales_cad: Math.round((d.salesCad || 0) * 100) / 100,
@@ -3148,12 +3205,35 @@ async function syncDailyAdSpend({ windowDays = 30, includeToday = true } = {}) {
       ad_orders_7d:   d.orders7     || 0,
     })).filter(r =>
       r.spend_cad > 0 || r.spend_usd > 0 ||
-      r.ad_clicks > 0 || r.ad_impressions > 0 || r.ad_orders > 0
+      r.ad_clicks > 0 || r.ad_impressions > 0 || r.ad_orders > 0 ||
+      // Attribution can land on days with no clicks/spend (late conversions) —
+      // the mp table kept these while the wide filter dropped them (mirror drift).
+      r.attributed_sales_cad > 0 || r.attributed_sales_usd > 0
     );
-    if (rows.length === 0) continue;
-    const { error } = await supabase.from('daily_metrics').upsert(rows, { onConflict: 'asin,date' });
-    if (error) console.warn(`[AdsDaily] ${date} upsert error:`, error.message);
-    else { rowCount += rows.length; }
+    if (rows.length > 0) {
+      const { error } = await supabase.from('daily_metrics').upsert(rows, { onConflict: 'asin,date' });
+      if (error) console.warn(`[AdsDaily] ${date} upsert error:`, error.message);
+      else { rowCount += rows.length; }
+    }
+
+    // Wide-table stale-ad clear — the twin of metricsMp.replaceDay's zero pass.
+    // The full-window pull throws on failure, so reaching here means the fresh
+    // set is authoritative: existing rows with ad values whose ASIN isn't in it
+    // are restatement leftovers. Without this, the mp side got zeroed while the
+    // wide side kept stale ad numbers forever (invisible to mp_mirror, which
+    // doesn't compare attributed_sales).
+    const freshSet = new Set(rows.map(r => r.asin));
+    const staleAds = existingRows.filter(r => !freshSet.has(r.asin) && (
+      (r.spend_cad || 0) > 0 || (r.spend_usd || 0) > 0 ||
+      (r.ad_clicks || 0) > 0 || (r.ad_impressions || 0) > 0 || (r.ad_orders || 0) > 0 ||
+      (r.attributed_sales_cad || 0) > 0 || (r.attributed_sales_usd || 0) > 0
+    )).map(r => r.asin);
+    for (let i = 0; i < staleAds.length; i += 200) {
+      const { error: clrErr } = await supabase.from('daily_metrics')
+        .update(AD_ZEROS).eq('date', date).in('asin', staleAds.slice(i, i + 200));
+      if (clrErr) { console.warn(`[AdsDaily] ${date} stale-ad clear failed:`, clrErr.message); break; }
+    }
+    if (staleAds.length) console.log(`[AdsDaily] ${date}: cleared stale ad values on ${staleAds.length} row(s)`);
 
     const metricsMp = require('./sync/metricsMp');
     await metricsMp.replaceDay(supabase, date, 'ads', metricsMp.adsRows(date, asins, asinBrand), `ads ${date}`);
@@ -3859,24 +3939,29 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
       feeDaysCovered: feeDays,
       feeSource: 'daily_fees',
     } : {
+      // No daily_fees coverage for this range. When a preset passthrough
+      // exists, use it; when it doesn't (report ranges call this with no
+      // presetKey), emit NULL fees — a literal $0 here fabricated profit
+      // (the exact $127k-vs-$31k failure this block's fix history documents).
+      // Renderers format null as '—'.
       CAD: {
         adSpend:      r2(topSpendCad),
         refundAmount: r2(topRefundCad),
-        amazonFees:   passthrough.CAD?.amazonFees   || 0,
-        serviceFees:  passthrough.CAD?.serviceFees  || 0,
-        refundFees:   passthrough.CAD?.refundFees   || 0,
+        amazonFees:   passthrough.CAD?.amazonFees   ?? null,
+        serviceFees:  passthrough.CAD?.serviceFees  ?? null,
+        refundFees:   passthrough.CAD?.refundFees   ?? null,
         breakdown:    passthrough.CAD?.breakdown    || {},
       },
       USD: {
         adSpend:      r2(topSpendUsd),
         refundAmount: r2(topRefundUsd),
-        amazonFees:   passthrough.USD?.amazonFees   || 0,
-        serviceFees:  passthrough.USD?.serviceFees  || 0,
-        refundFees:   passthrough.USD?.refundFees   || 0,
+        amazonFees:   passthrough.USD?.amazonFees   ?? null,
+        serviceFees:  passthrough.USD?.serviceFees  ?? null,
+        refundFees:   passthrough.USD?.refundFees   ?? null,
         breakdown:    passthrough.USD?.breakdown    || {},
       },
       refundCount: topRefundCount,
-      feeSource: 'preset_passthrough',
+      feeSource: Object.keys(passthrough).length ? 'preset_passthrough' : 'none',
     };
 
     const fmtD = d => new Date(d + 'T12:00:00Z').toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -4003,8 +4088,16 @@ async function rebuildPresetSummariesFromDaily(tag = 'PresetRebuild') {
 
     // Carry forward any brands present in the old preset that the new aggregation
     // didn't produce (rare — usually means no daily_metrics rows for that brand).
+    // Stamped carriedOver so consumers can distinguish "last known data" from
+    // current data — unmarked, a dormant brand's card silently showed stale
+    // numbers as if fresh, forever.
     for (const [brandId, oldBm] of Object.entries(existingPreset.brands || {})) {
-      if (!mergedBrands[brandId]) mergedBrands[brandId] = oldBm;
+      if (!mergedBrands[brandId]) {
+        mergedBrands[brandId] = {
+          ...oldBm,
+          summary: { ...(oldBm.summary || {}), carriedOver: true },
+        };
+      }
     }
 
     updatedPresets[presetKey] = {
@@ -4398,14 +4491,13 @@ async function generateBrandReportPdf({ brandId, period, from, to, compFrom, com
     // Chrome would render team-login.html and reportReady never fires.
     // Scoped to 127.0.0.1 — the page also loads fonts.googleapis/jsdelivr,
     // which must not receive our credentials.
-    if (process.env.AUTH_USERNAME && process.env.AUTH_PASSWORD) {
-      const basic = 'Basic ' + Buffer.from(`${process.env.AUTH_USERNAME}:${process.env.AUTH_PASSWORD}`).toString('base64');
-      await page.setRequestInterception(true);
-      page.on('request', r => {
-        const sameOrigin = r.url().startsWith(`http://127.0.0.1:${port}/`);
-        r.continue(sameOrigin ? { headers: { ...r.headers(), authorization: basic } } : undefined);
-      });
-    }
+    // Internal token, not Basic — survives TEAM_BASIC_AUTH=off. Scoped to
+    // loopback requests only; CDN subresources never see it.
+    await page.setRequestInterception(true);
+    page.on('request', r => {
+      const sameOrigin = r.url().startsWith(`http://127.0.0.1:${port}/`);
+      r.continue(sameOrigin ? { headers: { ...r.headers(), 'x-internal-token': INTERNAL_API_TOKEN } } : undefined);
+    });
 
     await page.setViewport({ width: 1100, height: 1600, deviceScaleFactor: 2 });
     await page.goto(url, { waitUntil: 'networkidle0', timeout: 60000 });
@@ -4786,10 +4878,7 @@ app.post('/api/brand-report-summary/:brandId', async (req, res) => {
     // credentials or it 401s — the auth middleware applies to all routes
     // including localhost-originated requests.
     const port = process.env.PORT || 3000;
-    const dsHeaders = {};
-    if (process.env.AUTH_USERNAME && process.env.AUTH_PASSWORD) {
-      dsHeaders.Authorization = 'Basic ' + Buffer.from(`${process.env.AUTH_USERNAME}:${process.env.AUTH_PASSWORD}`).toString('base64');
-    }
+    const dsHeaders = { 'x-internal-token': INTERNAL_API_TOKEN }; // survives TEAM_BASIC_AUTH=off
     const dsRes = await fetch(`http://localhost:${port}/api/brand-report-dataset/${encodeURIComponent(brandId)}?from=${from}&to=${to}`, { headers: dsHeaders });
     if (!dsRes.ok) throw new Error(`Dataset fetch failed: ${dsRes.status}`);
     const dataset = await dsRes.json();
@@ -6522,11 +6611,12 @@ function scheduleDailySync() {
       .catch(err => console.warn('[Backfill] cron error:', err.message));
   });
 
-  // Image backfill: 10am UTC daily — fetches images for up to 100 missing/stale
-  // ASINs via Catalog API and writes to Supabase asin_images table. Bounded
-  // per run; full catalog refreshes every ~4 days.
-  cron.schedule('0 10 * * *', () => {
-    console.log('[Images] 10 UTC cron fired');
+  // Image backfill: 10:40 UTC daily (staggered off DailyFees at 10:00 — both
+  // hold SP-API tokens and the Sunday fees sweep runs ~90s+). Fetches images
+  // for up to 100 missing/stale ASINs via Catalog API. Bounded per run; full
+  // catalog refreshes every ~4 days.
+  cron.schedule('40 10 * * *', () => {
+    console.log('[Images] 10:40 UTC cron fired');
     (async () => {
       const { brands } = await loadBrands();
       await backfillMissingImages(supabase, brands, { limit: 100 });

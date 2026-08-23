@@ -18,6 +18,9 @@ data/listings-cache.json
 data/image-cache.json
 data/live-metrics.json
 data/metrics.json
+# Business data — lives in Supabase; never in version control (audit F11)
+data/brands.json
+data/preset-metrics.json
 
 # Daily audit run history (regenerated each day)
 audit/history/

@@ -50,3 +50,27 @@ services:
         sync: false
       - key: DASHBOARD_URL
         sync: false
+      # Security / feature env (set in dashboard — declared here so IaC review
+      # sees the full surface; audit F12):
+      - key: MCP_TOKEN            # claude.ai connector path token — REQUIRED, no code fallback once rotated
+        sync: false
+      - key: GOOGLE_CLIENT_ID     # team Google sign-in
+        sync: false
+      - key: TEAM_ALLOWED_DOMAIN  # default rockymountainco.ca
+        sync: false
+      - key: TEAM_ALLOWED_EMAILS
+        sync: false
+      - key: TEAM_BASIC_AUTH      # 'off' disables shared-password fallback (internal callers now token-based)
+        sync: false
+      - key: PORTAL_BASE_URL      # canonical portal origin for emailed links
+        sync: false
+      - key: RESEND_API_KEY       # portal invite/magic-link email
+        sync: false
+      - key: ANTHROPIC_API_KEY    # AI executive summaries
+        sync: false
+      - key: DATABASE_URL         # session-pooler URI — enables boot migrations
+        sync: false
+      - key: SLACK_INTEGRITY_WEBHOOK_URL
+        sync: false
+      - key: SLACK_AUDIT_WEBHOOK_URL
+        sync: false

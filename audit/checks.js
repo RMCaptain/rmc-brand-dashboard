@@ -15,11 +15,12 @@ const DEPLETION_RATIO   = 0.50; // a day <50% surrounding median = under-fetched
 // Fetch one row per date with limit:1, in batches — works around Supabase's 1000-row cap.
 async function fetchDayShape(supabase, date) {
   const all = [];
-  for (let off = 0; off < 5000; off += 1000) {
+  for (let off = 0; ; off += 1000) { // unbounded + stable order (was capped 5000, unordered — shredded pages)
     const { data, error } = await supabase
       .from('daily_metrics')
-      .select('units,units_ca,units_us,revenue_cad,revenue_usd,sessions,spend_cad,spend_usd,updated_at')
+      .select('asin,units,units_ca,units_us,revenue_cad,revenue_usd,sessions,spend_cad,spend_usd,updated_at')
       .eq('date', date)
+      .order('asin', { ascending: true })
       .range(off, off + 999);
     if (error) throw new Error(`fetch ${date}: ${error.message}`);
     if (!data || data.length === 0) break;
@@ -41,13 +42,28 @@ async function fetchDayShape(supabase, date) {
     if (r.sessions != null && r.sessions > 0) withSessions++;
     if (r.updated_at && (!maxUpdatedAt || r.updated_at > maxUpdatedAt)) maxUpdatedAt = r.updated_at;
   }
+  const fx = loadFxRate();
   return {
     date, rows: all.length, units, unitsCa, unitsUs, revCad, revUsd, withSessions,
     spendCad, spendUsd, rowsWithSpend,
-    blended: revCad + revUsd * 1.38,
-    adSpendBlended: spendCad + spendUsd * 1.38,
+    blended: revCad + revUsd * fx,
+    adSpendBlended: spendCad + spendUsd * fx,
     maxUpdatedAt,
   };
+}
+
+// Live USD→CAD from the server's daily FX cache (data/fx.json); 1.38 fallback.
+// The hardcoded 1.38 skewed blended-revenue thresholds as the rate drifted.
+let _fxCache = null;
+function loadFxRate() {
+  if (_fxCache != null) return _fxCache;
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const j = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'fx.json'), 'utf8'));
+    _fxCache = Number(j.usdToCad) > 0 ? Number(j.usdToCad) : 1.38;
+  } catch { _fxCache = 1.38; }
+  return _fxCache;
 }
 
 function median(nums) {

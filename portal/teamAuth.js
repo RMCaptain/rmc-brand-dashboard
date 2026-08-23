@@ -146,16 +146,26 @@ function mountTeamAuth(app, { supabase, express }) {
   });
 
   app.get('/api/team/me', async (req, res) => {
-    const session = await getSession(supabase, req);
-    res.json(session
-      ? { signedIn: true, email: session.email, name: session.name, picture: session.picture }
-      : { signedIn: false });
+    try {
+      const session = await getSession(supabase, req);
+      res.json(session
+        ? { signedIn: true, email: session.email, name: session.name, picture: session.picture }
+        : { signedIn: false });
+    } catch (err) {
+      console.warn('[TeamAuth] /me failed:', err.message);
+      res.status(500).json({ error: 'Session check failed' });
+    }
   });
 
   app.post('/api/team/logout', async (req, res) => {
-    await destroySession(supabase, req);
-    res.setHeader('Set-Cookie', sessionCookie('', req, { clear: true }));
-    res.json({ ok: true });
+    try {
+      await destroySession(supabase, req);
+      res.setHeader('Set-Cookie', sessionCookie('', req, { clear: true }));
+      res.json({ ok: true });
+    } catch (err) {
+      console.warn('[TeamAuth] /logout failed:', err.message);
+      res.status(500).json({ error: 'Logout failed' });
+    }
   });
 }
 
@@ -167,8 +177,15 @@ function mountTeamAuth(app, { supabase, express }) {
  * With neither AUTH_USERNAME nor GOOGLE_CLIENT_ID configured (local dev),
  * everything passes — same as the old behaviour.
  */
-function teamAuthGate({ supabase, basicAuthCheck }) {
+function teamAuthGate({ supabase, basicAuthCheck, internalToken }) {
   return async function teamAuth(req, res, next) {
+    // Per-boot internal token for loopback callers (MCP bridge, AI-summary
+    // fetch, PDF renderer). Unguessable, never leaves the process, and keeps
+    // those paths working when TEAM_BASIC_AUTH=off.
+    if (internalToken && req.headers['x-internal-token'] === internalToken) {
+      req.teamUser = { email: 'internal@loopback' };
+      return next();
+    }
     const basicConfigured = !!(process.env.AUTH_USERNAME && process.env.AUTH_PASSWORD);
     if (!basicConfigured && !googleEnabled()) {
       // FAIL CLOSED in production: with no auth configured at all, this used
@@ -190,11 +207,15 @@ function teamAuthGate({ supabase, basicAuthCheck }) {
 
     if (basicConfigured && basicAuthEnabled() && basicAuthCheck(req)) return next();
 
-    const wantsHtml = req.method === 'GET' && String(req.headers.accept || '').includes('text/html');
+    // API callers always get JSON 401 — an HTML 302/401 body confused fetch
+    // clients (and internal tooling) expecting a JSON error shape.
+    const isApi = req.path.startsWith('/api/');
+    const wantsHtml = !isApi && req.method === 'GET' && String(req.headers.accept || '').includes('text/html');
     if (googleEnabled() && wantsHtml) return res.redirect('/team-login.html');
 
     if (basicConfigured && basicAuthEnabled()) {
       res.setHeader('WWW-Authenticate', 'Basic realm="RMC Dashboard"');
+      if (isApi) return res.status(401).json({ error: 'Authentication required' });
       return res.status(401).send('Authentication required');
     }
     return res.status(401).json({ error: 'Sign in required' });

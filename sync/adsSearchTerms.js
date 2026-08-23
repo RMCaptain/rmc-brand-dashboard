@@ -91,10 +91,17 @@ async function syncSearchTerms(supabase, startDate, endDate) {
     }
     const { error: delErr } = await supabase.from('ads_search_terms').delete().eq('profile', profile);
     if (delErr) throw new Error(`[AdsTerms] ${profile} delete failed: ${delErr.message}`);
-    // Supabase caps payloads; insert in chunks of 500.
+    // Supabase caps payloads; insert in chunks of 500. One transient chunk
+    // failure used to abandon the loop AFTER the delete — leaving the profile
+    // partially populated until next Monday. Retry each chunk once.
     for (let i = 0; i < rows.length; i += 500) {
-      const { error } = await supabase.from('ads_search_terms').insert(rows.slice(i, i + 500));
-      if (error) throw new Error(`[AdsTerms] ${profile} insert failed at ${i}: ${error.message}`);
+      let { error } = await supabase.from('ads_search_terms').insert(rows.slice(i, i + 500));
+      if (error) {
+        console.warn(`[AdsTerms] ${profile} chunk ${i} failed (${error.message}) — retrying once`);
+        await new Promise(r => setTimeout(r, 2000));
+        ({ error } = await supabase.from('ads_search_terms').insert(rows.slice(i, i + 500)));
+      }
+      if (error) throw new Error(`[AdsTerms] ${profile} insert failed at ${i} after retry: ${error.message}`);
     }
     console.log(`[AdsTerms] ${profile}: stored ${rows.length} clicked search terms`);
     result[profile] = { rows: rows.length, replaced: true };
