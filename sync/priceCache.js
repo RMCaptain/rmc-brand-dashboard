@@ -37,6 +37,7 @@ async function getTrailingPrices(force = false) {
       .from('daily_metrics')
       .select('asin,units_ca,units_us,revenue_cad,revenue_usd')
       .gte('date', from).lte('date', to)
+      .order('date', { ascending: true }).order('asin', { ascending: true }) // stable pages — unordered paging shreds
       .range(page * 1000, page * 1000 + 999);
     if (error) {
       console.warn('[PriceCache] trailing-price query failed:', error.message);
@@ -89,6 +90,7 @@ async function loadSkuPrices(maxAgeDays = 7) {
       .from('sku_prices')
       .select('sku,mp_id,asin,price')
       .gte('fetched_at', cutoff)
+      .order('sku', { ascending: true }).order('mp_id', { ascending: true }) // stable pages
       .range(page * 1000, page * 1000 + 999);
     if (error) { console.warn('[PriceCache] sku_prices load failed:', error.message); return snapCache.prices || {}; }
     rows.push(...(data || []));
@@ -133,8 +135,18 @@ async function refreshSkuPriceSnapshot(token) {
       if (sku) skuAsin[sku] = asin;
     }
   }
-  const { data: existing } = await client().from('sku_prices').select('sku,asin').range(0, 4999);
-  for (const r of (existing || [])) if (!skuAsin[r.sku]) skuAsin[r.sku] = r.asin;
+  // Paginated (a single .range(0,4999) is still capped at 1000 by PostgREST):
+  // SKUs beyond the cap fell out of the sweep universe, went stale past the
+  // 7-day cutoff, and lost the snapshot rung of the price-estimation ladder.
+  for (let page = 0; ; page++) {
+    const { data: existing, error } = await client().from('sku_prices')
+      .select('sku,asin')
+      .order('sku', { ascending: true }).order('mp_id', { ascending: true })
+      .range(page * 1000, page * 1000 + 999);
+    if (error) { console.warn('[PriceCache] sku_prices universe load failed:', error.message); break; }
+    for (const r of (existing || [])) if (!skuAsin[r.sku]) skuAsin[r.sku] = r.asin;
+    if (!existing || existing.length < 1000) break;
+  }
 
   const skus = Object.keys(skuAsin);
   if (skus.length === 0) { console.warn('[PriceCache] snapshot refresh: no known SKUs'); return 0; }

@@ -244,11 +244,24 @@ async function syncRefunds(supabase, brands, { windowDays = 30 } = {}) {
 // write back to daily_metrics refund_* columns.
 async function recomputeRefundAggregates(supabase, asinBrand, dates) {
   for (const date of dates) {
-    const { data: rows, error } = await supabase
-      .from('refund_events')
-      .select('asin,marketplace_currency,refunded_units,refund_amount')
-      .eq('original_order_date', date);
-    if (error) { console.warn(`[Refunds] read events for ${date}:`, error.message); continue; }
+    // Paginated + ordered: refund_events accrue over a 60-day window — a
+    // high-return day can cross the 1000-row cap, and PostgREST's unordered
+    // truncation summed an arbitrary 1000 into BOTH the wide and mp tables
+    // (consistently wrong, so mp_mirror never caught it).
+    const rows = [];
+    let readOk = true;
+    for (let off = 0; ; off += 1000) {
+      const { data, error } = await supabase
+        .from('refund_events')
+        .select('asin,marketplace_currency,refunded_units,refund_amount')
+        .eq('original_order_date', date)
+        .order('event_id', { ascending: true })
+        .range(off, off + 999);
+      if (error) { console.warn(`[Refunds] read events for ${date}:`, error.message); readOk = false; break; }
+      rows.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+    if (!readOk) continue;
 
     const byAsin = {};
     for (const r of (rows || [])) {
@@ -270,10 +283,26 @@ async function recomputeRefundAggregates(supabase, asinBrand, dates) {
       else                                   byAsin[a].cad += r.refund_amount || 0;
     }
 
+    // brand_id ownership: the Orders path stamps it; this upsert must not
+    // clobber it with 'unknown-brand' just because the brands blob snapshot
+    // (asinBrand) lacks an ASIN mid-remap. Preserve the row's existing
+    // brand_id when we don't positively know a better one.
+    const existingBrand = {};
+    {
+      const asinList = Object.keys(byAsin).filter(a => a !== 'UNMAPPED');
+      for (let i = 0; i < asinList.length; i += 200) {
+        const { data: existing } = await supabase
+          .from('daily_metrics').select('asin,brand_id')
+          .eq('date', date).in('asin', asinList.slice(i, i + 200));
+        for (const r of (existing || [])) existingBrand[r.asin] = r.brand_id;
+      }
+    }
     const updates = Object.entries(byAsin).map(([asin, v]) => ({
       asin:              asin === 'UNMAPPED' ? `UNMAPPED-REFUND-${date}` : asin,
       date,
-      brand_id:          asin === 'UNMAPPED' ? 'unknown-brand' : (asinBrand[asin] || 'unknown-brand'),
+      brand_id:          asin === 'UNMAPPED'
+        ? 'unknown-brand'
+        : (asinBrand[asin] || existingBrand[asin] || 'unknown-brand'),
       refunded_units:    v.units,
       refund_amount_cad: Math.round(v.cad * 100) / 100,
       refund_amount_usd: Math.round(v.usd * 100) / 100,

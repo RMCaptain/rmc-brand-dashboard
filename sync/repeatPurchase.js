@@ -48,6 +48,7 @@ async function fetchRepeatPurchase(marketplaceIds, token) {
   const { start, end } = lastFullMonth();
   const byMarketplace = {};
   let anySuccess = false;
+  let successCount = 0;
 
   for (const mpId of marketplaceIds) {
     const mpCode = MP_CODE[mpId] || mpId;
@@ -83,6 +84,7 @@ async function fetchRepeatPurchase(marketplaceIds, token) {
       }
       byMarketplace[mpCode] = byAsin;
       anySuccess = true;
+      successCount++;
       console.log(`[RepeatPurchase] ${mpCode}: ${rows.length} ASINs for ${start} → ${end}`);
     } catch (e) {
       console.warn(`[RepeatPurchase] ${mpCode} failed: ${e.message.slice(0, 160)}`);
@@ -90,7 +92,10 @@ async function fetchRepeatPurchase(marketplaceIds, token) {
     await sleep(2000);
   }
 
-  return anySuccess ? { byMarketplace, period: { start, end } } : null;
+  // complete: every marketplace succeeded. A partial result (one marketplace
+  // timed out) must not be treated as authority to delete brands whose only
+  // marketplace was the failed one.
+  return anySuccess ? { byMarketplace, period: { start, end }, complete: successCount === marketplaceIds.length } : null;
 }
 
 // Which marketplaces does this brand actually sell in (with us)?
@@ -136,10 +141,16 @@ function rollupBrandRepeatPurchase(brand, rp) {
   }
 
   if (covered === 0 || unique === 0) return null;
+  // Label only marketplaces that actually contributed rows — 'allowed' would
+  // claim CA,US coverage when one side's report failed or had no data.
+  const contributing = allowed.filter(mp => {
+    const byAsin = rp.byMarketplace[mp];
+    return byAsin && (brand.asins || []).some(a => byAsin[a]);
+  });
   return {
     source: 'brand_analytics',
     period: rp.period,
-    marketplaces: allowed,
+    marketplaces: contributing,
     repeatCustomersPct: Math.round(repeat / unique * 1000) / 10,
     uniqueCustomers:    unique,
     repeatCustomers:    repeat,

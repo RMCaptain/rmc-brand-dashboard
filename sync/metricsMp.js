@@ -62,7 +62,12 @@ async function replaceDay(supabase, date, group, rows, tag) {
   const zeros = DAY_COLUMN_GROUPS[group];
   if (!zeros) { console.warn(`[MetricsMp] ${tag}: unknown group '${group}'`); return 0; }
   try {
-    const { error } = await supabase.from('daily_metrics_mp').update(zeros).eq('date', date);
+    // MULTI-MARKETPLACE GUARD: zero only the marketplaces this writer covers
+    // (CA/US today). An unqualified date-wide zero would erase UK/Walmart rows
+    // — marketplaces that write ONLY to this table — every time a CA/US
+    // rewriter ran. Must widen the list when new marketplaces activate.
+    const { error } = await supabase.from('daily_metrics_mp')
+      .update(zeros).eq('date', date).in('mp_id', [MP_CA, MP_US]);
     if (error) { console.warn(`[MetricsMp] ${tag} zero pass failed:`, error.message); return 0; }
   } catch (e) {
     console.warn(`[MetricsMp] ${tag} zero pass exception:`, e.message);

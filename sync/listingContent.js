@@ -178,15 +178,19 @@ async function syncListingContent(supabase, brands) {
   }
 
   // Upsert in chunks. Destructive-write rule: only replace when the source
-  // pull actually produced data.
+  // pull actually produced data — and PER-ASIN, not just globally. A 429 burst
+  // used to null backend_keywords/status/issues for the failed ASINs while the
+  // global guard passed on the successful ones.
   const withData = rows.filter(r => r.title || r.bullets.length);
   if (!withData.length) { console.warn('[ListingContent] pull came back EMPTY — keeping old rows'); return { synced: 0 }; }
-  for (let i = 0; i < rows.length; i += 100) {
-    const { error } = await supabase.from('listing_content').upsert(rows.slice(i, i + 100), { onConflict: 'asin' });
+  const skipped = rows.length - withData.length;
+  if (skipped > 0) console.warn(`[ListingContent] ${skipped} ASIN(s) fetched empty — keeping their old rows`);
+  for (let i = 0; i < withData.length; i += 100) {
+    const { error } = await supabase.from('listing_content').upsert(withData.slice(i, i + 100), { onConflict: 'asin' });
     if (error) throw new Error(`listing_content upsert: ${error.message}`);
   }
-  console.log(`[ListingContent] Done: ${rows.length} ASINs upserted (${listingsOk} with own-listing data incl. backend keywords).`);
-  return { synced: rows.length, withListingData: listingsOk };
+  console.log(`[ListingContent] Done: ${withData.length} ASINs upserted (${listingsOk} with own-listing data incl. backend keywords).`);
+  return { synced: withData.length, withListingData: listingsOk };
 }
 
 module.exports = { syncListingContent };

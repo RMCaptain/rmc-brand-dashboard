@@ -57,12 +57,16 @@ async function recordSnsSnapshot(byMp, asinBrand = {}) {
       }
     }
 
-    const { error: dayErr } = await client().from('sns_sync_days').upsert(dayRows, { onConflict: 'date,mp_id' });
-    if (dayErr) { console.warn('[SnsHistory] sync-day write failed:', dayErr.message); return 0; }
+    // DATA FIRST, coverage second. Writing the coverage row before the data
+    // rows meant a failed data write left the day marked "covered" — every
+    // S&S ASIN then read as a true zero for that day (a permanent false
+    // trough), violating this module's own zero-vs-no-data contract.
     if (rows.length > 0) {
       const { error } = await client().from('sns_daily').upsert(rows, { onConflict: 'date,asin,mp_id' });
-      if (error) { console.warn('[SnsHistory] snapshot write failed:', error.message); return 0; }
+      if (error) { console.warn('[SnsHistory] snapshot write failed — day NOT marked covered:', error.message); return 0; }
     }
+    const { error: dayErr } = await client().from('sns_sync_days').upsert(dayRows, { onConflict: 'date,mp_id' });
+    if (dayErr) { console.warn('[SnsHistory] sync-day write failed:', dayErr.message); return 0; }
     console.log(`[SnsHistory] ${date}: ${rows.length} ASIN rows across ${dayRows.length} marketplace(s)`);
     return rows.length;
   } catch (e) {

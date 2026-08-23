@@ -25,10 +25,18 @@ const FEES_EPOCH = '2026-01-01'; // daily_fees backfill start — nothing before
 const MONEY_TOL = 0.5;           // dollars; both sides round to cents at write
 const COGS_WARN_PCT = 95;
 
-async function fetchAll(supabase, table, columns, from, to) {
+// tiebreak: second ordering key for tables with many rows per date. Ordering
+// by date alone leaves same-date rows in unspecified order — page boundaries
+// then duplicate/skip rows ("shredding"), producing phantom mp_mirror
+// mismatches or masking real drift. Pass null for one-row-per-date tables.
+async function fetchAll(supabase, table, columns, from, to, tiebreak = 'asin') {
   const rows = [];
   for (let start = 0; ; start += 1000) {
-    let q = supabase.from(table).select(columns).order('date', { ascending: true }).range(start, start + 999);
+    let q = supabase.from(table).select(columns).order('date', { ascending: true });
+    for (const key of (Array.isArray(tiebreak) ? tiebreak : tiebreak ? [tiebreak] : [])) {
+      q = q.order(key, { ascending: true });
+    }
+    q = q.range(start, start + 999);
     if (from) q = q.gte('date', from);
     if (to)   q = q.lte('date', to);
     const { data, error } = await q;
@@ -59,7 +67,7 @@ async function runIntegrityChecks({ supabase, loadBrands }) {
   }
 
   // fees — gaps + freshness
-  const feeRows = await fetchAll(supabase, 'daily_fees', 'date', FEES_EPOCH, yesterday);
+  const feeRows = await fetchAll(supabase, 'daily_fees', 'date', FEES_EPOCH, yesterday, null); // one row/date — no tiebreak column
   const feeDates = new Set(feeRows.map(r => r.date));
   const gaps = [];
   for (let d = FEES_EPOCH; d <= yesterday; d = pstSubtractDays(d, -1)) {
@@ -72,7 +80,7 @@ async function runIntegrityChecks({ supabase, loadBrands }) {
 
   // mp_mirror — wide vs long sums by currency over the 30-day window
   const mp = await fetchAll(supabase, 'daily_metrics_mp',
-    'date,currency,units,revenue,ad_spend,refund_amount', from30, yesterday);
+    'date,currency,units,revenue,ad_spend,refund_amount', from30, yesterday, ['asin', 'mp_id']);
   const wideSum = { CAD: { units: 0, revenue: 0, ad_spend: 0, refund_amount: 0 },
                     USD: { units: 0, revenue: 0, ad_spend: 0, refund_amount: 0 } };
   for (const r of wide) {
@@ -136,7 +144,7 @@ async function runIntegrityChecks({ supabase, loadBrands }) {
   const from7 = pstSubtractDays(yesterday, 6);
   const asinFees = await fetchAll(supabase, 'daily_fees_asin', 'date,currency,fees,asin', from7, yesterday);
   if (asinFees.length) {
-    const wideFees = await fetchAll(supabase, 'daily_fees', 'date,fees_cad,fees_usd', from7, yesterday);
+    const wideFees = await fetchAll(supabase, 'daily_fees', 'date,fees_cad,fees_usd', from7, yesterday, null);
     const wideByDate = Object.fromEntries(wideFees.map(r => [r.date, r]));
     const asinByDate = {};
     for (const r of asinFees) {

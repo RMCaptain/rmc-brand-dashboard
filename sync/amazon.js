@@ -1374,9 +1374,13 @@ async function syncBrandMetrics(brands) {
       for (const brand of brands) {
         const rolled = rollupBrandRepeatPurchase(brand, rp);
         if (rolled) brand.repeatPurchase = rolled;
-        else delete brand.repeatPurchase;
+        // No rollup for this brand: only delete stale data when the fetch was
+        // COMPLETE (every marketplace succeeded). On a partial fetch — e.g. US
+        // BA timed out, CA succeeded — a US-only brand legitimately rolls up
+        // to null and deleting would wipe good prior data on a transient error.
+        else if (rp.complete) delete brand.repeatPurchase;
       }
-      console.log('[Sync] Repeat purchase rolled up (marketplace-scoped, BA only)');
+      console.log(`[Sync] Repeat purchase rolled up (marketplace-scoped, BA only${rp.complete ? '' : ', partial — stale entries kept'})`);
     } else {
       console.warn('[Sync] Repeat purchase unavailable this run — keeping previous data');
     }
@@ -1556,7 +1560,11 @@ async function getCatalogSnapshots(asins, marketplaceId, token) {
   for (let i = 0; i < asins.length; i += BATCH) {
     const slice = asins.slice(i, i + BATCH);
     const ids = slice.join(',');
-    const path = `/catalog/2022-04-01/items?identifiers=${ids}&identifiersType=ASIN&marketplaceIds=${marketplaceId}&includedData=attributes,images,relationships,summaries`;
+    // pageSize MUST match the batch size — the API defaults to 10 and silently
+    // drops the rest of a 20-identifier batch (same trap listingContent.js
+    // documents). Without it, half the catalog never got a snapshot, so
+    // content_changed/variation_broken alerts never fired for those ASINs.
+    const path = `/catalog/2022-04-01/items?identifiers=${ids}&identifiersType=ASIN&marketplaceIds=${marketplaceId}&pageSize=${BATCH}&includedData=attributes,images,relationships,summaries`;
     try {
       let res = await spRequest('GET', path, token);
       if (res.status === 429) {
@@ -1708,11 +1716,13 @@ async function enrichListingHealth(brands) {
 
   // Fetch stranded inventory once for all marketplaces
   let strandedByAsin = {};
+  let strandedFetchOk = false;
   try {
     strandedByAsin = await fetchStrandedInventory();
+    strandedFetchOk = true;
     console.log(`[Health] Stranded inventory: ${Object.keys(strandedByAsin).length} ASINs across all marketplaces`);
   } catch (err) {
-    console.warn('[Health] Stranded inventory fetch failed (non-fatal):', err.message);
+    console.warn('[Health] Stranded inventory fetch failed (non-fatal) — keeping previous snapshots:', err.message);
   }
 
   const now = new Date().toISOString();
@@ -1727,6 +1737,10 @@ async function enrichListingHealth(brands) {
     brand.buyBoxOwnerHistory = brand.buyBoxOwnerHistory || {};
 
     for (const asin of brand.asins || []) {
+      // Capture the PREVIOUS reading before overwriting — the zero-offers
+      // alert below compares against it; reading it after the overwrite made
+      // that alert dead code (prev was always the current 0).
+      const prevOfferCount = brand.buyBoxOwners[asin]?.offerCount;
       // ── Buy box owner update ────────────────────────────────────────────────
       if (buyBox[asin]) {
         brand.buyBoxOwners[asin] = { ...buyBox[asin], capturedAt: now };
@@ -1789,9 +1803,9 @@ async function enrichListingHealth(brands) {
       // ── General "no offers" check — listing is restricted on marketplace ────
       const offerCount = buyBox[asin]?.offerCount;
       if (offerCount === 0) {
-        // Only alert once per state-change: previously had offers, now zero
-        const prevCount = brand.buyBoxOwners[asin]?.offerCount;
-        if (prevCount == null || prevCount > 0) {
+        // Only alert once per state-change: previously had offers, now zero.
+        // Uses the reading captured BEFORE this pass overwrote buyBoxOwners.
+        if (prevOfferCount == null || prevOfferCount > 0) {
           brand.recentAlerts.push({
             asin, severity: 'critical', type: 'general_inactive',
             message: `Listing has zero offers — restricted or delisted on marketplace`,
@@ -1805,10 +1819,15 @@ async function enrichListingHealth(brands) {
     }
 
     // ── Stranded inventory — store snapshot per ASIN for this brand ─────────
-    brand.strandedInventory = {};
-    for (const asin of brand.asins || []) {
-      const s = strandedByAsin[asin];
-      if (s) brand.strandedInventory[asin] = s;
+    // Keep-previous guard: when the stranded report fetch failed entirely,
+    // strandedFetchOk is false and we keep the prior snapshot instead of
+    // wiping every brand to "0 stranded" (a Critical the digest then missed).
+    if (strandedFetchOk) {
+      brand.strandedInventory = {};
+      for (const asin of brand.asins || []) {
+        const s = strandedByAsin[asin];
+        if (s) brand.strandedInventory[asin] = s;
+      }
     }
 
     // Cap recentAlerts per brand at 500 (FIFO)
@@ -1978,14 +1997,23 @@ async function fetchActivePromotions(marketplaceIds, token) {
   for (const mpId of marketplaceIds) {
     for (const [apiType, badge] of TYPES) {
       try {
-        const data = await spRequest('GET', `/promotions/v2021-06-01/promotions?marketplaceId=${mpId}&promotionType=${apiType}`, token);
+        // spRequest resolves a {status, body} ENVELOPE and never throws on
+        // HTTP errors. The original code read data.promotions off the envelope
+        // (always undefined) — so this feature returned {} on every sync since
+        // it shipped, and wiped all badges. Read .body and check .status.
+        const res = await spRequest('GET', `/promotions/v2021-06-01/promotions?marketplaceId=${mpId}&promotionType=${apiType}`, token);
+        if (res.status !== 200) {
+          console.log(`[Promos] ${apiType} ${mpId}: HTTP ${res.status} — ${JSON.stringify(res.body).slice(0, 160)}`);
+          continue; // not a success — successCount stays put so keep-previous can fire
+        }
         successCount++;
-        const active = (data.promotions || []).filter(p => !p.endDate || new Date(p.endDate) > now);
+        const active = (res.body?.promotions || []).filter(p => !p.endDate || new Date(p.endDate) > now);
         console.log(`[Promos] ${badge} ${mpId}: ${active.length} active`);
         for (const promo of active) {
           try {
             const detail = await spRequest('GET', `/promotions/v2021-06-01/promotions/${promo.promotionId}`, token);
-            for (const cond of detail.promotion?.promotionApplicabilityModel?.promotionConditions || []) {
+            if (detail.status !== 200) continue;
+            for (const cond of detail.body?.promotion?.promotionApplicabilityModel?.promotionConditions || []) {
               for (const asin of cond.applicableProductCondition?.includedEntitlements?.asinList || []) {
                 if (!asinPromos[asin]) asinPromos[asin] = new Set();
                 asinPromos[asin].add(badge);
