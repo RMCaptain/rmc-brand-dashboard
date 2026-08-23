@@ -15,7 +15,10 @@
 
 const express = require('express');
 
-const TOKEN = process.env.MCP_TOKEN || '7c794441aa561de574cbe99e0ce0f5761fce0b04a12fd9f9';
+// Env-only, NO fallback: the previous committed token was a standing read
+// bypass for anyone with repo access (rotated 2026-08-24). Unset = the MCP
+// endpoint simply doesn't mount — fail closed, dashboard unaffected.
+const TOKEN = process.env.MCP_TOKEN || null;
 const SUPPORTED_PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 // Tool results land in a chat context window — clamp anything huge.
 const MAX_RESULT_CHARS = 400000;
@@ -207,6 +210,10 @@ async function handleMessage(msg) {
 
 function mountMcp(app, { internalToken } = {}) {
   _internalToken = internalToken || null;
+  if (!TOKEN) {
+    console.warn('[MCP] MCP_TOKEN not set — endpoint NOT mounted (fail closed)');
+    return;
+  }
   const path = `/mcp/${TOKEN}`;
 
   app.post(path, express.json({ limit: '2mb' }), async (req, res) => {
