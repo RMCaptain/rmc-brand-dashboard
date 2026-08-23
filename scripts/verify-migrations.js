@@ -42,6 +42,7 @@ const PROBES = [
   { sql: 'datadive-snapshots', table: 'datadive_snapshots', cols: 'asin' },
   { sql: 'listing-content', table: 'listing_content', cols: 'asin' },
   { sql: 'sku-prices', table: 'sku_prices', cols: 'sku' },
+  { sql: 'daily-fees-asin', table: 'daily_fees_asin', cols: 'date,asin,mp_id,fees' },
   // Drop migrations — these columns should be GONE
   { sql: 'drop-ntb-columns', table: 'daily_metrics', cols: 'ntb_sales_cad', wantMissing: true },
   { sql: 'drop-ntb-columns', table: 'daily_metrics', cols: 'ntb_units', wantMissing: true },

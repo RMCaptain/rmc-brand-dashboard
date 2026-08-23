@@ -119,7 +119,7 @@
               </tr>
             </thead>
             <tbody id="productTableBody">
-              <tr><td colspan="17" class="text-center py-8" style="color:var(--text-3)">Loading...</td></tr>
+              <tr><td colspan="16" class="text-center py-8" style="color:var(--text-3)">Loading...</td></tr>
             </tbody>
           </table>
           <div id="productPagination"></div>
@@ -154,7 +154,7 @@
               </tr>
             </thead>
             <tbody id="dataTableBody">
-              <tr><td colspan="9" class="text-center py-8" style="color:var(--text-3)">Loading...</td></tr>
+              <tr><td colspan="10" class="text-center py-8" style="color:var(--text-3)">Loading...</td></tr>
             </tbody>
           </table>
           <div id="dataPagination"></div>
@@ -239,10 +239,37 @@
     }
 
     // â”€â”€ Build flat product list â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Live range data per preset key (fetched by setPreset) — preferred over
+    // the preset_metrics cache, which lags the nightly finalize and made this
+    // page disagree with the dashboard/brands pages on the same preset.
+    const rangeData = {};
+    function getPresetRange(key) {
+      const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date());
+      const sub = (d, n) => { const [y, m, dd] = d.split('-').map(Number); return new Date(Date.UTC(y, m - 1, dd - n)).toISOString().split('T')[0]; };
+      const yest = sub(today, 1);
+      const [ty, tm] = today.split('-').map(Number);
+      switch (key) {
+        case 'last7d':    return { from: sub(yest, 6),  to: yest };
+        case 'last14d':   return { from: sub(yest, 13), to: yest };
+        case 'last30d':   return { from: sub(yest, 29), to: yest };
+        case 'last60d':   return { from: sub(yest, 59), to: yest };
+        case 'last90d':   return { from: sub(yest, 89), to: yest };
+        case 'mtd':       return { from: `${String(ty).padStart(4, '0')}-${String(tm).padStart(2, '0')}-01`, to: yest };
+        case 'lastMonth': {
+          const lmY = tm === 1 ? ty - 1 : ty, lmM = tm === 1 ? 12 : tm - 1;
+          return { from: `${String(lmY).padStart(4, '0')}-${String(lmM).padStart(2, '0')}-01`,
+                   to: sub(`${String(ty).padStart(4, '0')}-${String(tm).padStart(2, '0')}-01`, 1) };
+        }
+        case 'ytd':       return { from: `${String(ty).padStart(4, '0')}-01-01`, to: yest };
+        default:          return null;
+      }
+    }
+
     function buildProductList() {
       const isToday  = activePreset === 'today';
       const isCustom = activePreset === 'custom';
-      const preset   = (isToday || isCustom) ? null : presetMetrics.presets?.[activePreset];
+      const preset   = (isToday || isCustom) ? null
+        : (rangeData[activePreset] || presetMetrics.presets?.[activePreset]);
       const rows = [];
       for (const brand of brandsData) {
         const bm = isToday  ? todayData?.brands?.[brand.id]
@@ -420,7 +447,7 @@
       const rows = buildProductList();
 
       if (!rows.length) {
-        tbody.innerHTML = `<tr><td colspan="17" class="text-center py-10" style="color:var(--text-3)">No products â€” run a sync first</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="16" class="text-center py-10" style="color:var(--text-3)">No products â€” run a sync first</td></tr>`;
         document.getElementById('productPagination').innerHTML = '';
         updateSortIndicators();
         return;
@@ -439,7 +466,7 @@
       });
 
       if (!filtered.length) {
-        tbody.innerHTML = `<tr><td colspan="17" class="text-center py-10" style="color:var(--text-3)">No products match your search</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="16" class="text-center py-10" style="color:var(--text-3)">No products match your search</td></tr>`;
         document.getElementById('productPagination').innerHTML = '';
         updateSortIndicators();
         return;
@@ -592,9 +619,21 @@
             .then(r => r.json())
             .then(d => { customData = d; render(); });
         }
+      } else if (key === 'yesterday') {
+        // Live like the dashboard/brands pages — the preset-cache blob lags
+        // the nightly finalize, so this page disagreed with them until resync.
+        fetch('/api/metrics/yesterday').then(r => r.json()).then(d => { rangeData[key] = d; render(); });
       } else {
-        render();
+        const r = getPresetRange(key);
+        if (r) {
+          fetch(`/api/metrics?from=${r.from}&to=${r.to}&presetKey=${encodeURIComponent(key)}`)
+            .then(res => res.json())
+            .then(d => { rangeData[key] = d; render(); });
+        } else {
+          render();
+        }
       }
+      render(); // immediate paint from cache; live fetch re-renders on arrival
     }
 
     // â”€â”€ Currency â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -1304,8 +1343,8 @@
       document.getElementById('bulkErrorMsg').classList.add('hidden');
 
       if (!changes.length) {
-        tbody.innerHTML = '<tr><td colspan="8" class="text-center py-8" style="color:var(--text-3)">No changes detected â€” all values match what\'s already saved.</td></tr>';
-        countEl.textContent = 'â€” nothing to update';
+        tbody.innerHTML = '<tr><td colspan="10" class="text-center py-8" style="color:var(--text-3)">No changes detected — all values match what\'s already saved.</td></tr>';
+        countEl.textContent = '— nothing to update';
         return;
       }
 

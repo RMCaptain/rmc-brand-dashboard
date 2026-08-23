@@ -1048,7 +1048,7 @@
           const bgColor = a.severity === 'critical' ? 'bg-red-950/30' : a.severity === 'warning' ? 'bg-amber-950/20' : 'bg-sky-950/20';
           const shortTitle = (a.title || '').length > 70 ? a.title.slice(0, 70) + '…' : (a.title || '');
           return `
-            <div class="${bgColor} border ${borderColor} rounded-lg px-4 py-3 flex items-start gap-3">
+            <div class="${bgColor} border ${borderColor} rounded-lg px-4 py-3 flex items-start gap-3" data-severity="${a.severity}">
               <span class="text-base flex-shrink-0 mt-0.5">${ti.icon}</span>
               <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-2 flex-wrap mb-0.5">
@@ -1078,8 +1078,14 @@
     }
 
     function scrollToSeverity(sev) {
-      const el = document.getElementById('health-section-' + sev);
-      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      // Scroll to the first alert card of that severity — the old
+      // health-section-<sev> id was never rendered anywhere, so these
+      // buttons silently did nothing.
+      const el = document.querySelector(`#healthAlerts [data-severity="${sev}"]`);
+      if (!el) return;
+      const offset = (document.getElementById('pillNav')?.offsetHeight || 36) + 64 + 8;
+      const top = el.getBoundingClientRect().top + window.scrollY - offset;
+      window.scrollTo({ top, behavior: 'smooth' });
     }
 
     // ── Load ──────────────────────────────────────────────────────────────────

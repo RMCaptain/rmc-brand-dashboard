@@ -383,7 +383,14 @@ const SECTION_TITLES = {
 // SECTION_RENDERERS and add executive_summary + per_asin_detail locally.
 const SHARED_RENDERERS = {
   headline_tiles: (d) => {
-    const s = d.summary, sp = d.summaryPrev || {};
+    // summary is null when the brand has zero rows in the window (new brand,
+    // dormant period). Unguarded, this threw — and because it renders first,
+    // it killed the ENTIRE report page, the portal view, and hung the PDF
+    // render for its full timeout.
+    const s = d.summary || {}, sp = d.summaryPrev || {};
+    if (d.summary == null) {
+      return `<div class="rpt-placeholder">No sales data in this period.</div>`;
+    }
     const conv = s.sessions ? s.units / s.sessions * 100 : null;
     const tile = (label, value, change, prev) => {
       const cls = change == null ? 'neu' : change >= 0 ? 'pos' : 'neg';
@@ -529,7 +536,7 @@ const SHARED_RENDERERS = {
     const total = slices.reduce((s, x) => s + x.revenue, 0);
     const legend = slices.map((s, i) => `
       <div class="pie-legend-row">
-        <span class="pie-swatch" style="background:${PIE_COLORS[i % PIE_COLORS.length]}"></span>
+        <span class="pie-swatch" style="background:${s.asin === null ? PIE_OTHER_COLOR : PIE_COLORS[i % PIE_COLORS.length]}"></span>
         <span class="pie-legend-name">
           ${escapeHtml(s.label)}
           ${s.asin ? `<span class="pie-legend-asin">${escapeHtml(s.asin)}</span>` : ''}

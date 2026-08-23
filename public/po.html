@@ -1747,9 +1747,24 @@
         </div>`).join('');
     }
 
-    function selectAsinForPO(brandId, asin) {
-      const brand = brands.find(b => b.id === brandId);
+    async function selectAsinForPO(brandId, asin) {
+      let brand = brands.find(b => b.id === brandId);
       if (!brand) return;
+      // inboundByAsin/onHandByAsin exist ONLY on the /api/brands/:id detail
+      // response — the list endpoint this page loads doesn't carry them, so
+      // the subtraction below silently used 0/0 and over-suggested by the
+      // full on-hand + inbound stock. Reuse selectedBrand when it matches,
+      // else fetch the detail.
+      if (!brand.inboundByAsin && !brand.onHandByAsin) {
+        if (selectedBrand?.id === brandId && (selectedBrand.inboundByAsin || selectedBrand.onHandByAsin)) {
+          brand = selectedBrand;
+        } else {
+          try {
+            const detail = await fetch(`/api/brands/${encodeURIComponent(brandId)}`).then(r => r.json());
+            if (detail && detail.id === brandId) brand = detail;
+          } catch (e) { console.warn('brand detail fetch failed — qty suggestion may ignore stock on hand', e); }
+        }
+      }
 
       const cfg = brand.asinConfig?.[asin] || { type: 'single' };
       const title = cfg.supplierName || brand.asinTitles?.[asin] || asin;

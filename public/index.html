@@ -104,8 +104,8 @@
               <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('cvr')">CVR <span class="sort-ind" data-col="cvr"></span></th>
               <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('buyBox')">Buy Box <span class="sort-ind" data-col="buyBox"></span></th>
               <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('inventory')">Inventory <span class="sort-ind" data-col="inventory"></span></th>
-              <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('costPerUnit')">COGS <span class="sort-ind" data-col="costPerUnit"></span></th>
-              <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('totalCogs')">Total COGS <span class="sort-ind" data-col="totalCogs"></span></th>
+              <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('costPerUnitDisp')">COGS <span class="sort-ind" data-col="costPerUnitDisp"></span></th>
+              <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('totalCogsDisp')">Total COGS <span class="sort-ind" data-col="totalCogsDisp"></span></th>
               <th id="feesTh" class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('fees')" title="Real Amazon fees posted in the period (referral + FBA + other item fees) from the Finances API">Fees <span class="sort-ind" data-col="fees"></span></th>
               <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('adSpend')" title="Sponsored Products spend attributed to this ASIN">Ads <span class="sort-ind" data-col="adSpend"></span></th>
               <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('netProfit')" title="Sales − COGS − Amazon fees − ad spend − refunds">Net Profit <span class="sort-ind" data-col="netProfit"></span></th>
@@ -309,6 +309,9 @@
         sales, units, sessions, amzFees, serviceFees, refunds, refundCount, refundFee, adSpend,
         cogsTotal, grossProfit, netProfit, estPayout, margin, roi,
         realAcos, pctRefunds,
+        // Today: fees are trailing-rate estimates (server sets this) — tile
+        // renders ~ so an estimate never reads as settled truth.
+        estimated: !!preset.financialsEstimated,
         startDate: preset.startDate, endDate: preset.endDate,
         fmtC
       };
@@ -349,11 +352,13 @@
         </div>`;
       }
 
-      const { fmtC } = m;
+      const { fmtC: fmtCRaw } = m;
+      // ~ prefix on money figures when the tile's fees are intraday estimates
+      const fmtC = m.estimated ? (v => '~' + fmtCRaw(v)) : fmtCRaw;
       const gpClass  = m.grossProfit >= 0 ? 'text-emerald-400' : 'text-red-400';
       const npClass  = m.netProfit   >= 0 ? 'text-emerald-400' : 'text-red-400';
       const mgnColor = m.margin != null ? (m.margin >= 0 ? 'text-emerald-400' : 'text-red-400') : 'text-slate-500';
-      const mgnStr   = m.margin != null ? m.margin.toFixed(1) + '%' : '';
+      const mgnStr   = m.margin != null ? (m.estimated ? '~' : '') + m.margin.toFixed(1) + '%' : '';
 
       const row = (lbl, val, valClass = '') =>
         `<div class="flex items-center justify-between py-2" style="border-bottom:1px solid rgba(255,255,255,0.05)">
@@ -548,6 +553,7 @@
             const adSpend = disp(isCA ? (sku.spendCad || 0) : (sku.spendUsd || 0));
             const refunds = disp(isCA ? (sku.refundPostedCad || 0) : (sku.refundPostedUsd || 0));
             const cogsDisp = disp(totalCogs);
+            const costPerUnitDisp = disp(costPerUnit); // display-converted like every other money column
             const netProfit = (costPerUnit > 0 && fees != null)
               ? rev - cogsDisp - fees - adSpend - refunds : null;
             const margin = netProfit != null && rev > 0 ? (netProfit / rev) * 100 : null;
@@ -563,7 +569,9 @@
               revenueCad: revCad, revenueUsd: revUsd, revenue: rev,
               sessions: sku.sessions || 0,
               buyBox: sku.buyBox ?? null, cvr: sku.cvr ?? null,
-              inventory, costPerUnit, totalCogs, fees, feesEstimated, adSpend, refunds, netProfit, margin,
+              inventory, costPerUnit, totalCogs,
+              costPerUnitDisp, totalCogsDisp: cogsDisp,
+              fees, feesEstimated, adSpend, refunds, netProfit, margin,
               imageUrl: sku.imageUrl || null
             });
           }
@@ -716,7 +724,7 @@
         const est = s.feesEstimated;
         const tilde = est ? '~' : '';
         const npTitle = s.netProfit != null
-          ? `Sales ${fmtN(s.revenue)} − COGS ${fmtN(getNum(s.marketplace === 'CA' ? s.totalCogs : 0, s.marketplace === 'CA' ? 0 : s.totalCogs))} − Fees ${tilde}${fmtN(s.fees)} − Ads ${fmtN(s.adSpend)} − Refunds ${fmtN(s.refunds)}${est ? '. Fees estimated from trailing 14-day per-unit rates — replaced with Amazon-posted fees within 24–48h. Refunds excluded intraday.' : ''}`
+          ? `Sales ${fmtN(s.revenue)} − COGS ${fmtN(s.totalCogsDisp)} − Fees ${tilde}${fmtN(s.fees)} − Ads ${fmtN(s.adSpend)} − Refunds ${fmtN(s.refunds)}${est ? '. Fees estimated from trailing 14-day per-unit rates — replaced with Amazon-posted fees within 24–48h. Refunds excluded intraday.' : ''}`
           : (s.costPerUnit > 0 ? 'No posted-fee data for this period yet' : 'Enter COGS to see net profit');
         const bbColor = s.buyBox == null ? 'text-slate-600' : s.buyBox >= 90 ? 'text-emerald-400' : s.buyBox >= 70 ? 'text-amber-400' : 'text-red-400';
 
@@ -746,8 +754,8 @@
           <td class="px-4 py-3 text-right text-slate-400">${s.cvr != null ? s.cvr.toFixed(2) + '%' : '—'}</td>
           <td class="px-4 py-3 text-right ${bbColor}">${s.buyBox != null ? s.buyBox.toFixed(1) + '%' : '—'}</td>
           <td class="px-4 py-3 text-right text-slate-400">${s.inventory.toLocaleString()}</td>
-          <td class="px-4 py-3 text-right ${s.costPerUnit > 0 ? 'text-slate-400' : 'text-slate-600'}">${s.costPerUnit > 0 ? fmtN(s.costPerUnit) : '—'}</td>
-          <td class="px-4 py-3 text-right ${s.totalCogs > 0 ? 'text-slate-400' : 'text-slate-600'}">${s.costPerUnit > 0 ? fmtN(s.totalCogs) : '—'}</td>
+          <td class="px-4 py-3 text-right ${s.costPerUnit > 0 ? 'text-slate-400' : 'text-slate-600'}">${s.costPerUnit > 0 ? fmtN(s.costPerUnitDisp) : '—'}</td>
+          <td class="px-4 py-3 text-right ${s.totalCogs > 0 ? 'text-slate-400' : 'text-slate-600'}">${s.costPerUnit > 0 ? fmtN(s.totalCogsDisp) : '—'}</td>
           <td class="px-4 py-3 text-right ${s.fees != null ? 'text-slate-400' : 'text-slate-600'}">${s.fees != null ? tilde + fmtN(s.fees) : '—'}</td>
           <td class="px-4 py-3 text-right ${s.adSpend > 0 ? 'text-slate-400' : 'text-slate-600'}">${s.adSpend > 0 ? fmtN(s.adSpend) : '—'}</td>
           <td class="px-4 py-3 text-right ${npColor} font-medium" title="${npTitle}">${s.netProfit != null ? tilde + (s.netProfit < 0 ? '-' : '') + fmtN(s.netProfit) : '—'}</td>
@@ -850,7 +858,7 @@
       const tbody = document.getElementById('brandTableBody');
 
       if (!brandsData.length) {
-        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-slate-500 py-8">No brands — <a href="/admin.html" class="text-indigo-400">add one</a></td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" class="text-center text-slate-500 py-8">No brands — <a href="/admin.html" class="text-indigo-400">add one</a></td></tr>';
         document.getElementById('brandPagination').innerHTML = '';
         updateBrandSortIndicators();
         return;

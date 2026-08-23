@@ -675,7 +675,9 @@
           (asinSku ? '<a href="' + (asinMp === 'US' ? 'https://sellercentral.amazon.com' : 'https://sellercentral.amazon.ca') + '/skucentral?mSku=' + encodeURIComponent(asinSku) + '" target="_blank" rel="noopener" class="font-mono text-xs text-slate-500 mt-0.5 max-w-[160px] truncate hover:underline block" title="' + skuEsc + '">' + skuEsc + '</a>' : '') +
         '</td>' +
         '<td class="px-4 py-3 text-slate-300 text-xs max-w-xs truncate" title="' + titleEsc + '">' + titleEsc + '</td>' +
-        '<td class="px-4 py-3"><span class="text-xs px-2 py-0.5 rounded-full font-medium ' + statusColor + '">' + s.status + '</span></td>' +
+        '<td class="px-4 py-3">' + (s.status
+          ? '<span class="text-xs px-2 py-0.5 rounded-full font-medium ' + statusColor + '">' + s.status + '</span>'
+          : '<span class="text-xs text-slate-600">—</span>') + '</td>' +
         '<td class="px-4 py-3 text-right font-medium text-slate-100 cursor-pointer underline decoration-dotted decoration-slate-600" onmouseenter="showSalesPopup(event, \'' + s.asin + '\')" onmouseleave="hideSalesPopup()">' + fmt(s.revenueCad, s.revenueUsd) + '</td>' +
         '<td class="px-4 py-3 text-right text-slate-300">' + s.units + '</td>' +
         '<td class="px-4 py-3 text-right font-medium ' + bbColor + '">' + (s.buyBox != null ? s.buyBox.toFixed(1) + '%' : 'â€”') + '</td>' +
