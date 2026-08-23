@@ -12,16 +12,17 @@ plus the multi-marketplace Phase-2 checklist. Triage into the Notion Build Log.
 1. ~~**MCP token rotation (HIGH).**~~ **DONE 2026-08-24**: token rotated via
    Render env + claude.ai connector, code fallback removed (`dc458a8`),
    verified old token 401s and new token 200s on both hosts.
-2. **Promotions role — BLOCKED on Developer Central access.** The Promotions
-   API returns 403 (role missing). Attempting the role edit hits "Access
-   required" on the current Seller Central login: the developer registration
-   lives under a different login/permission. Resolve where the SP-API app's
-   developer profile actually lives (likely the primary account holder user or
-   the US marketplace login), grant the current user the Develop-Apps
-   permission, then: enable the Promotions role → re-authorize → rotate
-   SP_API_REFRESH_TOKEN in Render + both .envs. Until then SP_API_REFRESH_TOKEN
-   stays on the current (valid) token and the Promos column stays empty. (Code
-   envelope bug already fixed.)
+2. **Promotions API — PARKED, unfixable for this app (2026-08-24).** The
+   Promotions API v2021-06-01 returns 403 and Amazon's seller-application role
+   list contains NO role that maps to it — the app's roles checklist has no
+   Promotions checkbox and none of the 12 grantable roles covers the API. No
+   portal navigation, role edit, or refresh-token re-auth can clear the 403;
+   do not re-attempt. SP_API_REFRESH_TOKEN was left untouched (still valid).
+   The code-side envelope bug is fixed and the keep-previous guard is in place,
+   so the Promos column simply shows — with zero operational impact.
+   **Viable alternative if wanted:** rebuild promo badges on
+   GET_PROMOTION_PERFORMANCE_REPORT (Reports API), covered by the Selling
+   Partner Insights role the app already has — a normal report-sync build.
 3. **Team data mapping** (integrity checks, recurring): 8 unmapped ASINs carry
    ~$2.5k/30d revenue (top: B0GLZ1448F $1,335); ~6 bundle/set SKUs carry
    ~$930/7d of fees unattributed; COGS gaps: big-league-chew 57%, viva 75%,
