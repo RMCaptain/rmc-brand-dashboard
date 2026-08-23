@@ -1291,15 +1291,22 @@ async function syncBrandMetrics(brands) {
   }
 
   // ── Active Promotions (COUPON + PED) ────────────────────────────────────────
+  // null = every promo call failed → keep each brand's previous badges rather
+  // than wiping them for a transient API failure (same guard as S&S below).
+  // An empty {} from a SUCCESSFUL fetch is real data: no active promos.
   const asinPromos = await fetchActivePromotions(marketplaceIds, token).catch(e => {
     console.log('[Sync] Promotions fetch skipped:', e.message);
-    return {};
+    return null;
   });
-  for (const brand of brands) {
-    brand.asinPromos = {};
-    for (const asin of brand.asins) {
-      if (asinPromos[asin]?.length) brand.asinPromos[asin] = asinPromos[asin];
+  if (asinPromos !== null) {
+    for (const brand of brands) {
+      brand.asinPromos = {};
+      for (const asin of brand.asins) {
+        if (asinPromos[asin]?.length) brand.asinPromos[asin] = asinPromos[asin];
+      }
     }
+  } else {
+    console.log('[Sync] Promotions: keeping previous badges (fetch failed everywhere)');
   }
 
   // ── Subscribe & Save subscriber counts ──────────────────────────────────────
@@ -1966,11 +1973,13 @@ async function fetchActivePromotions(marketplaceIds, token) {
   const asinPromos = {};
   const now = Date.now();
   const TYPES = [['COUPON', 'COUPON'], ['PRIME_EXCLUSIVE_DISCOUNT', 'PED']];
+  let successCount = 0;
 
   for (const mpId of marketplaceIds) {
     for (const [apiType, badge] of TYPES) {
       try {
         const data = await spRequest('GET', `/promotions/v2021-06-01/promotions?marketplaceId=${mpId}&promotionType=${apiType}`, token);
+        successCount++;
         const active = (data.promotions || []).filter(p => !p.endDate || new Date(p.endDate) > now);
         console.log(`[Promos] ${badge} ${mpId}: ${active.length} active`);
         for (const promo of active) {
@@ -1991,6 +2000,9 @@ async function fetchActivePromotions(marketplaceIds, token) {
     }
   }
 
+  // Every call failed (auth outage, throttle storm) → signal the caller to
+  // keep previous badges instead of treating "no data" as "no promos".
+  if (successCount === 0) throw new Error('all promotion list calls failed');
   return Object.fromEntries(Object.entries(asinPromos).map(([k, v]) => [k, [...v]]));
 }
 

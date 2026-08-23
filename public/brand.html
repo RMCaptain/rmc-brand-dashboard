@@ -1,9 +1,9 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Brand Detail — RMC Dashboard</title>
+  <title>Brand Detail â€” RMC Dashboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
@@ -55,11 +55,11 @@
       <span class="text-slate-600">/</span>
       <div class="flex items-center gap-2">
         <div id="brandColorDot" class="w-3 h-3 rounded-full"></div>
-        <h1 id="brandName" class="text-lg font-semibold text-white">—</h1>
+        <h1 id="brandName" class="text-lg font-semibold text-white">â€”</h1>
         <span id="brandMarketplace" class="text-xs text-slate-400 bg-slate-700 px-2 py-0.5 rounded-full"></span>
       </div>
       <div class="ml-auto flex items-center gap-3">
-        <a id="editMappingLink" href="#" class="text-sm font-medium transition-colors" style="color:var(--brand)">Edit ASIN Mapping →</a>
+        <a id="editMappingLink" href="#" class="text-sm font-medium transition-colors" style="color:var(--brand)">Edit ASIN Mapping â†’</a>
       </div>
     </div>
 
@@ -77,11 +77,11 @@
           <option value="mtd">Month to Date</option>
           <option value="lastMonth">Last Month</option>
           <option value="ytd">Year to Date</option>
-          <option value="custom">Custom Range…</option>
+          <option value="custom">Custom Rangeâ€¦</option>
         </select>
         <div id="customDateRow" class="hidden flex items-center gap-2">
           <input type="date" id="customFrom" class="rmc-input" style="padding:4px 8px;font-size:11px;width:128px;color-scheme:dark" />
-          <span style="color:var(--text-3);font-size:11px;padding:0 2px">–</span>
+          <span style="color:var(--text-3);font-size:11px;padding:0 2px">â€“</span>
           <input type="date" id="customTo" class="rmc-input" style="padding:4px 8px;font-size:11px;width:128px;color-scheme:dark" />
           <button onclick="applyCustomRange()" class="preset-btn active">Apply</button>
         </div>
@@ -116,6 +116,9 @@
               <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('cvr')">CVR <span class="sort-asin-ind" data-col="cvr"></span></th>
               <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('adSpend')">Ad Spend <span class="sort-asin-ind" data-col="adSpend"></span></th>
               <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('acos')">ACOS <span class="sort-asin-ind" data-col="acos"></span></th>
+              <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('fees')" title="Real Amazon fees posted in the period (referral + FBA + other item fees). ~ = estimated intraday">Fees <span class="sort-asin-ind" data-col="fees"></span></th>
+              <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('netProfit')" title="Revenue âˆ’ COGS âˆ’ Amazon fees âˆ’ ad spend âˆ’ refunds">Net Profit <span class="sort-asin-ind" data-col="netProfit"></span></th>
+              <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('margin')" title="Net profit Ã· revenue">Margin <span class="sort-asin-ind" data-col="margin"></span></th>
               <th class="text-left" style="color:var(--text-2)">Promos</th>
               <th class="text-right" style="color:var(--text-2)">S&amp;S Subs</th>
               <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('inventory')">Inventory <span class="sort-asin-ind" data-col="inventory"></span></th>
@@ -126,7 +129,7 @@
               <th class="text-right">UPC</th>
               <th class="text-right">Case Pack Size (units)</th>
               <th class="text-center">Type</th>
-              <th class="text-right"><a href="/products.html" class="text-xs hover:underline" style="color:var(--text-3)">Edit in Product Data →</a></th>
+              <th class="text-right"><a href="/products.html" class="text-xs hover:underline" style="color:var(--text-3)">Edit in Product Data â†’</a></th>
             </tr>
           </thead>
           <tbody id="skuTable">
@@ -137,18 +140,18 @@
 
       <!-- No data state -->
       <div id="noDataState" class="hidden px-5 py-12 text-center">
-        <p class="text-sm" style="color:var(--text-3)">No SKU data available yet — sync pending.</p>
+        <p class="text-sm" style="color:var(--text-3)">No SKU data available yet â€” sync pending.</p>
       </div>
 
       <!-- No ASINs state -->
       <div id="noAsinState" class="hidden px-5 py-12 text-center">
         <p class="text-sm mb-2" style="color:var(--text-2)">No ASINs mapped to this brand yet.</p>
-        <a id="addAsinLink" href="#" class="text-sm font-medium" style="color:var(--brand)">Add ASINs in mapping →</a>
+        <a id="addAsinLink" href="#" class="text-sm font-medium" style="color:var(--brand)">Add ASINs in mapping â†’</a>
       </div>
     </div>
 
-    <!-- Portal Access — team-side management of this brand's portal logins.
-         Create a contact → copy the one-time invite link → send it; the brand
+    <!-- Portal Access â€” team-side management of this brand's portal logins.
+         Create a contact â†’ copy the one-time invite link â†’ send it; the brand
          sets their own password on first visit. -->
     <div class="rmc-card mt-6" id="portalCard">
       <div class="px-5 py-4 flex items-center justify-between" style="border-bottom:1px solid var(--border)">
@@ -156,7 +159,7 @@
         <span class="text-xs" style="color:var(--text-3)">Brand logins for the client portal</span>
       </div>
       <div class="px-5 py-4">
-        <div id="portalUsers" class="text-sm" style="color:var(--text-2)">Loading…</div>
+        <div id="portalUsers" class="text-sm" style="color:var(--text-2)">Loadingâ€¦</div>
         <div class="mt-4 flex items-end gap-2 flex-wrap">
           <div>
             <label class="block text-xs mb-1" style="color:var(--text-3)">Contact email</label>
@@ -226,6 +229,33 @@
       return null;
     }
 
+    // Per-ASIN net economics in the DISPLAY currency: revenue âˆ’ COGS âˆ’ real
+    // Amazon fees âˆ’ ad spend âˆ’ refunds. netProfit stays null when fee data is
+    // absent for the period, or when a marketplace with units lacks per-unit
+    // COGS â€” never show a fake margin on incomplete costs. estimated=true on
+    // the Today preset (trailing-rate fees, self-corrects within 24-48h).
+    function calcSkuNet(brand, s) {
+      if (!s) return { fees: null, netProfit: null, margin: null, estimated: false };
+      const conv = (cad, usd) => currency === 'CAD'
+        ? (cad || 0) + (usd || 0) * fxRate.usdToCad
+        : (usd || 0) + (cad || 0) * fxRate.cadToUsd;
+      const feesKnown = s.feesCad != null || s.feesUsd != null;
+      const fees = feesKnown ? conv(s.feesCad, s.feesUsd) : null;
+      const cmp = brand.cogsPerMarketplace?.[s.asin];
+      const legacy = brand.cogs?.[s.asin];
+      const cogsCA = cmp?.CA ?? (brand.marketplace !== 'US' ? legacy : null);
+      const cogsUS = cmp?.US ?? (brand.marketplace === 'US' ? legacy : null);
+      const uCa = s.unitsCad ?? s.unitsCa ?? 0, uUs = s.unitsUsd ?? s.unitsUs ?? 0;
+      const cogsOk = (!(uCa > 0) || cogsCA != null) && (!(uUs > 0) || cogsUS != null) && (cogsCA != null || cogsUS != null);
+      const rev = conv(s.revenueCad, s.revenueUsd);
+      const cogsTot = conv(uCa * (cogsCA || 0), uUs * (cogsUS || 0));
+      const spend = conv(s.spendCad, s.spendUsd);
+      const refunds = conv(s.refundPostedCad, s.refundPostedUsd);
+      const netProfit = (feesKnown && cogsOk) ? rev - cogsTot - fees - spend - refunds : null;
+      const margin = netProfit != null && rev > 0 ? netProfit / rev * 100 : null;
+      return { fees, netProfit, margin, estimated: !!s.feesEstimated };
+    }
+
     function sortAsinBy(col) {
       if (asinSortCol === col) asinSortDir *= -1;
       else { asinSortCol = col; asinSortDir = -1; }
@@ -235,7 +265,7 @@
     function updateAsinSortIndicators() {
       document.querySelectorAll('.sort-asin-ind').forEach(el => {
         const col = el.dataset.col;
-        el.textContent = col === asinSortCol ? (asinSortDir === -1 ? '↓' : '↑') : '';
+        el.textContent = col === asinSortCol ? (asinSortDir === -1 ? 'â†“' : 'â†‘') : '';
       });
       document.querySelectorAll('.sortable-asin-th').forEach(th => {
         const col = th.querySelector('.sort-asin-ind')?.dataset.col;
@@ -283,6 +313,9 @@
           bv = currency === 'CAD' ? (sb?.spendCad || 0) + (sb?.spendUsd || 0) * fxRate.usdToCad : (sb?.spendUsd || 0) + (sb?.spendCad || 0) * fxRate.cadToUsd;
         }
         else if (asinSortCol === 'acos') { av = sa?.acos ?? -1; bv = sb?.acos ?? -1; }
+        else if (asinSortCol === 'fees') { av = calcSkuNet(brand, sa).fees ?? -Infinity; bv = calcSkuNet(brand, sb).fees ?? -Infinity; }
+        else if (asinSortCol === 'netProfit') { av = calcSkuNet(brand, sa).netProfit ?? -Infinity; bv = calcSkuNet(brand, sb).netProfit ?? -Infinity; }
+        else if (asinSortCol === 'margin') { av = calcSkuNet(brand, sa).margin ?? -Infinity; bv = calcSkuNet(brand, sb).margin ?? -Infinity; }
         else { av = 0; bv = 0; }
         if (typeof av === 'string') return asinSortDir * av.localeCompare(bv);
         return asinSortDir * (av < bv ? -1 : av > bv ? 1 : 0);
@@ -290,7 +323,7 @@
     }
 
     // saveCogs() removed 2026-07-15: wrote the single-value legacy COGS field
-    // and was never wired to anything. COGS is per-marketplace — edit it on the
+    // and was never wired to anything. COGS is per-marketplace â€” edit it on the
     // Products page or via the bulk CSV.
 
     async function saveLeadTime(brandId, asin, days) {
@@ -358,7 +391,7 @@
       activePreset = 'custom';
       localStorage.setItem('brandPreset', 'custom');
       const fmtLabel = d => new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-      document.getElementById('dateRangeLabel').textContent = from === to ? fmtLabel(from) : `${fmtLabel(from)} – ${fmtLabel(to)}`;
+      document.getElementById('dateRangeLabel').textContent = from === to ? fmtLabel(from) : `${fmtLabel(from)} â€“ ${fmtLabel(to)}`;
       fetch(`/api/metrics?from=${from}&to=${to}`)
         .then(r => r.json())
         .then(d => { customData = d; if (brandCache) renderBrand({ ...brandCache, metrics: customData.brands?.[brandCache.id] || null }); });
@@ -381,7 +414,7 @@
           // Freshness + Pending-estimate honesty on the live label
           if (d?.estimated && d?.updatedAt) {
             const asOf = new Date(d.updatedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-            const est  = d.estimated.estUnits > 0 ? ` · ${d.estimated.estUnits} units estimated` : '';
+            const est  = d.estimated.estUnits > 0 ? ` Â· ${d.estimated.estUnits} units estimated` : '';
             document.getElementById('dateRangeLabel').textContent = `${fmtLabel(today)} (live, as of ${asOf}${est})`;
           }
           if (brandCache) renderBrand({ ...brandCache, metrics: todayData.brands?.[brandCache.id] || null });
@@ -392,7 +425,7 @@
       if (key === 'custom') {
         if (customFrom && customTo) {
           const fmtLabel = d => new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-          document.getElementById('dateRangeLabel').textContent = customFrom === customTo ? fmtLabel(customFrom) : `${fmtLabel(customFrom)} – ${fmtLabel(customTo)}`;
+          document.getElementById('dateRangeLabel').textContent = customFrom === customTo ? fmtLabel(customFrom) : `${fmtLabel(customFrom)} â€“ ${fmtLabel(customTo)}`;
           fetch(`/api/metrics?from=${customFrom}&to=${customTo}`)
             .then(r => r.json())
             .then(d => { customData = d; if (brandCache) renderBrand({ ...brandCache, metrics: customData.brands?.[brandCache.id] || null }); });
@@ -405,7 +438,7 @@
         const fmtLabel = d => new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
         document.getElementById('dateRangeLabel').textContent = meta.startDate === meta.endDate
           ? fmtLabel(meta.startDate)
-          : `${fmtLabel(meta.startDate)} – ${fmtLabel(meta.endDate)}`;
+          : `${fmtLabel(meta.startDate)} â€“ ${fmtLabel(meta.endDate)}`;
       }
 
       if (brandCache) {
@@ -468,7 +501,7 @@
     function _renderBrand(brand) {
 
       // Header
-      document.title = `${brand.name} — RMC Dashboard`;
+      document.title = `${brand.name} â€” RMC Dashboard`;
       document.getElementById('brandName').textContent = brand.name;
       document.getElementById('brandColorDot').style.background = brand.color;
       document.getElementById('brandMarketplace').textContent = brand.marketplace;
@@ -476,13 +509,16 @@
       document.getElementById('addAsinLink').href = `/admin.html?brand=${brand.id}`;
 
       const m  = brand.metrics ? brand.metrics.summary : null;
-      const ad = brand.metrics ? brand.metrics.adSummary : null;
+      // adSummary moved under summary when the preset rebuild landed (server
+      // rebuildPresetSummariesFromDaily nests it) â€” accept both shapes so the
+      // Ad Spend / ACOS tiles don't silently blank out.
+      const ad = brand.metrics ? (brand.metrics.adSummary || brand.metrics.summary?.adSummary || null) : null;
 
       // Build summary tile data
       const adSpendDisp = ad && (ad.spendCad > 0 || ad.spendUsd > 0)
-        ? fmt(ad.spendCad, ad.spendUsd) : '—';
-      const acosDisp = ad?.acos != null ? ad.acos.toFixed(1) + '%' : '—';
-      const roasDisp = ad?.roas != null ? ad.roas.toFixed(2) + 'x' : '—';
+        ? fmt(ad.spendCad, ad.spendUsd) : 'â€”';
+      const acosDisp = ad?.acos != null ? ad.acos.toFixed(1) + '%' : 'â€”';
+      const roasDisp = ad?.roas != null ? ad.roas.toFixed(2) + 'x' : 'â€”';
       const acosColor = ad?.acos != null
         ? (ad.acos > 30 ? '#f87171' : ad.acos > 20 ? '#fbbf24' : '#34d399')
         : 'var(--text-3)';
@@ -496,11 +532,11 @@
 
       const totalSns = Object.values(brand.asinSns || {}).reduce((a, b) => a + b, 0);
       document.getElementById('summaryTiles').innerHTML = [
-        tile('Revenue',  m ? fmt(m.revenueCad, m.revenueUsd) : '—', m ? (m.units || 0).toLocaleString() + ' units' : null),
-        tile('Sessions', m ? (m.sessions || 0).toLocaleString() : '—', m?.avgCvr != null ? 'CVR ' + m.avgCvr.toFixed(2) + '%' : null),
+        tile('Revenue',  m ? fmt(m.revenueCad, m.revenueUsd) : 'â€”', m ? (m.units || 0).toLocaleString() + ' units' : null),
+        tile('Sessions', m ? (m.sessions || 0).toLocaleString() : 'â€”', m?.avgCvr != null ? 'CVR ' + m.avgCvr.toFixed(2) + '%' : null),
         tile('Ad Spend', adSpendDisp, ad?.clicks ? ad.clicks.toLocaleString() + ' clicks' : null, ad && (ad.spendCad > 0 || ad.spendUsd > 0) ? '#f87171' : undefined),
         tile('ACOS',     acosDisp,    ad?.roas != null ? 'ROAS ' + roasDisp : null, acosColor),
-        tile('S&S Subs', totalSns > 0 ? totalSns.toLocaleString() : '—', totalSns > 0 ? 'active subscribers' : null),
+        tile('S&S Subs', totalSns > 0 ? totalSns.toLocaleString() : 'â€”', totalSns > 0 ? 'active subscribers' : null),
       ].join('');
 
       // Ad metrics card (show only when ad data exists, hide otherwise)
@@ -518,15 +554,15 @@
         adCard.innerHTML = `
           <div class="flex items-center justify-between mb-3">
             <h3 class="text-xs font-semibold" style="color:var(--text-2)">Advertising Performance</h3>
-            <span class="text-xs" style="color:var(--text-3)">Sponsored Products · 14d attribution</span>
+            <span class="text-xs" style="color:var(--text-3)">Sponsored Products Â· 14d attribution</span>
           </div>
           <div class="grid grid-cols-3 md:grid-cols-6 gap-4">
             ${stat('Ad Spend',    adSpendDisp)}
             ${stat('Attr. Sales', fmt(ad.attributedSalesCad, ad.attributedSalesUsd))}
             ${stat('ACOS',        acosDisp)}
             ${stat('ROAS',        roasDisp)}
-            ${stat('CTR',         ad.ctr != null ? ad.ctr.toFixed(3) + '%' : '—')}
-            ${stat('Ad CVR',      ad.adCvr != null ? ad.adCvr.toFixed(1) + '%' : '—')}
+            ${stat('CTR',         ad.ctr != null ? ad.ctr.toFixed(3) + '%' : 'â€”')}
+            ${stat('Ad CVR',      ad.adCvr != null ? ad.adCvr.toFixed(1) + '%' : 'â€”')}
           </div>`;
       } else if (existingAdCard) {
         existingAdCard.style.display = 'none';
@@ -544,7 +580,7 @@
                 class="flex items-center gap-2 bg-red-900/30 border border-red-800 rounded-lg px-4 py-2 text-sm text-red-400 hover:bg-red-900/50 transition-colors">
                 <span class="font-semibold">${m.alerts.suppressedListings}</span>
                 suppressed listing${m.alerts.suppressedListings > 1 ? 's' : ''}
-                <span class="text-red-600 text-xs ml-1">— current snapshot · Fix in Seller Central →</span>
+                <span class="text-red-600 text-xs ml-1">â€” current snapshot Â· Fix in Seller Central â†’</span>
               </a>`
             : '',
           m.alerts.lostBuyBox > 0
@@ -552,7 +588,7 @@
                 class="flex items-center gap-2 bg-amber-900/30 border border-amber-800 rounded-lg px-4 py-2 text-sm text-amber-400 hover:bg-amber-900/50 transition-colors">
                 <span class="font-semibold">${m.alerts.lostBuyBox}</span>
                 ASIN${m.alerts.lostBuyBox > 1 ? 's' : ''} with Buy Box &lt; 80%
-                <span class="text-amber-600 text-xs ml-1">— avg over selected period · See ASINs below ↓</span>
+                <span class="text-amber-600 text-xs ml-1">â€” avg over selected period Â· See ASINs below â†“</span>
               </a>`
             : ''
         ].join('');
@@ -575,7 +611,7 @@
             <td class="px-5 py-3">
               <a href="${mp === 'US' ? 'https://www.amazon.com' : 'https://www.amazon.ca'}/dp/${asin}" target="_blank" rel="noopener" class="font-mono text-xs text-slate-400 hover:underline">${asin}</a>
             </td>
-            <td class="px-4 py-3 text-slate-500 text-xs" colspan="19">No data yet</td>
+            <td class="px-4 py-3 text-slate-500 text-xs" colspan="22">No data yet</td>
           </tr>`;
         }).join('');
         return;
@@ -590,7 +626,7 @@
     function buildSkuRow(brand, s, asin) {
       if (!s) return '<tr class="border-b border-slate-700/40 last:border-0">' +
         '<td class="px-5 py-3 font-mono text-xs text-slate-400">' + asin + '</td>' +
-        '<td class="px-4 py-3 text-slate-500 text-xs" colspan="19">No data yet</td></tr>';
+        '<td class="px-4 py-3 text-slate-500 text-xs" colspan="22">No data yet</td></tr>';
 
       const statusColor = s.status === 'active' ? 'bg-emerald-900/40 text-emerald-400'
         : s.status === 'suppressed' ? 'bg-red-900/40 text-red-400' : 'bg-slate-700 text-slate-400';
@@ -600,8 +636,8 @@
       const leadTime = brand.leadTimes?.[s.asin] ?? null;
       const available = (s.inventory?.onHand ?? 0) + (s.inventory?.inbound ?? 0);
       const daysLeft = velocity > 0 ? Math.round(available / velocity) : null;
-      const velDisplay = velocity != null ? velocity.toFixed(1) : '—';
-      const daysDisplay = daysLeft != null ? daysLeft : '—';
+      const velDisplay = velocity != null ? velocity.toFixed(1) : 'â€”';
+      const daysDisplay = daysLeft != null ? daysLeft : 'â€”';
       let daysColor = 'text-slate-300';
       if (daysLeft != null && leadTime != null) {
         if (daysLeft < leadTime) daysColor = 'text-red-400 font-semibold';
@@ -616,7 +652,7 @@
       const upcVal = (brand.upcs?.[s.asin] || '').replace(/"/g, '&quot;');
       const upcCell = cfgType === 'bundle'
         ? '<td class="px-4 py-3 text-right"><span class="text-xs text-slate-500 italic">' + (cfg.components||[]).length + ' component' + ((cfg.components||[]).length !== 1 ? 's' : '') + '</span></td>'
-        : '<td class="px-4 py-3 text-right"><input type="text" value="' + upcVal + '" placeholder="—" class="w-28 text-right text-xs bg-slate-700 border border-slate-600 text-white rounded px-1.5 py-0.5 focus:outline-none focus:border-indigo-500" onchange="saveUpc(\'' + brand.id + '\', \'' + s.asin + '\', this.value)" title="UPC / Barcode" /></td>';
+        : '<td class="px-4 py-3 text-right"><input type="text" value="' + upcVal + '" placeholder="â€”" class="w-28 text-right text-xs bg-slate-700 border border-slate-600 text-white rounded px-1.5 py-0.5 focus:outline-none focus:border-indigo-500" onchange="saveUpc(\'' + brand.id + '\', \'' + s.asin + '\', this.value)" title="UPC / Barcode" /></td>';
 
       const titleEsc = (s.title || '').replace(/"/g, '&quot;');
       const asinSku  = s.sellerSku || brand.asinSkus?.[s.asin] || '';
@@ -642,22 +678,38 @@
         '<td class="px-4 py-3"><span class="text-xs px-2 py-0.5 rounded-full font-medium ' + statusColor + '">' + s.status + '</span></td>' +
         '<td class="px-4 py-3 text-right font-medium text-slate-100 cursor-pointer underline decoration-dotted decoration-slate-600" onmouseenter="showSalesPopup(event, \'' + s.asin + '\')" onmouseleave="hideSalesPopup()">' + fmt(s.revenueCad, s.revenueUsd) + '</td>' +
         '<td class="px-4 py-3 text-right text-slate-300">' + s.units + '</td>' +
-        '<td class="px-4 py-3 text-right font-medium ' + bbColor + '">' + (s.buyBox != null ? s.buyBox.toFixed(1) + '%' : '—') + '</td>' +
-        '<td class="px-4 py-3 text-right text-slate-300">' + (s.cvr != null ? s.cvr.toFixed(2) + '%' : '—') + '</td>' +
+        '<td class="px-4 py-3 text-right font-medium ' + bbColor + '">' + (s.buyBox != null ? s.buyBox.toFixed(1) + '%' : 'â€”') + '</td>' +
+        '<td class="px-4 py-3 text-right text-slate-300">' + (s.cvr != null ? s.cvr.toFixed(2) + '%' : 'â€”') + '</td>' +
         (function() {
           const hasSpend = (s.spendCad > 0 || s.spendUsd > 0);
           const spendDisp = hasSpend
             ? (currency === 'CAD'
                 ? 'CA$' + ((s.spendCad || 0) + (s.spendUsd || 0) * fxRate.usdToCad).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                 : 'US$' + ((s.spendUsd || 0) + (s.spendCad || 0) * fxRate.cadToUsd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
-            : '—';
+            : 'â€”';
           const acosColor = s.acos != null ? (s.acos > 30 ? 'text-red-400' : s.acos > 20 ? 'text-amber-400' : 'text-emerald-400') : 'text-slate-500';
           return '<td class="px-4 py-3 text-right ' + (hasSpend ? 'text-red-400' : 'text-slate-500') + '">' + spendDisp + '</td>' +
-                 '<td class="px-4 py-3 text-right font-medium ' + acosColor + '">' + (s.acos != null ? s.acos.toFixed(1) + '%' : '—') + '</td>';
+                 '<td class="px-4 py-3 text-right font-medium ' + acosColor + '">' + (s.acos != null ? s.acos.toFixed(1) + '%' : 'â€”') + '</td>';
+        })() +
+        (function() {
+          const n = calcSkuNet(brand, s);
+          const sym = currency === 'CAD' ? 'CA$' : 'US$';
+          const money = v => sym + Math.abs(v).toLocaleString(currency === 'CAD' ? 'en-CA' : 'en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          const tilde = n.estimated ? '~' : '';
+          const feesCell = n.fees != null
+            ? '<td class="px-4 py-3 text-right text-slate-400">' + tilde + money(n.fees) + '</td>'
+            : '<td class="px-4 py-3 text-right text-slate-600">â€”</td>';
+          const npColor = n.netProfit == null ? 'text-slate-600' : n.netProfit >= 0 ? 'text-emerald-400' : 'text-red-400';
+          const npCell = '<td class="px-4 py-3 text-right font-medium ' + npColor + '">' +
+            (n.netProfit != null ? tilde + (n.netProfit < 0 ? '-' : '') + money(n.netProfit) : 'â€”') + '</td>';
+          const mgColor = n.margin == null ? 'text-slate-600' : n.margin >= 0 ? 'text-emerald-400' : 'text-red-400';
+          const mgCell = '<td class="px-4 py-3 text-right ' + mgColor + '">' +
+            (n.margin != null ? tilde + n.margin.toFixed(1) + '%' : 'â€”') + '</td>';
+          return feesCell + npCell + mgCell;
         })() +
         (function() {
           const promos = brand.asinPromos?.[s.asin] || [];
-          if (!promos.length) return '<td class="px-4 py-3 text-slate-600 text-xs">—</td>';
+          if (!promos.length) return '<td class="px-4 py-3 text-slate-600 text-xs">â€”</td>';
           const chips = promos.map(p => {
             const cls = p === 'PED' ? 'bg-purple-900/50 text-purple-300' : 'bg-blue-900/50 text-blue-300';
             return '<span class="text-xs px-1.5 py-0.5 rounded font-medium ' + cls + '">' + p + '</span>';
@@ -666,12 +718,12 @@
         })() +
         (function() {
           const subs = brand.asinSns?.[s.asin];
-          return '<td class="px-4 py-3 text-right text-sm font-medium ' + (subs > 0 ? 'text-slate-200' : 'text-slate-600') + '">' + (subs > 0 ? subs.toLocaleString() : '—') + '</td>';
+          return '<td class="px-4 py-3 text-right text-sm font-medium ' + (subs > 0 ? 'text-slate-200' : 'text-slate-600') + '">' + (subs > 0 ? subs.toLocaleString() : 'â€”') + '</td>';
         })() +
         '<td class="px-5 py-3 text-right text-slate-300 font-medium cursor-pointer underline decoration-dotted decoration-slate-600" onmouseenter="showInventoryPopup(event, \'' + s.asin + '\', ' + invJson + ')" onmouseleave="hideInventoryPopup()">' + invTotal + '</td>' +
         '<td class="px-4 py-3 text-right text-slate-500 text-xs">' + velDisplay + ' u/d</td>' +
-        '<td class="px-4 py-3 text-right ' + daysColor + '">' + (daysDisplay !== '—' ? daysDisplay + 'd' : '—') + '</td>' +
-        '<td class="px-4 py-3 text-right text-xs" style="color:var(--text-2)">' + (leadTime != null ? leadTime + 'd' : '—') + '</td>' +
+        '<td class="px-4 py-3 text-right ' + daysColor + '">' + (daysDisplay !== 'â€”' ? daysDisplay + 'd' : 'â€”') + '</td>' +
+        '<td class="px-4 py-3 text-right text-xs" style="color:var(--text-2)">' + (leadTime != null ? leadTime + 'd' : 'â€”') + '</td>' +
         (function() {
           const cmp = brand.cogsPerMarketplace?.[s.asin];
           const legacyCogs = brand.cogs?.[s.asin];
@@ -680,16 +732,16 @@
           const parts = [];
           if (cogsCA != null) parts.push('<span style="color:#60a5fa;font-size:9px;font-weight:600">CA</span> $' + Number(cogsCA).toFixed(2));
           if (cogsUS != null) parts.push('<span style="color:#4ade80;font-size:9px;font-weight:600">US</span> $' + Number(cogsUS).toFixed(2));
-          return '<td class="px-4 py-3 text-right text-xs" style="color:var(--text-2)">' + (parts.length ? parts.join('<br>') : '—') + '</td>';
+          return '<td class="px-4 py-3 text-right text-xs" style="color:var(--text-2)">' + (parts.length ? parts.join('<br>') : 'â€”') + '</td>';
         })() +
-        '<td class="px-4 py-3 text-right text-xs font-mono" style="color:var(--text-2)">' + (brand.upcs?.[s.asin] || '—') + '</td>' +
-        '<td class="px-4 py-3 text-right text-xs" style="color:var(--text-2)">' + (brand.casePacks?.[s.asin] ?? '—') + '</td>' +
+        '<td class="px-4 py-3 text-right text-xs font-mono" style="color:var(--text-2)">' + (brand.upcs?.[s.asin] || 'â€”') + '</td>' +
+        '<td class="px-4 py-3 text-right text-xs" style="color:var(--text-2)">' + (brand.casePacks?.[s.asin] ?? 'â€”') + '</td>' +
         '<td class="px-4 py-3 text-center text-xs ' + typeColor + '"><a href="/products.html" title="Edit in Products" class="' + typeColor + ' hover:underline">' + typeLabel + '</a></td>' +
-        '<td class="px-3 py-3 text-right"><button class="asin-remove-btn text-slate-500 hover:text-red-400 transition-colors text-sm leading-none" title="Remove ' + s.asin + ' from this brand" onclick="removeAsinFromBrand(\'' + brand.id + '\', \'' + s.asin + '\')">×</button></td>' +
+        '<td class="px-3 py-3 text-right"><button class="asin-remove-btn text-slate-500 hover:text-red-400 transition-colors text-sm leading-none" title="Remove ' + s.asin + ' from this brand" onclick="removeAsinFromBrand(\'' + brand.id + '\', \'' + s.asin + '\')">Ã—</button></td>' +
         '</tr>';
     }
 
-    // ── Inventory popup ────────────────────────────────────────────────────────
+    // â”€â”€ Inventory popup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     function showInventoryPopup(e, asin, inv) {
       const popup = document.getElementById('inventoryPopup');
@@ -721,7 +773,7 @@
       setTimeout(() => { popup.style.display = 'none'; }, 100);
     }
 
-    // ── Sales popup ────────────────────────────────────────────────────────────
+    // â”€â”€ Sales popup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     const PRESET_LABELS = {
       yesterday:  'Yesterday',
@@ -772,8 +824,8 @@
             ${rows.map(r => `
               <tr class="border-b border-slate-700 last:border-0">
                 <td class="py-1.5 text-slate-400">${r.label}</td>
-                <td class="py-1.5 text-right font-medium text-slate-100">${r.revenueCad !== null ? fmt(r.revenueCad, r.revenueUsd) : '—'}</td>
-                <td class="py-1.5 text-right text-slate-300 pl-4">${r.units !== null ? r.units.toLocaleString() : '—'}</td>
+                <td class="py-1.5 text-right font-medium text-slate-100">${r.revenueCad !== null ? fmt(r.revenueCad, r.revenueUsd) : 'â€”'}</td>
+                <td class="py-1.5 text-right text-slate-300 pl-4">${r.units !== null ? r.units.toLocaleString() : 'â€”'}</td>
               </tr>`).join('')}
           </tbody>
         </table>`;
@@ -798,9 +850,9 @@
       setTimeout(() => { popup.style.display = 'none'; }, 100);
     }
 
-    // ── Touch support for the sales/inventory detail popups ──────────────────
+    // â”€â”€ Touch support for the sales/inventory detail popups â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // These cells reveal detail on HOVER (onmouseenter), which doesn't exist on
-    // a phone — so on touch the detail was unreachable. Delegate taps: tapping a
+    // a phone â€” so on touch the detail was unreachable. Delegate taps: tapping a
     // trigger cell toggles its popup (positioned at the tap point); tapping
     // elsewhere or scrolling dismisses it. Runs only on touch devices, so the
     // desktop hover behaviour is untouched.
@@ -830,7 +882,7 @@
 
     async function scrapeUpcs() {
       const btn = document.getElementById('scrapeUpcBtn');
-      btn.textContent = 'Scraping…';
+      btn.textContent = 'Scrapingâ€¦';
       btn.disabled = true;
       try {
         const res = await fetch(`/api/brands/${brandId}/scrape-upcs`, { method: 'POST' });
@@ -863,7 +915,7 @@
       }
     }
 
-    // ── Portal Access (team-side) ─────────────────────────────────────────────
+    // â”€â”€ Portal Access (team-side) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     async function loadPortalUsers() {
       const box = document.getElementById('portalUsers');
       try {
@@ -875,9 +927,9 @@
         box.innerHTML = users.map(u => `
           <div class="flex items-center justify-between gap-3 py-2 flex-wrap" style="border-bottom:1px solid rgba(255,255,255,0.05)">
             <div>
-              <span style="color:var(--text)">${u.username || '—'}</span>
-              <span class="text-xs" style="color:var(--text-3)"> · ${u.email}</span>
-              <span class="text-xs" style="color:var(--text-3)"> · ${u.revoked_at ? 'REVOKED' : (u.password_set_at ? 'password set' : 'awaiting first login')}${u.last_login_at ? ' · last login ' + new Date(u.last_login_at).toLocaleDateString() : ''}</span>
+              <span style="color:var(--text)">${u.username || 'â€”'}</span>
+              <span class="text-xs" style="color:var(--text-3)"> Â· ${u.email}</span>
+              <span class="text-xs" style="color:var(--text-3)"> Â· ${u.revoked_at ? 'REVOKED' : (u.password_set_at ? 'password set' : 'awaiting first login')}${u.last_login_at ? ' Â· last login ' + new Date(u.last_login_at).toLocaleDateString() : ''}</span>
             </div>
             <div class="flex gap-2">
               ${u.revoked_at
@@ -907,7 +959,7 @@
         if (!res.ok) { puSay('Error: ' + (data.error || res.status)); return; }
         puSay(`Created <strong>${data.username}</strong>. One-time invite link (15 min):<br>
           <input class="rmc-input mt-1" style="width:100%" readonly value="${data.invite_link}" onclick="this.select()" />
-          <span style="color:var(--text-3)">Send this to the brand — they'll set their own password on first visit.</span>`);
+          <span style="color:var(--text-3)">Send this to the brand â€” they'll set their own password on first visit.</span>`);
         document.getElementById('puEmail').value = ''; document.getElementById('puUsername').value = '';
         loadPortalUsers();
       } catch (e) { puSay('Error: ' + e.message); }
@@ -929,7 +981,7 @@
         const res = await fetch(`/api/portal/users/${id}/${action}`, { method: 'POST' });
         const data = await res.json();
         if (!res.ok) { puSay('Error: ' + (data.error || res.status)); return; }
-        puSay(action === 'revoke' ? 'Revoked — sessions killed.' : 'Restored.');
+        puSay(action === 'revoke' ? 'Revoked â€” sessions killed.' : 'Restored.');
         loadPortalUsers();
       } catch (e) { puSay('Error: ' + e.message); }
     }
