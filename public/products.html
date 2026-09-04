@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Products â€” RMC Dashboard</title>
+  <title>Products — RMC Dashboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
@@ -42,7 +42,7 @@
     <div class="flex items-center justify-between mb-4">
       <div>
         <h1 class="text-lg font-semibold" style="color:var(--text)">Products</h1>
-        <p class="text-xs mt-0.5" style="color:var(--text-3)" id="pageSubtitle">All ASINs across all brands â€” performance metrics.</p>
+        <p class="text-xs mt-0.5" style="color:var(--text-3)" id="pageSubtitle">All ASINs across all brands — performance metrics.</p>
       </div>
       <div class="flex items-center gap-2" id="presetButtons">
         <select id="presetSelect" onchange="onPresetChange(this.value)" class="rmc-select" style="width:auto;min-width:140px;color-scheme:dark">
@@ -56,11 +56,11 @@
           <option value="mtd">Month to Date</option>
           <option value="lastMonth">Last Month</option>
           <option value="ytd">Year to Date</option>
-          <option value="custom">Custom Rangeâ€¦</option>
+          <option value="custom">Custom Range…</option>
         </select>
         <div id="customDateRow" class="hidden flex items-center gap-2">
           <input type="date" id="customFrom" class="rmc-input" style="padding:4px 8px;font-size:11px;width:128px;color-scheme:dark" />
-          <span style="color:var(--text-3);font-size:11px;padding:0 2px">â€“</span>
+          <span style="color:var(--text-3);font-size:11px;padding:0 2px">–</span>
           <input type="date" id="customTo" class="rmc-input" style="padding:4px 8px;font-size:11px;width:128px;color-scheme:dark" />
           <button onclick="applyCustomRange()" class="preset-btn active">Apply</button>
         </div>
@@ -83,7 +83,7 @@
         <svg class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 pointer-events-none" style="color:var(--text-3)" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z"/>
         </svg>
-        <input id="searchInput" type="text" placeholder="Search by ASIN, SKU, or titleâ€¦"
+        <input id="searchInput" type="text" placeholder="Search by ASIN, SKU, or title…"
           class="rmc-input w-full pl-8"
           oninput="onFilterChange()" />
       </div>
@@ -109,8 +109,8 @@
                 <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('adSpend')">Ad Spend <span class="sort-ind" data-col="adSpend"></span></th>
                 <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('acos')">ACOS <span class="sort-ind" data-col="acos"></span></th>
                 <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('fees')" title="Real Amazon fees posted in the period (referral + FBA + other item fees). ~ = estimated intraday">Fees <span class="sort-ind" data-col="fees"></span></th>
-                <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('netProfit')" title="Revenue âˆ’ COGS âˆ’ Amazon fees âˆ’ ad spend âˆ’ refunds">Net Profit <span class="sort-ind" data-col="netProfit"></span></th>
-                <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('margin')" title="Net profit Ã· revenue">Margin <span class="sort-ind" data-col="margin"></span></th>
+                <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('netProfit')" title="Revenue − COGS − Amazon fees − ad spend − refunds">Net Profit <span class="sort-ind" data-col="netProfit"></span></th>
+                <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('margin')" title="Net profit ÷ revenue">Margin <span class="sort-ind" data-col="margin"></span></th>
                 <th class="text-left" style="color:var(--text-2)">Promos</th>
                 <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('sns')">S&amp;S Subs <span class="sort-ind" data-col="sns"></span></th>
                 <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('inventory')">Inventory <span class="sort-ind" data-col="inventory"></span></th>
@@ -188,7 +188,7 @@
     let searchQuery = '';
     let brandFilterId = '';
 
-    // â”€â”€ Tab switcher â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Tab switcher ─────────────────────────────────────────────────────────────
     function setTab(tab) {
       activeTab = tab;
       localStorage.setItem('productsTab', tab);
@@ -196,8 +196,8 @@
       document.getElementById('view-data').classList.toggle('hidden', tab !== 'data');
       document.getElementById('presetButtons').classList.toggle('hidden', tab !== 'performance');
       document.getElementById('pageSubtitle').textContent = tab === 'performance'
-        ? 'All ASINs across all brands â€” performance metrics.'
-        : 'Manage product data for clean PO generation â€” brand, stock #, UPC, case pack size, type, COGS.';
+        ? 'All ASINs across all brands — performance metrics.'
+        : 'Manage product data for clean PO generation — brand, stock #, UPC, case pack size, type, COGS.';
 
       const perfBtn = document.getElementById('tab-performance');
       const dataBtn = document.getElementById('tab-data');
@@ -210,7 +210,7 @@
       else render();
     }
 
-    // â”€â”€ Formatting â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Formatting ──────────────────────────────────────────────────────────────
     function fmt(cad, usd = 0) {
       if (currency === 'CAD') {
         const t = (cad || 0) + (usd || 0) * fxRate.usdToCad;
@@ -225,7 +225,7 @@
       return (usd || 0) + (cad || 0) * fxRate.cadToUsd;
     }
 
-    // â”€â”€ Velocity (same logic as brand.html) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Velocity (same logic as brand.html) ─────────────────────────────────────
     function calcVelocity(asin, brandId) {
       for (const { key, days } of [{ key: 'last30d', days: 30 }, { key: 'mtd', days: null }, { key: 'lastMonth', days: null }]) {
         const preset = presetMetrics.presets?.[key];
@@ -238,7 +238,7 @@
       return null;
     }
 
-    // â”€â”€ Build flat product list â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Build flat product list ──────────────────────────────────────────────────
     // Live range data per preset key (fetched by setPreset) — preferred over
     // the preset_metrics cache, which lags the nightly finalize and made this
     // page disagree with the dashboard/brands pages on the same preset.
@@ -289,8 +289,8 @@
           const invRaw = s?.inventory ?? {};
           const cogsCa = brand.cogsPerMarketplace?.[asin]?.CA ?? (brand.marketplace !== 'US' ? brand.cogs?.[asin] : null) ?? null;
           const cogsUs = brand.cogsPerMarketplace?.[asin]?.US ?? (brand.marketplace === 'US' ? brand.cogs?.[asin] : null) ?? null;
-          // Net economics in display currency: revenue âˆ’ COGS âˆ’ real Amazon
-          // fees âˆ’ ad spend âˆ’ refunds. null net when fee data is absent for the
+          // Net economics in display currency: revenue − COGS − real Amazon
+          // fees − ad spend − refunds. null net when fee data is absent for the
           // period or a marketplace with units lacks COGS (no fake margins).
           // feesEstimated marks Today's trailing-rate estimate (~ in the UI).
           const uCa = s?.unitsCad ?? s?.unitsCa ?? 0, uUs = s?.unitsUsd ?? s?.unitsUs ?? 0;
@@ -349,7 +349,7 @@
       return rows;
     }
 
-    // â”€â”€ Search / filter â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Search / filter ─────────────────────────────────────────────────────────
     function onFilterChange() {
       searchQuery = document.getElementById('searchInput').value.trim().toLowerCase();
       brandFilterId = document.getElementById('brandFilter').value;
@@ -382,7 +382,7 @@
       sel.value = current;
     }
 
-    // â”€â”€ Sort â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Sort ────────────────────────────────────────────────────────────────────
     function sortBy(col) {
       if (sortCol === col) sortDir *= -1;
       else { sortCol = col; sortDir = -1; }
@@ -392,7 +392,7 @@
 
     function updateSortIndicators() {
       document.querySelectorAll('.sort-ind').forEach(el => {
-        el.textContent = el.dataset.col === sortCol ? (sortDir === -1 ? 'â†“' : 'â†‘') : '';
+        el.textContent = el.dataset.col === sortCol ? (sortDir === -1 ? '↓' : '↑') : '';
       });
       document.querySelectorAll('.sortable-th').forEach(th => {
         const col = th.querySelector('.sort-ind')?.dataset.col;
@@ -401,7 +401,7 @@
       });
     }
 
-    // â”€â”€ Pagination â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Pagination ──────────────────────────────────────────────────────────────
     function setPage(p) { currentPage = p; render(); }
     function setPageSize(n) {
       pageSize = n;
@@ -417,7 +417,7 @@
       const pages = [...range].sort((a, b) => a - b);
       let pageBtns = '', prev = null;
       for (const p of pages) {
-        if (prev !== null && p > prev + 1) pageBtns += `<span class="text-xs px-0.5" style="color:var(--text-3)">â€¦</span>`;
+        if (prev !== null && p > prev + 1) pageBtns += `<span class="text-xs px-0.5" style="color:var(--text-3)">…</span>`;
         const active = p === currentPage;
         pageBtns += `<button onclick="setPage(${p})" class="text-xs px-2.5 py-1 rounded transition-colors" style="${active ? 'background:var(--brand);color:#060d05;font-weight:600' : 'color:var(--text-2)'}">${p}</button>`;
         prev = p;
@@ -430,9 +430,9 @@
       el.innerHTML = `
         <div class="flex items-center justify-between px-5 py-3" style="border-top:1px solid var(--border)">
           <div class="flex items-center gap-1">
-            ${totalPages > 1 ? `<button onclick="setPage(${currentPage - 1})" ${prevDis ? 'disabled' : ''} class="text-xs px-2.5 py-1 rounded transition-colors" style="${ns(prevDis)}">â† Prev</button>` : ''}
+            ${totalPages > 1 ? `<button onclick="setPage(${currentPage - 1})" ${prevDis ? 'disabled' : ''} class="text-xs px-2.5 py-1 rounded transition-colors" style="${ns(prevDis)}">← Prev</button>` : ''}
             ${pageBtns}
-            ${totalPages > 1 ? `<button onclick="setPage(${currentPage + 1})" ${nextDis ? 'disabled' : ''} class="text-xs px-2.5 py-1 rounded transition-colors" style="${ns(nextDis)}">Next â†’</button>` : ''}
+            ${totalPages > 1 ? `<button onclick="setPage(${currentPage + 1})" ${nextDis ? 'disabled' : ''} class="text-xs px-2.5 py-1 rounded transition-colors" style="${ns(nextDis)}">Next →</button>` : ''}
           </div>
           <div class="flex items-center gap-1">
             <span class="text-xs mr-1" style="color:var(--text-3)">Rows:</span>
@@ -441,13 +441,13 @@
         </div>`;
     }
 
-    // â”€â”€ Render â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Render ──────────────────────────────────────────────────────────────────
     function render() {
       const tbody = document.getElementById('productTableBody');
       const rows = buildProductList();
 
       if (!rows.length) {
-        tbody.innerHTML = `<tr><td colspan="16" class="text-center py-10" style="color:var(--text-3)">No products â€” run a sync first</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="16" class="text-center py-10" style="color:var(--text-3)">No products — run a sync first</td></tr>`;
         document.getElementById('productPagination').innerHTML = '';
         updateSortIndicators();
         return;
@@ -550,39 +550,39 @@
           </div>
         </td>
         <td class="px-4 py-3">
-          ${r.status ? `<span class="text-xs px-2 py-0.5 rounded-full font-medium ${statusColor}">${r.status}</span>` : `<span style="color:var(--text-3)">â€”</span>`}
+          ${r.status ? `<span class="text-xs px-2 py-0.5 rounded-full font-medium ${statusColor}">${r.status}</span>` : `<span style="color:var(--text-3)">—</span>`}
         </td>
-        <td class="px-4 py-3 text-right font-medium" style="color:var(--text)">${r.revenue > 0 ? fmt(r.revenueCad, r.revenueUsd) : 'â€”'}</td>
-        <td class="px-4 py-3 text-right" style="color:var(--text-2)">${r.units > 0 ? r.units.toLocaleString() : 'â€”'}</td>
-        <td class="px-4 py-3 text-right font-medium ${bbColor}">${r.buyBox != null ? r.buyBox.toFixed(1) + '%' : 'â€”'}</td>
-        <td class="px-4 py-3 text-right" style="color:var(--text-2)">${r.cvr != null ? r.cvr.toFixed(2) + '%' : 'â€”'}</td>
-        <td class="px-4 py-3 text-right ${(r.spendCad > 0 || r.spendUsd > 0) ? 'text-red-400' : ''}" style="${(r.spendCad === 0 && r.spendUsd === 0) ? 'color:var(--text-3)' : ''}">${(r.spendCad > 0 || r.spendUsd > 0) ? fmt(r.spendCad, r.spendUsd) : 'â€”'}</td>
-        <td class="px-4 py-3 text-right font-medium ${r.acos != null ? (r.acos > 30 ? 'text-red-400' : r.acos > 20 ? 'text-amber-400' : 'text-emerald-400') : ''}" style="${r.acos == null ? 'color:var(--text-3)' : ''}">${r.acos != null ? r.acos.toFixed(1) + '%' : 'â€”'}</td>
+        <td class="px-4 py-3 text-right font-medium" style="color:var(--text)">${r.revenue > 0 ? fmt(r.revenueCad, r.revenueUsd) : '—'}</td>
+        <td class="px-4 py-3 text-right" style="color:var(--text-2)">${r.units > 0 ? r.units.toLocaleString() : '—'}</td>
+        <td class="px-4 py-3 text-right font-medium ${bbColor}">${r.buyBox != null ? r.buyBox.toFixed(1) + '%' : '—'}</td>
+        <td class="px-4 py-3 text-right" style="color:var(--text-2)">${r.cvr != null ? r.cvr.toFixed(2) + '%' : '—'}</td>
+        <td class="px-4 py-3 text-right ${(r.spendCad > 0 || r.spendUsd > 0) ? 'text-red-400' : ''}" style="${(r.spendCad === 0 && r.spendUsd === 0) ? 'color:var(--text-3)' : ''}">${(r.spendCad > 0 || r.spendUsd > 0) ? fmt(r.spendCad, r.spendUsd) : '—'}</td>
+        <td class="px-4 py-3 text-right font-medium ${r.acos != null ? (r.acos > 30 ? 'text-red-400' : r.acos > 20 ? 'text-amber-400' : 'text-emerald-400') : ''}" style="${r.acos == null ? 'color:var(--text-3)' : ''}">${r.acos != null ? r.acos.toFixed(1) + '%' : '—'}</td>
         ${(() => {
           const tilde = r.feesEstimated ? '~' : '';
           const money = v => (currency === 'CAD' ? 'CA$' : 'US$') + Math.abs(v).toLocaleString(currency === 'CAD' ? 'en-CA' : 'en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
           const feesCell = r.fees != null
             ? `<td class="px-4 py-3 text-right" style="color:var(--text-2)">${tilde}${money(r.fees)}</td>`
-            : `<td class="px-4 py-3 text-right" style="color:var(--text-3)">â€”</td>`;
+            : `<td class="px-4 py-3 text-right" style="color:var(--text-3)">—</td>`;
           const npCell = r.netProfit != null
             ? `<td class="px-4 py-3 text-right font-medium ${r.netProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}">${tilde}${r.netProfit < 0 ? '-' : ''}${money(r.netProfit)}</td>`
-            : `<td class="px-4 py-3 text-right" style="color:var(--text-3)">â€”</td>`;
+            : `<td class="px-4 py-3 text-right" style="color:var(--text-3)">—</td>`;
           const mgCell = r.margin != null
             ? `<td class="px-4 py-3 text-right ${r.margin >= 0 ? 'text-emerald-400' : 'text-red-400'}">${tilde}${r.margin.toFixed(1)}%</td>`
-            : `<td class="px-4 py-3 text-right" style="color:var(--text-3)">â€”</td>`;
+            : `<td class="px-4 py-3 text-right" style="color:var(--text-3)">—</td>`;
           return feesCell + npCell + mgCell;
         })()}
-        <td class="px-4 py-3">${r.promos.length ? r.promos.map(p => `<span class="text-xs px-1.5 py-0.5 rounded font-medium ${p === 'PED' ? 'bg-purple-900/50 text-purple-300' : 'bg-blue-900/50 text-blue-300'}">${p}</span>`).join(' ') : '<span style="color:var(--text-3)">â€”</span>'}</td>
-        <td class="px-4 py-3 text-right font-medium ${r.sns > 0 ? '' : ''}" style="${r.sns > 0 ? 'color:var(--text)' : 'color:var(--text-3)'}">${r.sns > 0 ? r.sns.toLocaleString() : 'â€”'}</td>
+        <td class="px-4 py-3">${r.promos.length ? r.promos.map(p => `<span class="text-xs px-1.5 py-0.5 rounded font-medium ${p === 'PED' ? 'bg-purple-900/50 text-purple-300' : 'bg-blue-900/50 text-blue-300'}">${p}</span>`).join(' ') : '<span style="color:var(--text-3)">—</span>'}</td>
+        <td class="px-4 py-3 text-right font-medium ${r.sns > 0 ? '' : ''}" style="${r.sns > 0 ? 'color:var(--text)' : 'color:var(--text-3)'}">${r.sns > 0 ? r.sns.toLocaleString() : '—'}</td>
         <td class="px-4 py-3 text-right cursor-pointer underline decoration-dotted decoration-slate-600" style="color:var(--text-2)"
             onmouseenter="showInventoryPopup(event,${JSON.stringify(r.invRaw).replace(/"/g,'&quot;')})"
             onmouseleave="hideInventoryPopup()">${r.inventory.toLocaleString()}</td>
-        <td class="px-4 py-3 text-right text-xs" style="color:var(--text-3)">${r.velocity != null ? r.velocity.toFixed(1) + ' u/d' : 'â€”'}</td>
-        <td class="px-4 py-3 text-right ${daysColor}" style="${daysStyle}">${r.daysLeft != null ? r.daysLeft + 'd' : 'â€”'}</td>
+        <td class="px-4 py-3 text-right text-xs" style="color:var(--text-3)">${r.velocity != null ? r.velocity.toFixed(1) + ' u/d' : '—'}</td>
+        <td class="px-4 py-3 text-right ${daysColor}" style="${daysStyle}">${r.daysLeft != null ? r.daysLeft + 'd' : '—'}</td>
       </tr>`;
     }
 
-    // â”€â”€ Preset â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Preset ──────────────────────────────────────────────────────────────────
     function onPresetChange(key) {
       document.getElementById('customDateRow').classList.toggle('hidden', key !== 'custom');
       if (key !== 'custom') setPreset(key);
@@ -636,7 +636,7 @@
       render(); // immediate paint from cache; live fetch re-renders on arrival
     }
 
-    // â”€â”€ Currency â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Currency ─────────────────────────────────────────────────────────────────
     function updateToggleUI() {
       document.getElementById('toggleCAD').classList.toggle('active', currency === 'CAD');
       document.getElementById('toggleUSD').classList.toggle('active', currency === 'USD');
@@ -649,7 +649,7 @@
       render();
     }
 
-    // â”€â”€ Save helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Save helpers ──────────────────────────────────────────────────────────────
     function patchBrand(brandId, field, asin, value) {
       const brand = brandsData.find(b => b.id === brandId);
       if (brand) { brand[field] = brand[field] || {}; brand[field][asin] = value; }
@@ -681,7 +681,7 @@
     }
 
     // saveCogs() removed 2026-07-15: it wrote the single-value legacy COGS
-    // field and was never wired to anything. COGS is per-marketplace â€” the CA
+    // field and was never wired to anything. COGS is per-marketplace — the CA
     // and US inputs use saveCogsMarketplace above.
 
     async function saveUpc(brandId, asin, upc) {
@@ -711,7 +711,7 @@
       patchBrand(brandId, 'casePacks', asin, size);
     }
 
-    // â”€â”€ ASIN Config Modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── ASIN Config Modal ─────────────────────────────────────────────────────
     let cfgBrandId = null, cfgAsin = null, cfgComponents = [];
     let cfgBaseProductAsin = null;
 
@@ -749,7 +749,7 @@
     function selectCfgBaseProduct(asin) {
       cfgBaseProductAsin = asin;
       const match = _cfgAllAsins().find(x => x.asin === asin);
-      const display = match ? `${asin} â€” ${match.title}` : asin;
+      const display = match ? `${asin} — ${match.title}` : asin;
       const input = document.getElementById('cfgBaseProductInput');
       if (input) input.value = display;
       const disp = document.getElementById('cfgBaseProductDisplay');
@@ -780,7 +780,7 @@
       if (baseInput) {
         if (cfgBaseProductAsin) {
           const match = _cfgAllAsins().find(x => x.asin === cfgBaseProductAsin);
-          baseInput.value = match ? `${cfgBaseProductAsin} â€” ${match.title}` : cfgBaseProductAsin;
+          baseInput.value = match ? `${cfgBaseProductAsin} — ${match.title}` : cfgBaseProductAsin;
         } else { baseInput.value = ''; }
       }
       if (baseDisp) baseDisp.textContent = cfgBaseProductAsin || '';
@@ -884,7 +884,7 @@
     function renderCfgComponents() {
       const el = document.getElementById('cfgComponents');
       if (!cfgComponents.length) {
-        el.innerHTML = '<p style="font-size:12px;padding:4px;color:var(--text-3)">No components yet â€” click Add.</p>';
+        el.innerHTML = '<p style="font-size:12px;padding:4px;color:var(--text-3)">No components yet — click Add.</p>';
         return;
       }
       el.innerHTML = cfgComponents.map((c, i) => {
@@ -902,13 +902,13 @@
                 Manual
               </button>
             </div>
-            <button onclick="removeCfgComponent(${i})" style="color:var(--text-3);background:none;border:none;cursor:pointer;font-size:18px;line-height:1;padding:0 4px">Ã—</button>
+            <button onclick="removeCfgComponent(${i})" style="color:var(--text-3);background:none;border:none;cursor:pointer;font-size:18px;line-height:1;padding:0 4px">×</button>
           </div>
           ${isAsin ? `
           <div>
             <input id="cfgAsinInput_${i}" type="text"
               value="${(c._searchQuery || c._resolvedTitle || c.asin || '').replace(/"/g,'&quot;')}"
-              placeholder="Search by ASIN or product nameâ€¦"
+              placeholder="Search by ASIN or product name…"
               class="rmc-input" style="width:100%;font-size:12px"
               oninput="cfgAsinSearch(${i},this.value)"
               onfocus="cfgAsinFocus(${i})"
@@ -973,7 +973,7 @@
       cfgBrandId = null; cfgAsin = null; cfgComponents = [];
     }
 
-    // â”€â”€ Inventory popup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Inventory popup ──────────────────────────────────────────────────────────
     function showInventoryPopup(e, inv) {
       const popup = document.getElementById('inventoryPopup');
       const rows = [
@@ -1013,7 +1013,7 @@
       popup.style.top  = top  + 'px';
     }
 
-    // â”€â”€ Scrape All UPCs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Scrape All UPCs ──────────────────────────────────────────────────────────
 
     async function scrapeAllUpcs() {
       const btn = document.getElementById('scrapeAllUpcsBtn');
@@ -1023,18 +1023,18 @@
         const res = await fetch('/api/scrape-upcs', { method: 'POST' });
         const json = await res.json();
         if (!res.ok) throw new Error(json.error || 'Failed');
-        btn.textContent = `Done â€” ${json.updated} UPCs found`;
+        btn.textContent = `Done — ${json.updated} UPCs found`;
         await load();
         renderDataTable();
       } catch (err) {
-        btn.textContent = 'Error â€” retry';
+        btn.textContent = 'Error — retry';
         console.error(err);
       } finally {
         setTimeout(() => { btn.textContent = 'Scrape All UPCs'; btn.disabled = false; }, 4000);
       }
     }
 
-    // â”€â”€ Product Data tab â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Product Data tab ─────────────────────────────────────────────────────────
 
     function renderDataTable() {
       const tbody = document.getElementById('dataTableBody');
@@ -1100,17 +1100,17 @@
               onchange="saveSupplierName('${r.brandId}','${r.asin}',this.value)" />
           </td>
           <td class="px-4 py-2.5">
-            <input type="text" value="${snVal}" placeholder="â€”"
+            <input type="text" value="${snVal}" placeholder="—"
               class="rmc-input w-28" style="font-size:11px;padding:3px 6px"
               onchange="saveStockNumber('${r.brandId}','${r.asin}',this.value)" />
           </td>
           <td class="px-4 py-2.5">
-            <input type="text" value="${upcVal}" placeholder="â€”"
+            <input type="text" value="${upcVal}" placeholder="—"
               class="rmc-input w-32" style="font-size:11px;padding:3px 6px"
               onchange="saveUpc('${r.brandId}','${r.asin}',this.value)" />
           </td>
           <td class="px-4 py-2.5 text-center">
-            <input type="number" min="1" value="${r.casePack ?? ''}" placeholder="â€”"
+            <input type="number" min="1" value="${r.casePack ?? ''}" placeholder="—"
               class="rmc-input w-14 text-center" style="font-size:11px;padding:3px 6px"
               onchange="saveCasePack('${r.brandId}','${r.asin}',this.value)" />
           </td>
@@ -1122,13 +1122,13 @@
             <div class="flex flex-col gap-1 items-end">
               <div class="flex items-center gap-1">
                 <span style="background:#1e3a5f;color:#60a5fa;font-size:9px;font-weight:700;padding:1px 4px;border-radius:3px">CA$</span>
-                <input type="number" min="0" step="0.01" value="${r.cogsCa ?? ''}" placeholder="â€”"
+                <input type="number" min="0" step="0.01" value="${r.cogsCa ?? ''}" placeholder="—"
                   class="rmc-input w-20 text-right" style="font-size:11px;padding:3px 6px"
                   onchange="saveCogsMarketplace('${r.brandId}','${r.asin}','CA',this.value)" />
               </div>
               <div class="flex items-center gap-1">
                 <span style="background:#1a3a1a;color:#4ade80;font-size:9px;font-weight:700;padding:1px 4px;border-radius:3px">US$</span>
-                <input type="number" min="0" step="0.01" value="${r.cogsUs ?? ''}" placeholder="â€”"
+                <input type="number" min="0" step="0.01" value="${r.cogsUs ?? ''}" placeholder="—"
                   class="rmc-input w-20 text-right" style="font-size:11px;padding:3px 6px"
                   onchange="saveCogsMarketplace('${r.brandId}','${r.asin}','US',this.value)" />
               </div>
@@ -1136,14 +1136,14 @@
           </td>
           <td class="px-4 py-2.5 text-right">
             ${(r.cfgType === 'multipack' || r.cfgType === 'bundle')
-              ? `<span style="font-size:13px;color:var(--text-3);letter-spacing:0.05em">â€”</span>`
-              : `<input type="number" min="0" step="0.01" value="${r.buyCost ?? ''}" placeholder="â€”"
+              ? `<span style="font-size:13px;color:var(--text-3);letter-spacing:0.05em">—</span>`
+              : `<input type="number" min="0" step="0.01" value="${r.buyCost ?? ''}" placeholder="—"
                 class="rmc-input w-24 text-right" style="font-size:11px;padding:3px 6px"
                 onchange="saveBuyCost('${r.brandId}','${r.asin}',this.value)" />`
             }
           </td>
           <td class="px-4 py-2.5 text-right">
-            <input type="number" min="0" value="${r.leadTime ?? ''}" placeholder="â€”"
+            <input type="number" min="0" value="${r.leadTime ?? ''}" placeholder="—"
               class="rmc-input w-16 text-right" style="font-size:11px;padding:3px 6px"
               onchange="saveLeadTime('${r.brandId}','${r.asin}',this.value)" />
           </td>
@@ -1156,7 +1156,7 @@
       const pages = [...range].sort((a,b) => a-b);
       let pageBtns = '', prev = null;
       for (const p of pages) {
-        if (prev !== null && p > prev+1) pageBtns += `<span class="text-xs px-0.5" style="color:var(--text-3)">â€¦</span>`;
+        if (prev !== null && p > prev+1) pageBtns += `<span class="text-xs px-0.5" style="color:var(--text-3)">…</span>`;
         const active = p === dataPage;
         pageBtns += `<button onclick="dataPage=${p};renderDataTable()" class="text-xs px-2.5 py-1 rounded" style="${active?'background:var(--brand);color:#060d05;font-weight:600':'color:var(--text-2)'}">${p}</button>`;
         prev = p;
@@ -1200,16 +1200,16 @@
       renderDataTable();
     }
 
-    // â”€â”€ Bulk Edit â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Bulk Edit ────────────────────────────────────────────────────────────────
     let bulkUpdates = [];
 
     function openBulkEdit() {
       bulkUpdates = [];
       document.getElementById('bulkPreview').classList.add('hidden');
-      document.getElementById('bulkUploadLabel').textContent = 'Choose CSV fileâ€¦';
+      document.getElementById('bulkUploadLabel').textContent = 'Choose CSV file…';
       document.getElementById('bulkErrorMsg').classList.add('hidden');
       document.getElementById('bulkEditModal').classList.remove('hidden');
-      // Live count of products still missing supplier / buy cost / COGS â€”
+      // Live count of products still missing supplier / buy cost / COGS —
       // doubles as a progress meter that shrinks to zero as uploads land.
       fetch('/api/bulk-template?missing=1&countOnly=1')
         .then(r => r.json())
@@ -1261,7 +1261,7 @@
           const header = rows[0].map(h => h.trim().toLowerCase());
           const col = name => header.findIndex(h => h.includes(name));
           const iAsin = col('asin'), iUpc = col('upc'), iLead = col('lead'), iCase = col('case'), iStock = col('stock'), iSupplier = col('supplier');
-          // 'buy' is unique to "Buy Cost (item only)" â€” no other header contains
+          // 'buy' is unique to "Buy Cost (item only)" — no other header contains
           // it. Buy Cost is the item cost; COGS is the landed cost (buy + prep,
           // freight, customs). Different numbers, both needed.
           const iBuy = col('buy');
@@ -1349,10 +1349,10 @@
       }
 
       const fieldCount = changes.reduce((n, c) => n + [c.upc, c.leadTime, c.casePack, c.stockNumber, c.supplierName, c.buyCost, c.cogsCa, c.cogsUs].filter(Boolean).length, 0);
-      countEl.textContent = `â€” ${changes.length} ASIN${changes.length !== 1 ? 's' : ''}, ${fieldCount} field${fieldCount !== 1 ? 's' : ''} will be updated`;
+      countEl.textContent = `— ${changes.length} ASIN${changes.length !== 1 ? 's' : ''}, ${fieldCount} field${fieldCount !== 1 ? 's' : ''} will be updated`;
 
       const cell = (change) => {
-        if (!change) return `<span style="color:var(--text-3)">â€”</span>`;
+        if (!change) return `<span style="color:var(--text-3)">—</span>`;
         return `<span class="font-medium" style="color:var(--brand)">${change.new || '(clear)'}</span><br><span style="color:var(--text-3);font-size:10px">${change.old || 'empty'}</span>`;
       };
 
@@ -1410,7 +1410,7 @@
       }
     }
 
-    // â”€â”€ Boot â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Boot ─────────────────────────────────────────────────────────────────────
     async function load() {
       const [brandsRes, pmRes, fxRes] = await Promise.all([
         fetch('/api/brands').then(r => r.json()),
@@ -1452,7 +1452,7 @@
         <div class="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center flex-shrink-0 mt-0.5">1</div>
         <div class="flex-1">
           <p class="text-sm font-medium mb-1" style="color:var(--text)">Download Template</p>
-          <p class="text-xs mb-3" style="color:var(--text-3)"><strong style="color:var(--text-2)">All products</strong> = every ASIN. <strong style="color:var(--text-2)">Missing data only</strong> = just the ASINs still missing Supplier Name, Buy Cost, or COGS â€” a shorter list that shrinks as you fill it. Both use the same columns; upload works identically. <strong style="color:var(--text-2)">Edit only the last 7 columns</strong> â€” Brand, ASIN, Title, and SKU are read-only reference columns and will be ignored on upload. <strong style="color:var(--text-2)">Buy Cost</strong> = item cost on the supplier invoice. <strong style="color:var(--text-2)">COGS</strong> = landed cost (buy cost + prep, freight, customs) â€” CA in CAD, US in USD. Blank cells are left unchanged, so you can fill one column at a time.</p>
+          <p class="text-xs mb-3" style="color:var(--text-3)"><strong style="color:var(--text-2)">All products</strong> = every ASIN. <strong style="color:var(--text-2)">Missing data only</strong> = just the ASINs still missing Supplier Name, Buy Cost, or COGS — a shorter list that shrinks as you fill it. Both use the same columns; upload works identically. <strong style="color:var(--text-2)">Edit only the last 7 columns</strong> — Brand, ASIN, Title, and SKU are read-only reference columns and will be ignored on upload. <strong style="color:var(--text-2)">Buy Cost</strong> = item cost on the supplier invoice. <strong style="color:var(--text-2)">COGS</strong> = landed cost (buy cost + prep, freight, customs) — CA in CAD, US in USD. Blank cells are left unchanged, so you can fill one column at a time.</p>
           <div class="flex flex-wrap items-center gap-2">
             <a href="/api/bulk-template" download class="btn-ghost inline-flex items-center gap-2" style="font-size:12px;padding:6px 14px;text-decoration:none">
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1475,12 +1475,12 @@
         <div class="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center flex-shrink-0 mt-0.5">2</div>
         <div class="flex-1">
           <p class="text-sm font-medium mb-1" style="color:var(--text)">Upload Filled CSV</p>
-          <p class="text-xs mb-3" style="color:var(--text-3)">Blank cells are skipped â€” only filled cells update the app. Changes are shown for review before saving.</p>
+          <p class="text-xs mb-3" style="color:var(--text-3)">Blank cells are skipped — only filled cells update the app. Changes are shown for review before saving.</p>
           <label class="btn-ghost inline-flex items-center gap-2 cursor-pointer" style="font-size:12px;padding:6px 14px">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l4-4m0 0l4 4m-4-4v12"/>
             </svg>
-            <span id="bulkUploadLabel">Choose CSV fileâ€¦</span>
+            <span id="bulkUploadLabel">Choose CSV file…</span>
             <input type="file" accept=".csv" class="hidden" onchange="handleBulkUpload(this.files[0])" />
           </label>
         </div>
@@ -1563,8 +1563,8 @@
           <p class="text-xs mt-1.5" style="color:var(--text-3)">Velocity tracks packs sold. Ordering stays in packs.</p>
         </div>
         <div style="border-top:1px solid var(--border);padding-top:10px">
-          <label class="text-xs block mb-1 font-medium" style="color:var(--text-2)">Base product ASIN <span style="color:var(--text-3);font-weight:400">â€” for PO consolidation</span></label>
-          <input id="cfgBaseProductInput" type="text" placeholder="Search by ASIN or product nameâ€¦"
+          <label class="text-xs block mb-1 font-medium" style="color:var(--text-2)">Base product ASIN <span style="color:var(--text-3);font-weight:400">— for PO consolidation</span></label>
+          <input id="cfgBaseProductInput" type="text" placeholder="Search by ASIN or product name…"
             class="rmc-input" style="width:100%;font-size:12px"
             oninput="cfgBaseProductSearch(this.value)"
             onfocus="cfgBaseProductSearch(this.value)"
@@ -1576,7 +1576,7 @@
 
       <div id="cfgBundleSection" class="hidden mb-4 p-3 rounded-lg" style="background:var(--bg-well);border:1px solid var(--border)">
         <div class="flex items-center justify-between mb-2">
-          <p class="text-xs" style="color:var(--text-2)">Components â€” each becomes a separate PO line item</p>
+          <p class="text-xs" style="color:var(--text-2)">Components — each becomes a separate PO line item</p>
           <button onclick="addBundleComponent()" class="btn-ghost" style="font-size:11px;padding:4px 10px;">+ Add</button>
         </div>
         <div id="cfgComponents"></div>
