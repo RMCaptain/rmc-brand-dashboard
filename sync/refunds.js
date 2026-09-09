@@ -23,6 +23,7 @@
 require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 const { getAccessToken, spRequest, sleep, createReport, waitForReport, downloadReport, getMarketplaceIds } = require('./amazon');
 const { pstDateStr, pstSubtractDays } = require('./dateUtils');
+const MP = require('./marketplaces');
 
 const LA_TZ = 'America/Los_Angeles';
 const RETURNS_REPORT_TYPE = 'GET_FBA_FULFILLMENT_CUSTOMER_RETURNS_DATA';
@@ -127,7 +128,7 @@ async function syncRefunds(supabase, brands, { windowDays = 30 } = {}) {
   // marketplace's currency context implicitly via the order — we re-derive
   // it from daily_metrics later.
   const allRows = [];
-  for (const mpId of getMarketplaceIds()) {
+  for (const mpId of MP.wideTableOnly(getMarketplaceIds(), 'Refunds')) {
     console.log(`[Refunds] Requesting FBA Returns Report for ${mpId}, ${windowDays}-day window...`);
     try {
       const rows = await pullReturnsForMarketplace(mpId, fromIso, toIso, token);
@@ -206,12 +207,20 @@ async function syncRefunds(supabase, brands, { windowDays = 30 } = {}) {
     enriched.map(e => [e.asin, e.originalDate]));
 
   // Build refund_events rows. Currency is derived from the ORIGINAL order's
-  // marketplace, not the report we pulled it from.
-  const rowsToInsert = enriched.map(e => {
-    const isCA = e.originalMp === 'A2EUQ1WTGCTBG2';
+  // marketplace, not the report we pulled it from. refund_events is a wide
+  // (CAD/USD) table: an order from any other marketplace is skipped loudly
+  // rather than stamped USD (the old `!== CA ⇒ USD` default did exactly that
+  // for a missing MarketplaceId too).
+  const rowsToInsert = [];
+  for (const e of enriched) {
+    if (!MP.isWideTableMp(e.originalMp)) {
+      console.error(`[Refunds] order ${e.orderId} (${e.asin}): marketplace ${e.originalMp || 'unknown'} has no CAD/USD home — refund event skipped`);
+      continue;
+    }
+    const isCA = MP.isCaMp(e.originalMp, 'Refunds');
     const price = priceMap[`${e.asin}|${e.originalDate}`] || { unitPriceCad: 0, unitPriceUsd: 0 };
     const unitPrice = isCA ? price.unitPriceCad : price.unitPriceUsd;
-    return {
+    rowsToInsert.push({
       event_id:             e.event_id,
       amazon_order_id:      e.orderId,
       posted_at:            e.returnDate + (e.returnDate.length === 10 ? 'T00:00:00Z' : ''),
@@ -220,8 +229,8 @@ async function syncRefunds(supabase, brands, { windowDays = 30 } = {}) {
       marketplace_currency: isCA ? 'CAD' : 'USD',
       refunded_units:       e.qty,
       refund_amount:        Math.round(unitPrice * e.qty * 100) / 100,
-    };
-  });
+    });
+  }
 
   // Insert refund_events
   let inserted = 0;

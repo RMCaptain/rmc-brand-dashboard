@@ -5,8 +5,18 @@
  */
 
 require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
-const { getAccessToken, spRequest, getMarketplaceIds, sleep } = require('./amazon');
+const { getAccessToken, spRequest, getMarketplaceIds: allMarketplaceIds, sleep } = require('./amazon');
 const { pstDateStr, pstSubtractDays, pstMidnightAsUTC } = require('./dateUtils');
+const MP = require('./marketplaces');
+
+// This module is the AUTHORITATIVE writer of the currency-suffixed
+// daily_metrics columns, so it can only ever process Amazon.ca / Amazon.com.
+// A third marketplace in SP_API_MARKETPLACE_IDS is skipped with an error on
+// every pass (never booked as USD); it must be synced through its own
+// daily_metrics_mp writer.
+function getMarketplaceIds() { return MP.wideTableOnly(allMarketplaceIds(), 'Orders'); }
+const MP_CA = MP.idByCode('CA');
+const MP_US = MP.idByCode('US');
 
 const ENABLED = process.env.SYNC_ENABLED === 'true';
 
@@ -76,7 +86,7 @@ async function fetchOrderItems(token, orderId, attempt = 0) {
 // via seenOrderIds — missing the change. With this, we subtract the prior
 // contribution and apply the new one.
 async function processOrders(orders, token, mpId, target) {
-  const isCA = mpId === 'A2EUQ1WTGCTBG2';
+  const isCA = MP.isCaMp(mpId, 'Orders'); // throws for a non-CA/US marketplace
   if (!target.failedOrderIds) target.failedOrderIds = new Set();
   if (!target.orderContrib)   target.orderContrib   = {};
 
@@ -188,7 +198,7 @@ async function retryFailedOrders(token, mpId, target) {
   const fakeOrders = failedIds.map(id => ({ AmazonOrderId: id }));
   target.failedOrderIds = new Set(); // reset; processOrders will re-add if still failing
 
-  const isCA = mpId === 'A2EUQ1WTGCTBG2';
+  const isCA = MP.isCaMp(mpId, 'Orders');
   if (!target.orderContrib) target.orderContrib = {};
   let recovered = 0;
   for (const order of fakeOrders) {
@@ -545,8 +555,8 @@ async function resolveSkuPrices(target, token) {
   const usSkus = [...new Set(pending.filter(([, q]) => !q.isCA).map(([, q]) => q.sku))];
   console.log(`[Orders] Listing-price lookup for ${caSkus.length} CA + ${usSkus.length} US Pending-order SKUs...`);
 
-  const caPrices = caSkus.length > 0 ? await fetchListingPrices(caSkus, 'A2EUQ1WTGCTBG2', token, { byType: 'Sku' }) : {};
-  const usPrices = usSkus.length > 0 ? await fetchListingPrices(usSkus, 'ATVPDKIKX0DER',   token, { byType: 'Sku' }) : {};
+  const caPrices = caSkus.length > 0 ? await fetchListingPrices(caSkus, MP_CA, token, { byType: 'Sku' }) : {};
+  const usPrices = usSkus.length > 0 ? await fetchListingPrices(usSkus, MP_US, token, { byType: 'Sku' }) : {};
 
   let hits = 0;
   const liveRows = [];
@@ -558,7 +568,7 @@ async function resolveSkuPrices(target, token) {
     if (!target.estPrice[q.asin]) target.estPrice[q.asin] = {};
     if (q.isCA) target.estPrice[q.asin].ca = p.amount;
     else        target.estPrice[q.asin].us = p.amount;
-    liveRows.push({ sku: q.sku, mpId: q.isCA ? 'A2EUQ1WTGCTBG2' : 'ATVPDKIKX0DER', asin: q.asin, price: p.amount, currency: p.currency });
+    liveRows.push({ sku: q.sku, mpId: q.isCA ? MP_CA : MP_US, asin: q.asin, price: p.amount, currency: p.currency });
     hits++;
   }
 

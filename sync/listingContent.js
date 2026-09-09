@@ -151,9 +151,12 @@ async function syncListingContent(supabase, brands) {
     const skuInfo = skuMap[asin];
     let listing = null;
     if (sellerId && skuInfo) {
-      const mp = MP_ID[skuInfo.marketplace] || MP_ID.CA;
+      // Registry lookup, so a UK SKU is fetched against Amazon.co.uk (not
+      // silently against .ca → 404 → null content). Unknown code → CA + warn.
+      let mp = idByCode(skuInfo.marketplace);
+      if (!mp) { console.warn(`[ListingContent] ${asin}: unknown marketplace '${skuInfo.marketplace}' — trying CA`); mp = MP_ID.CA; }
       listing = await fetchListingsItem(sellerId, skuInfo.sku, mp, token);
-      if (!listing && skuInfo.marketplace !== 'US') listing = await fetchListingsItem(sellerId, skuInfo.sku, MP_ID.US, token);
+      if (!listing && mp !== MP_ID.US) listing = await fetchListingsItem(sellerId, skuInfo.sku, MP_ID.US, token);
       if (listing) listingsOk++;
       await sleep(250);
     }

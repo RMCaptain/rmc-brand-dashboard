@@ -73,7 +73,71 @@ const byCode   = code => {
 const currencyOf = id => MARKETPLACES[id]?.currency || null;
 const codeOf     = id => MARKETPLACES[id]?.code || null;
 
+// ── Wide-table (currency-suffixed) writers ──────────────────────────────────
+// daily_metrics / daily_fees / refund_events / the brands blob still carry
+// `_cad` / `_usd` columns that mean Amazon.ca / Amazon.com specifically. Only
+// these two marketplaces can be represented there. Every wide writer must go
+// through these helpers so a third marketplace is skipped LOUDLY, never
+// silently booked as USD (the old `!== CA ⇒ US` pattern).
+const WIDE_TABLE_IDS = ['A2EUQ1WTGCTBG2', 'ATVPDKIKX0DER'];
+const isWideTableMp = id => WIDE_TABLE_IDS.includes(id);
+
+// Filter a marketplace-id list down to the wide-table pair, logging each
+// exclusion. `tag` names the caller in the log line.
+function wideTableOnly(ids, tag = 'Marketplaces') {
+  return (ids || []).filter(id => {
+    if (isWideTableMp(id)) return true;
+    const m = byId(id);
+    console.error(`[${tag}] marketplace ${id} (${m ? `${m.label}, ${m.currency}` : 'unknown'}) skipped — wide-table path is Amazon.ca/Amazon.com only; it must ride daily_metrics_mp`);
+    return false;
+  });
+}
+
+// CA-or-US for a wide-table writer. Returns true for Amazon.ca, false for
+// Amazon.com, and THROWS for anything else — a wide writer that reaches this
+// point with a third marketplace has already bypassed wideTableOnly().
+function isCaMp(id, tag = 'Marketplaces') {
+  if (id === WIDE_TABLE_IDS[0]) return true;
+  if (id === WIDE_TABLE_IDS[1]) return false;
+  const m = byId(id);
+  throw new Error(`[${tag}] marketplace ${id} (${m ? m.label : 'unknown'}) cannot be written to a CAD/USD wide table`);
+}
+
+// Which marketplace CODES does a brand sell in with us? Source of truth is the
+// brand's `marketplace` field ('CA', 'US', or 'CA,US'). Defaults to CA when
+// unset. Unknown codes are dropped loudly, never silently.
+function codesForBrand(brand, tag = 'Marketplaces') {
+  const raw = (brand?.marketplace || 'CA').toUpperCase();
+  return raw.split(',').map(s => s.trim()).filter(code => {
+    if (byCode(code)) return true;
+    if (code) console.error(`[${tag}] brand ${brand?.id || brand?.name || '?'}: unknown marketplace code '${code}' in brand.marketplace — ignored`);
+    return false;
+  });
+}
+
+// The marketplace code a single ASIN should be checked on. The brand's
+// declared marketplace list is the source of truth: a single-marketplace
+// brand always resolves to that marketplace (the listings report may show
+// the ASIN active elsewhere too, but that is not where we sell it). A
+// multi-marketplace brand ('CA,US') routes each ASIN by the listings
+// report's per-ASIN marketplace when it is one of the declared codes, else
+// the first declared code.
+function codeForAsin(brand, asin, tag = 'Marketplaces') {
+  const codes = codesForBrand(brand, tag);
+  if (codes.length <= 1) return codes[0] || 'CA';
+  const listed = (brand?.asinMarketplaces?.[asin] || '').toUpperCase();
+  return codes.includes(listed) ? listed : codes[0];
+}
+
+// Public storefront hostname for a marketplace code ('CA' → www.amazon.ca).
+function storefrontHost(code) {
+  const m = byCode(code);
+  if (!m) return null;
+  try { return new URL(m.storefront).hostname; } catch { return null; }
+}
+
 module.exports = {
-  MARKETPLACES, SP_API_HOSTS, ADS_HOSTS, SP_REFRESH_TOKEN_ENV,
+  MARKETPLACES, SP_API_HOSTS, ADS_HOSTS, SP_REFRESH_TOKEN_ENV, WIDE_TABLE_IDS,
   active, all, byId, byCode, currencyOf, codeOf, currencyMap, codeMap, idByCode,
+  isWideTableMp, wideTableOnly, isCaMp, codesForBrand, codeForAsin, storefrontHost,
 };

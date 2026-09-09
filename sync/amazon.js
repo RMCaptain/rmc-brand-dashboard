@@ -1334,7 +1334,7 @@ async function syncBrandMetrics(brands) {
     for (const brand of brands) {
       brand.asinSnsByMp = brand.asinSnsByMp || {};
       for (const [mpId, mp] of Object.entries(snsData.byMp)) {
-        const store = { subs: {}, revenue: {}, isCA: mp.isCA, fetchedAt: new Date().toISOString() };
+        const store = { subs: {}, revenue: {}, isCA: mp.isCA, currency: mp.currency || null, wide: mp.wide !== false, fetchedAt: new Date().toISOString() };
         for (const asin of brand.asins) {
           if (mp.subs[asin] > 0)  store.subs[asin]    = mp.subs[asin];
           if (mp.revenue[asin])   store.revenue[asin] = mp.revenue[asin];
@@ -1349,6 +1349,9 @@ async function syncBrandMetrics(brands) {
         for (const [asin, n] of Object.entries(mp.subs || {})) {
           brand.asinSns[asin] = (brand.asinSns[asin] || 0) + n;
         }
+        // Stores written before the `wide` flag existed are CA/US by
+        // construction — treat a missing flag as wide.
+        if (mp.wide === false) continue; // no cad/usd home for this marketplace's revenue
         for (const [asin, rev] of Object.entries(mp.revenue || {})) {
           if (!brand.asinSnsRevenue[asin]) brand.asinSnsRevenue[asin] = { cad: 0, usd: 0 };
           if (mp.isCA) brand.asinSnsRevenue[asin].cad += rev;
@@ -1619,8 +1622,7 @@ async function getCatalogSnapshots(asins, marketplaceId, token) {
 async function scrapeSellerNames(sellerIds, marketplace) {
   const result = {};
   if (!sellerIds?.length) return result;
-  const tld = marketplace === 'US' ? 'com' : 'ca';
-  const host = `www.amazon.${tld}`;
+  const host = MP.storefrontHost(marketplace) || MP.storefrontHost('CA');
   console.log(`[SellerScrape] Fetching ${sellerIds.length} seller names from ${host}...`);
 
   for (const sellerId of sellerIds) {
@@ -1688,31 +1690,43 @@ async function enrichListingHealth(brands) {
   const token = await getAccessToken();
   const mpIds = getMarketplaceIds();
 
-  // Group ASINs by marketplace (CA brand → A2EUQ1WTGCTBG2, US brand → ATVPDKIKX0DER)
-  const CA_MP = 'A2EUQ1WTGCTBG2';
-  const US_MP = 'ATVPDKIKX0DER';
-  const byMp = { [CA_MP]: new Set(), [US_MP]: new Set() };
-
+  // Group ASINs by the marketplace each one should be checked on (registry
+  // codeForAsin): the brand's declared marketplace for a single-marketplace
+  // brand; for a 'CA,US' brand, the listings report's per-ASIN marketplace.
+  // The old rule (`brand.marketplace === 'US' ? US : CA`) sent every 'CA,US'
+  // brand to Amazon.ca only, so its US-listed ASINs never got a buy-box or
+  // catalog check. buyBoxOwners / listingSnapshots are keyed by ASIN alone,
+  // so each ASIN is checked on exactly one marketplace.
+  const byMp = {};
+  const asinMpCode = {};
   for (const brand of brands) {
     if (brand.id === 'unknown-brand') continue;
-    const mp = brand.marketplace === 'US' ? US_MP : CA_MP;
-    for (const asin of brand.asins || []) byMp[mp].add(asin);
+    for (const asin of brand.asins || []) {
+      const code = MP.codeForAsin(brand, asin, 'Health');
+      const mp = MP.idByCode(code);
+      if (!mp || !mpIds.includes(mp)) {
+        console.warn(`[Health] ${brand.id}/${asin}: marketplace ${code} not in SP_API_MARKETPLACE_IDS — skipped`);
+        continue;
+      }
+      (byMp[mp] = byMp[mp] || new Set()).add(asin);
+      asinMpCode[asin] = code;
+    }
   }
 
-  // Per-marketplace fetches
+  // Per-marketplace fetches — every marketplace that has ASINs, registry order.
   const buyBox = {};
   const catalog = {};
-  for (const mp of [CA_MP, US_MP]) {
-    if (!mpIds.includes(mp)) continue;
-    const asins = [...byMp[mp]];
+  for (const mp of Object.keys(MP.MARKETPLACES)) {
+    const asins = [...(byMp[mp] || [])];
     if (!asins.length) continue;
     const [bb, cat] = await Promise.all([
       getBuyBoxOwners(asins, mp, token),
       getCatalogSnapshots(asins, mp, token),
     ]);
-    Object.assign(buyBox, bb);
+    for (const [asin, v] of Object.entries(bb)) buyBox[asin] = { ...v, marketplace: asinMpCode[asin] };
     Object.assign(catalog, cat);
   }
+  console.log(`[Health] Checked ${Object.values(byMp).map(s => s.size).reduce((a, b) => a + b, 0)} ASINs across ${Object.keys(byMp).length} marketplace(s): ${Object.entries(byMp).map(([mp, s]) => `${MP.codeOf(mp) || mp}=${s.size}`).join(', ')}`);
 
   // Fetch stranded inventory once for all marketplaces
   let strandedByAsin = {};
@@ -1752,6 +1766,7 @@ async function enrichListingHealth(brands) {
           sellerName: buyBox[asin].sellerName,
           isFba: buyBox[asin].isFba,
           price: buyBox[asin].price,
+          marketplace: buyBox[asin].marketplace, // which storefront this reading came from
           capturedAt: now,
         });
         const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
@@ -1862,7 +1877,7 @@ async function fetchStrandedInventory() {
       const asinCol    = col('asin');
       const qtyCol     = col('stranded-quantity');
       const reasonCol  = col('stranded-reason');
-      const mpCode     = mpId === 'ATVPDKIKX0DER' ? 'US' : 'CA';
+      const mpCode     = MP.codeOf(mpId) || mpId;
 
       for (let i = 1; i < lines.length; i++) {
         const parts = lines[i].split('\t');
@@ -1961,17 +1976,25 @@ async function fetchSnsSubscriptions(marketplaceIds, token) {
         if (offers.length < limit) break;
         await sleep(1100); // Replenishment API is low-throughput — pace pagination
       }
-      const isCA = mpId === 'A2EUQ1WTGCTBG2';
+      // Subscription COUNTS are currency-free and roll up for any marketplace.
+      // REVENUE only has cad/usd homes (the brands blob is wide-shaped): a
+      // third marketplace keeps its per-mp revenue in byMp but is excluded
+      // from the summed cad/usd view, loudly, instead of landing in usd.
+      const currency = MARKETPLACE_CURRENCY[mpId];
+      const wide = MP.isWideTableMp(mpId);
+      const isCA = wide ? MP.isCaMp(mpId, 'S&S') : false;
+      if (!wide) console.error(`[S&S] ${mpId} (${currency || 'unknown currency'}): revenue kept per-marketplace only — no cad/usd bucket for it`);
       const mpSubs = {}, mpRev = {};
       for (const [asin, { subs, rev }] of Object.entries(latestByAsin)) {
         if (subs > 0) { asinSubs[asin] = (asinSubs[asin] || 0) + subs; mpSubs[asin] = subs; }
         if (rev > 0) {
+          mpRev[asin] = rev;
+          if (!wide) continue;
           if (!asinRev[asin]) asinRev[asin] = { cad: 0, usd: 0 };
           if (isCA) asinRev[asin].cad += rev; else asinRev[asin].usd += rev;
-          mpRev[asin] = rev;
         }
       }
-      byMp[mpId] = { subs: mpSubs, revenue: mpRev, isCA };
+      byMp[mpId] = { subs: mpSubs, revenue: mpRev, isCA, currency, wide };
       successCount++;
       console.log(`[S&S] ${mpId}: ${Object.keys(latestByAsin).length} S&S offers via Replenishment API`);
     } catch (e) {

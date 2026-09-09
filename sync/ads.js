@@ -422,8 +422,11 @@ async function pullBrandAdsDaily(startDate, endDate) {
         const d = merged[row.date]      || (merged[row.date] = {});
         const b = d[brand]              || (d[brand] = {});
         const e = b[kind]               || (b[kind] = entry());
-        if (mp === 'CA') { e.spendCad += cost; e.salesCad += sales; }
-        else             { e.spendUsd += cost; e.salesUsd += sales; }
+        // daily_brand_ads is wide (cad/usd): a UK profile's rows have no
+        // bucket here and must not be booked as USD.
+        if      (mp === 'CA') { e.spendCad += cost; e.salesCad += sales; }
+        else if (mp === 'US') { e.spendUsd += cost; e.salesUsd += sales; }
+        else { console.error(`[Ads] SB/SD ${mp} profile: ${row.date} ${row.campaignName} spend ${cost} has no cad/usd bucket — dropped from daily_brand_ads`); continue; }
         e.clicks += clicks; e.impressions += impressions; e.orders += orders;
       }
     }

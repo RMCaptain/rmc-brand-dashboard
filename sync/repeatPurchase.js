@@ -79,8 +79,9 @@ async function fetchRepeatPurchase(marketplaceIds, token) {
         // Convert to a count so brand rollups are customer-weighted.
         a.repeatCustomers += Math.round((r.repeatCustomersPctTotal || 0) * unique);
         const rev = r.repeatPurchaseRevenue || {};
-        if (rev.currencyCode === 'CAD') a.repeatRevenueCad += rev.amount || 0;
-        else                            a.repeatRevenueUsd += rev.amount || 0;
+        if      (rev.currencyCode === 'CAD') a.repeatRevenueCad += rev.amount || 0;
+        else if (rev.currencyCode === 'USD') a.repeatRevenueUsd += rev.amount || 0;
+        else if (rev.amount) console.error(`[RepeatPurchase] ${mpCode}/${asin}: revenue in ${rev.currencyCode || 'unknown currency'} has no cad/usd bucket — dropped (counts kept)`);
       }
       byMarketplace[mpCode] = byAsin;
       anySuccess = true;
@@ -101,16 +102,11 @@ async function fetchRepeatPurchase(marketplaceIds, token) {
 // Which marketplaces does this brand actually sell in (with us)?
 // Source of truth: the brand's marketplace field ('CA', 'US', or 'CA,US').
 // Defaults to CA if unset — every current brand sells .ca only.
+// Shared helper lives in the registry (sync/marketplaces.js codesForBrand);
+// kept exported here for existing callers. Loud, not silent: an unknown code
+// used to fall out of the whitelist and quietly zero the brand's data.
 function brandMarketplaces(brand) {
-  const raw = (brand.marketplace || 'CA').toUpperCase();
-  const { byCode } = require('./marketplaces');
-  return raw.split(',').map(s => s.trim()).filter(code => {
-    if (byCode(code)) return true;
-    // Loud, not silent: an unknown code used to fall out of the whitelist and
-    // quietly zero the brand's repeat-purchase data.
-    if (code) console.error(`[RepeatPurchase] brand ${brand.id || brand.name}: unknown marketplace code '${code}' in brand.marketplace — ignored`);
-    return false;
-  });
+  return require('./marketplaces').codesForBrand(brand, 'RepeatPurchase');
 }
 
 /**

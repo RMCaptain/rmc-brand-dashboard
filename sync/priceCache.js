@@ -74,7 +74,7 @@ async function getTrailingPrices(force = false) {
 // daily sweep over every brand SKU on both marketplaces — so a sold-out
 // Pending item still gets priced at this morning's listing price.
 
-const { idByCode } = require('./marketplaces');
+const { idByCode, codeOf } = require('./marketplaces');
 const MP_CA = idByCode('CA');
 const MP_US = idByCode('US');
 const SNAP_TTL_MS = 30 * 60 * 1000;
@@ -99,7 +99,11 @@ async function loadSkuPrices(maxAgeDays = 7) {
   const prices = {};
   for (const r of rows) {
     if (!(r.price > 0)) continue;
-    prices[`${r.mp_id === MP_CA ? 'CA' : 'US'}|${r.sku}`] = { asin: r.asin, price: Number(r.price) };
+    // Key by the row's own marketplace code. A UK row must never be served
+    // as a US price (the old `=== CA ? CA : US` did exactly that).
+    const code = codeOf(r.mp_id);
+    if (!code) { console.warn(`[PriceCache] sku_prices row ${r.sku}/${r.mp_id}: unknown marketplace — ignored`); continue; }
+    prices[`${code}|${r.sku}`] = { asin: r.asin, price: Number(r.price) };
   }
   snapCache = { at: Date.now(), prices };
   return prices;

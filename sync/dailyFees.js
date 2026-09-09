@@ -35,10 +35,16 @@ async function collectFeesForDay(pstDate, token, skuToAsin = {}) {
   // Per-ASIN rows: SKU → ASIN via sku_prices; currency picks the marketplace
   // (CAD=CA, USD=US — same convention as the mp rows). Multiple SKUs of one
   // ASIN merge. Unmapped SKUs become 'sku:<SellerSKU>' — loud, never dropped.
+  //
+  // MULTI-MARKETPLACE NOTE: currency→marketplace is only safe because this
+  // walk is the NA Amazon Finances API, where CAD can only be Amazon.ca.
+  // Walmart.ca is also CAD — its fees must come from Walmart's own API into
+  // daily_fees_mp with mp_id 'walmart_ca', never through this function.
+  // UK (GBP) rides an EU-region walk that writes mp rows only.
   const asinAgg = new Map();
   for (const s of (f.perSku || [])) {
     const mpCode = s.currency === 'CAD' ? 'CA' : s.currency === 'USD' ? 'US' : null;
-    if (!mpCode) continue; // non-CA/US currencies ride the mp tables when those marketplaces go live
+    if (!mpCode) { console.error(`[DailyFees] ${pstDate} sku ${s.sku}: fees in ${s.currency || 'unknown currency'} skipped — no CA/US home (ride daily_fees_mp when that marketplace goes live)`); continue; }
     const mpId = idByCode(mpCode);
     const asin = (s.sku && (skuToAsin[`${s.sku}|${mpId}`] || skuToAsin[s.sku])) || `sku:${s.sku || 'unknown'}`;
     const key = `${asin}|${mpId}`;

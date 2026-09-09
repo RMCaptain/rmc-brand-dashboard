@@ -848,6 +848,31 @@ async function saveSellerNames(map) {
   if (error) throw error;
 }
 
+// Seller IDs that need a (re)scrape, grouped by the marketplace CODE whose
+// storefront the buy-box reading came from. Each history entry carries the
+// marketplace it was captured on (sync/amazon.js enrichListingHealth); older
+// entries pre-dating that field fall back to the ASIN's listed marketplace,
+// then the brand's first marketplace. Returns { CA: Set, US: Set, ... } with
+// only non-empty groups.
+function sellerIdsToScrape(brands, sellerNames, { skip = new Set(), ourSellerId = null, refreshMs = 30 * 24 * 60 * 60 * 1000 } = {}) {
+  const MP = require('./sync/marketplaces');
+  const idsByMp = {};
+  for (const b of brands || []) {
+    if (skip.has(b.id)) continue;
+    for (const [asin, hist] of Object.entries(b.buyBoxOwnerHistory || {})) {
+      for (const h of hist || []) {
+        if (!h.sellerId || h.sellerId === ourSellerId) continue;
+        const cached = sellerNames[h.sellerId];
+        const stale = cached?.scrapedAt && (Date.now() - new Date(cached.scrapedAt).getTime() > refreshMs);
+        if (cached && !stale) continue;
+        const mp = h.marketplace || MP.codeForAsin(b, asin, 'SellerScrape');
+        (idsByMp[mp] = idsByMp[mp] || new Set()).add(h.sellerId);
+      }
+    }
+  }
+  return idsByMp;
+}
+
 // Brands to exclude from the health digest entirely (still tracked elsewhere in dashboard,
 // just not noisy in the daily Slack ping).
 const DIGEST_EXCLUDE_BRANDS = new Set(['unknown-brand', 'general-wholesale']);
@@ -1412,12 +1437,20 @@ async function ensureBrowserInstalled() {
   return _browserInstallPromise;
 }
 
+// PO documents are priced in the currency of the brand's PRIMARY marketplace
+// (first code in brand.marketplace). Registry-driven so a UK brand prints GBP.
+function brandPoCurrency(brand) {
+  const reg = require('./sync/marketplaces');
+  const code = reg.codesForBrand(brand, 'PO')[0] || 'CA';
+  return reg.byCode(code)?.currency || 'CAD';
+}
+
 async function renderPoPdf({ brand, settings, poNum, lines, status, notes, date, optionalCols }) {
   const puppeteer = require('puppeteer');
   const poDate = date || pstDateStr(); // PST business day, not server-UTC (POs created evening MT were stamped tomorrow)
     const statusVal = status || 'Working';
     const isSubmitted = statusVal.toLowerCase() === 'submitted';
-    const currency = brand.marketplace === 'US' ? 'USD' : 'CAD';
+    const currency = brandPoCurrency(brand);
 
     const extras = optionalCols || {};
     const colHeaders = ['Item Description', 'UPC'];
@@ -1741,7 +1774,7 @@ async function renderPoExcel({ brand, settings, poNum, lines, status, notes, dat
   const ExcelJS = require('exceljs');
   const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Purchase Order');
-    const currency = brand.marketplace === 'US' ? 'USD' : 'CAD';
+    const currency = brandPoCurrency(brand);
 
     // Optional columns config
     const extras = optionalCols || {};
@@ -5554,13 +5587,17 @@ async function computeHealthReport({ sinceIso = null } = {}) {
         const winners = [...seen.values()];
         // Resolve seller display names from the cache (populated by scraping in sync).
         // Fall back to seller ID with a profile link if we don't have a name yet.
-        const tld = brand.marketplace === 'US' ? 'com' : 'ca';
+        const MPreg = require('./sync/marketplaces');
+        const brandHost = MPreg.storefrontHost(MPreg.codeForAsin(brand, asin, 'Health')) || 'www.amazon.ca';
         const winnerStr = winners
           .map(w => {
             const cached = sellerNames[w.sellerId];
             const name = cached?.name || w.sellerName || null;
             const label = name || w.sellerId;
-            const url = `https://www.amazon.${tld}/sp?seller=${w.sellerId}`;
+            // Link to the storefront the reading was captured on (entries
+            // pre-dating the field fall back to the ASIN's listed marketplace).
+            const host = (w.marketplace && MPreg.storefrontHost(w.marketplace)) || brandHost;
+            const url = `https://${host}/sp?seller=${w.sellerId}`;
             const linked = w.sellerId ? `<${url}|${label}>` : label;
             return `${linked}${w.isFba ? ' (FBA)' : ''}`;
           })
@@ -5778,28 +5815,16 @@ app.post('/api/health/scrape-seller-names', async (req, res) => {
     const REFRESH_MS = 30 * 24 * 60 * 60 * 1000;
     const ourSellerId = process.env.SP_API_SELLER_ID;
     const skip = new Set(['general-wholesale', 'unknown-brand']);
-    const idsByMp = { CA: new Set(), US: new Set() };
-    for (const b of brands) {
-      if (skip.has(b.id)) continue;
-      const mp = b.marketplace === 'US' ? 'US' : 'CA';
-      for (const hist of Object.values(b.buyBoxOwnerHistory || {})) {
-        for (const h of hist) {
-          if (!h.sellerId || h.sellerId === ourSellerId) continue;
-          const cached = sellerNames[h.sellerId];
-          const stale = cached?.scrapedAt && (Date.now() - new Date(cached.scrapedAt).getTime() > REFRESH_MS);
-          if (!cached || stale) idsByMp[mp].add(h.sellerId);
-        }
-      }
+    const idsByMp = sellerIdsToScrape(brands, sellerNames, { skip, ourSellerId, refreshMs: REFRESH_MS });
+    const scrapedByMp = {};
+    for (const [mp, ids] of Object.entries(idsByMp)) {
+      scrapedByMp[mp] = await scrapeSellerNames([...ids], mp);
     }
-    const [caNames, usNames] = await Promise.all([
-      scrapeSellerNames([...idsByMp.CA], 'CA'),
-      scrapeSellerNames([...idsByMp.US], 'US'),
-    ]);
-    const updated = { ...sellerNames, ...caNames, ...usNames };
+    const updated = Object.assign({ ...sellerNames }, ...Object.values(scrapedByMp));
     await saveSellerNames(updated);
     res.json({
-      scraped: { CA: Object.keys(caNames).length, US: Object.keys(usNames).length },
-      attempted: { CA: idsByMp.CA.size, US: idsByMp.US.size },
+      scraped:   Object.fromEntries(Object.entries(scrapedByMp).map(([mp, n]) => [mp, Object.keys(n).length])),
+      attempted: Object.fromEntries(Object.entries(idsByMp).map(([mp, s]) => [mp, s.size])),
       cacheSize: Object.keys(updated).length,
     });
   } catch (err) {
@@ -6351,29 +6376,13 @@ async function runFullSync(tag = 'Sync') {
       const REFRESH_MS = 30 * 24 * 60 * 60 * 1000; // refresh names >30 days old
       const ourSellerId = process.env.SP_API_SELLER_ID;
       const skip = new Set(['general-wholesale', 'unknown-brand']);
-      const idsByMp = { CA: new Set(), US: new Set() };
-      for (const b of freshForHealth.brands) {
-        if (skip.has(b.id)) continue;
-        const mp = b.marketplace === 'US' ? 'US' : 'CA';
-        for (const hist of Object.values(b.buyBoxOwnerHistory || {})) {
-          for (const h of hist) {
-            if (!h.sellerId || h.sellerId === ourSellerId) continue;
-            const cached = sellerNames[h.sellerId];
-            const stale = cached?.scrapedAt && (Date.now() - new Date(cached.scrapedAt).getTime() > REFRESH_MS);
-            if (!cached || stale) idsByMp[mp].add(h.sellerId);
-          }
-        }
-      }
-      const toScrapeCa = [...idsByMp.CA];
-      const toScrapeUs = [...idsByMp.US];
-      if (toScrapeCa.length || toScrapeUs.length) {
-        const [caNames, usNames] = await Promise.all([
-          scrapeSellerNames(toScrapeCa, 'CA'),
-          scrapeSellerNames(toScrapeUs, 'US'),
-        ]);
-        const updated = { ...sellerNames, ...caNames, ...usNames };
+      const idsByMp = sellerIdsToScrape(freshForHealth.brands, sellerNames, { skip, ourSellerId, refreshMs: REFRESH_MS });
+      if (Object.keys(idsByMp).length) {
+        const scraped = [];
+        for (const [mp, ids] of Object.entries(idsByMp)) scraped.push(await scrapeSellerNames([...ids], mp));
+        const updated = Object.assign({ ...sellerNames }, ...scraped);
         await saveSellerNames(updated);
-        console.log(`[${tag}] Seller name cache updated: +${Object.keys(caNames).length + Object.keys(usNames).length} new`);
+        console.log(`[${tag}] Seller name cache updated: +${scraped.reduce((n, s) => n + Object.keys(s).length, 0)} new`);
       } else {
         console.log(`[${tag}] Seller name cache up to date — no new IDs to scrape`);
       }
