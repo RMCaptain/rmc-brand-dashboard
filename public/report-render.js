@@ -36,6 +36,11 @@ function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 }
 
+// Marketplace labels/symbols for byMp-shaped payloads (no registry fetch in
+// the report context — the portal renders these without team auth).
+const MP_LABEL = { CA: 'Amazon.ca', US: 'Amazon.com', UK: 'Amazon.co.uk', WMCA: 'Walmart.ca' };
+const MP_CUR_SYM = { CAD: 'CA$', USD: 'US$', GBP: '£' };
+
 const fmtDay = iso => {
   if (!iso) return '';
   const [y, m, dd] = iso.split('-').map(Number);
@@ -405,7 +410,17 @@ const SHARED_RENDERERS = {
     // Walmart later doesn't silently read as the same line item.
     // NOTE: the data model still keys on currency, so amazon_ca and a future
     // walmart_ca would collapse. See the Notion entry on multi-marketplace.
-    const marketplaces = [
+    // byMp payloads (every live/saved report since the Sellerboard-first
+    // resolver): one tile per marketplace present, native currency, labelled
+    // by marketplace — UK reads as "Amazon.co.uk (£)", Walmart.ca stays
+    // distinct from Amazon.ca even though both are CAD.
+    const marketplaces = (s.byMp || sp.byMp)
+      ? Object.keys({ ...(s.byMp || {}), ...(sp.byMp || {}) }).map(id => {
+          const m = s.byMp?.[id] || sp.byMp?.[id];
+          const sym = MP_CUR_SYM[m.currency] || (m.currency + ' ');
+          return { label: `Revenue — ${MP_LABEL[m.code] || m.code} (${sym})`, sym, cur: s.byMp?.[id]?.sales || 0, prev: sp.byMp?.[id]?.sales || 0 };
+        }).filter(mp => (mp.cur || 0) > 0 || (mp.prev || 0) > 0)
+      : [
       { label: 'Revenue — Amazon.ca (CA$)', sym: 'CA$',  cur: s.revenueCad, prev: sp.revenueCad },
       { label: 'Revenue — Amazon.com (US$)', sym: 'US$', cur: s.revenueUsd, prev: sp.revenueUsd },
     ].filter(mp => (mp.cur || 0) > 0 || (mp.prev || 0) > 0);
@@ -485,9 +500,22 @@ const SHARED_RENDERERS = {
       (b.revenueCad + b.revenueUsd) - (a.revenueCad + a.revenueUsd)
     ).slice(0, TOP_N);
 
-    // Drop a currency column entirely if no shown product has revenue in it.
-    const showCad = ranked.some(p => (p.revenueCad || 0) > 0);
-    const showUsd = ranked.some(p => (p.revenueUsd || 0) > 0);
+    // One revenue column per marketplace that any shown product sold on
+    // (byMp payloads); legacy payloads keep the CA$/US$ pair. A column is
+    // dropped entirely when no shown product has revenue in it.
+    const anyMp = ranked.some(p => p.byMp && Object.keys(p.byMp).length);
+    let revCols;
+    if (anyMp) {
+      const seen = {};
+      for (const p of ranked) for (const m of Object.values(p.byMp || {})) if ((m.sales || 0) > 0) seen[m.code] = m;
+      revCols = Object.values(seen).map(m => ({ code: m.code, sym: MP_CUR_SYM[m.currency] || (m.currency + ' '),
+        value: p => Object.values(p.byMp || {}).find(x => x.code === m.code)?.sales || 0 }));
+    } else {
+      revCols = [
+        ...(ranked.some(p => (p.revenueCad || 0) > 0) ? [{ code: 'CA', sym: 'CA$', value: p => p.revenueCad }] : []),
+        ...(ranked.some(p => (p.revenueUsd || 0) > 0) ? [{ code: 'US', sym: 'US$', value: p => p.revenueUsd }] : []),
+      ];
+    }
 
     // Inventory deliberately omitted: the counts aren't reliable enough to put
     // in front of a brand (Mike, 2026-07-14).
@@ -497,8 +525,7 @@ const SHARED_RENDERERS = {
       // title attr gives the untruncated name on hover.
       return `<tr>
         <td><span class="product-title" title="${escapeHtml(full)}">${escapeHtml(titleShort)}</span><div class="product-asin">${escapeHtml(p.asin)}</div></td>
-        ${showCad ? `<td class="r">${fmtC(p.revenueCad)}</td>` : ''}
-        ${showUsd ? `<td class="r">${fmtC(p.revenueUsd, 'US$')}</td>` : ''}
+        ${revCols.map(c => `<td class="r">${fmtC(c.value(p), c.sym)}</td>`).join('')}
         <td class="r">${fmtN(p.units)}</td>
         <td class="r">${fmtN(p.sessions)}</td>
         <td class="r">${fmtPct(p.buyBox)}</td>
@@ -506,15 +533,14 @@ const SHARED_RENDERERS = {
       </tr>`;
     }).join('');
 
-    const cols = 5 + (showCad ? 1 : 0) + (showUsd ? 1 : 0);
+    const cols = 5 + revCols.length;
     const more = active.length > TOP_N
       ? `<div class="rpt-note">Showing top ${TOP_N} of ${active.length} products by revenue.</div>` : '';
 
     return `<table class="rpt-table">
       <thead><tr>
         <th>Product</th>
-        ${showCad ? '<th class="r">Rev CA$</th>' : ''}
-        ${showUsd ? '<th class="r">Rev US$</th>' : ''}
+        ${revCols.map(c => `<th class="r">Rev ${c.code} ${c.sym}</th>`).join('')}
         <th class="r">Units</th><th class="r">Sessions</th><th class="r">Buy Box</th>
         <th class="r">Δ Units</th>
       </tr></thead>

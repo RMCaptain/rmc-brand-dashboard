@@ -137,7 +137,23 @@ with a console.error by every wide-table writer instead of being booked as
 USD. Health checks route 'CA,US' brands' ASINs by their listed marketplace
 (the live bug). Nothing reads `daily_metrics_mp` yet.
 
-**Phase 2b — reader migration (scoped 2026-09-09, not started):**
+**Phase 2b/3 — SHIPPED DIFFERENTLY 2026-09-09 (Sellerboard-first resolver).**
+Mike's direction that day: Sellerboard is the source of truth for money
+metrics, Amazon APIs are reconciled against it, UK rides Sellerboard alone
+until EU credentials exist, one global picker with an All view. So instead of
+migrating readers to `daily_metrics_mp`, `sync/metricsResolver.js` resolves
+per (asin, marketplace, day) — Sellerboard row where `sellerboard_daily`
+covers that marketplace-day, else the wide daily_metrics row split by
+currency column + `daily_fees_asin` — and `buildBrandMetricsForRange` emits
+`byMp` everywhere. `daily_metrics_mp` remains the double-write mirror and the
+Amazon side of `sync/reconcileSellerboard.js`; the step list below is kept
+as the fallback path if Sellerboard ever stops being the reference.
+Frontend: `public/mp-scope.js` (global picker, FX per currency, flag and
+source badges) on brands / products / brand / dashboard; `report-render.js`
+tiles and top-sellers columns are byMp-driven. Regression:
+`npm run test:marketplace`.
+
+**Phase 2b — reader migration (original scope, superseded above):**
 
 What `daily_metrics_mp` actually holds today — writers exist for three column
 groups only: orders (`units`, `revenue`), ads (`ad_spend`,

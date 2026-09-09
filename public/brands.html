@@ -9,6 +9,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="/style.css" />
   <script src="/mobile-nav.js" defer></script>
+  <script src="/mp-scope.js"></script>
 </head>
 <body class="min-h-screen">
 
@@ -237,9 +238,11 @@
     let focusBrandScrolled = false;
 
     // ── Formatting ────────────────────────────────────────────────────────────
-    function fmt(cad, usd = 0) {
-      if (currency === 'CAD') return 'CA$' + ((cad || 0) + (usd || 0) * fxRate.usdToCad).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      return 'US$' + ((usd || 0) + (cad || 0) * fxRate.cadToUsd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    // Legacy CAD/USD pair, scope-aware (Today/Yesterday payloads). byMp
+    // payloads go through MpScope.sumMp directly.
+    function fmt(cad, usd = 0) { return MpScope.fmt(MpScope.legacyNum(cad, usd)); }
+    function summaryMoney(m, metric, cadKey, usdKey) {
+      return m?.byMp ? MpScope.fmt(MpScope.sumMp(m.byMp, metric) || 0) : fmt(m?.[cadKey], m?.[usdKey]);
     }
 
     function updateToggleUI() {
@@ -354,6 +357,7 @@
     }
 
     function renderPerformance() {
+      MpScope.syncOptions();
       const isToday     = activePreset === 'today';
       const isYesterday = activePreset === 'yesterday';
       const isCustom    = activePreset === 'custom';
@@ -400,14 +404,14 @@
                   <h3 class="font-semibold text-sm" style="color:var(--text)">${brand.name}</h3>
                   <span class="text-xs" style="color:var(--text-3)">${brand.marketplace} · ${brand.asins.length} ASINs</span>
                 </div>
-                <div class="flex flex-wrap gap-1 justify-end">${alertBadges}</div>
+                <div class="flex flex-wrap gap-1 justify-end items-center">${m?.byMp ? MpScope.sourceBadge(MpScope.sourceOf(m.byMp)) + MpScope.flagBadge(MpScope.scopedFlags(m.byMp)) : ''}${alertBadges}</div>
               </div>
               ${m ? `
               ${m.carriedOver ? '<p class="text-xs mb-2" style="color:var(--warn,#f59e0b)" title="No rows in this window — showing the last data this brand had">⚠ cached — no data in this period</p>' : ''}
               <div class="grid grid-cols-2 gap-3 mb-4">
-                <div><p class="text-xs mb-0.5" style="color:var(--text-3)">Revenue</p><p class="text-lg font-bold" style="color:var(--text)">${fmt(m.revenueCad, m.revenueUsd)}</p></div>
-                <div><p class="text-xs mb-0.5" style="color:var(--text-3)">Units Sold</p><p class="text-lg font-bold" style="color:var(--text)">${(m.units || 0).toLocaleString()}</p></div>
-                <div><p class="text-xs mb-0.5" style="color:var(--text-3)">Sessions</p><p class="text-lg font-bold" style="color:var(--text)">${m.sessions != null ? (m.sessions).toLocaleString() : '—'}</p></div>
+                <div><p class="text-xs mb-0.5" style="color:var(--text-3)">Revenue</p><p class="text-lg font-bold" style="color:var(--text)">${summaryMoney(m, 'sales', 'revenueCad', 'revenueUsd')}</p></div>
+                <div><p class="text-xs mb-0.5" style="color:var(--text-3)">Units Sold</p><p class="text-lg font-bold" style="color:var(--text)">${(m.byMp ? (MpScope.sumMp(m.byMp, 'units') || 0) : (m.units || 0)).toLocaleString()}</p></div>
+                <div><p class="text-xs mb-0.5" style="color:var(--text-3)">Sessions</p><p class="text-lg font-bold" style="color:var(--text)">${MpScope.scoped() ? '—' : (m.sessions != null ? (m.sessions).toLocaleString() : '—')}</p></div>
                 <div><p class="text-xs mb-0.5" style="color:var(--text-3)">S&amp;S Subs</p><p class="text-lg font-bold" style="color:var(--text)">${(() => { const n = Object.values(brand.asinSns || {}).reduce((a, x) => a + x, 0); return n > 0 ? n.toLocaleString() : '—'; })()}</p></div>
               </div>
               <div>
@@ -1098,6 +1102,11 @@
       ]);
       fxRate = fxRes;
       presetMetrics = pmRes;
+      MpScope.init({
+        onChange: () => renderPerformance(),
+        fx: () => fxRate, currency: () => currency,
+        datasets: () => [todayData, yesterdayData, customData, ...Object.values(rangeData), ...Object.values(presetMetrics.presets || {})],
+      });
       brandsData = (brandsRes.brands || []).sort((a, b) => {
         if (a.id === 'unknown-brand') return 1;
         if (b.id === 'unknown-brand') return -1;

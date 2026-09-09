@@ -1213,7 +1213,11 @@
       for (const d of [customTableData, ...Object.values(rangeTableData), ...Object.values(presetMetrics.presets || {})]) {
         for (const m of (d?.marketplaces || [])) present.add(m.code);
       }
-      const wanted = mpRegistry.filter(m => m.active || present.has(m.code));
+      // Options: registry actives, anything the loaded data carries, and the
+      // persisted selection itself (a UK choice survives a page whose data
+      // hasn't arrived yet). Only a code the registry has never heard of
+      // falls back to All.
+      const wanted = mpRegistry.filter(m => m.active || present.has(m.code) || m.code === mpFilter);
       for (const code of present) if (!wanted.some(m => m.code === code)) wanted.push({ code, label: code, flag: '' });
       const options = () => Array.from(sel.options || []);
       const have = new Set(options().map(o => o.value));
@@ -1225,9 +1229,7 @@
         sel.appendChild(opt);
         have.add(m.code);
       }
-      // Keep a persisted selection even before its option exists (registry
-      // still loading); only fall back to All once the registry has answered.
-      if (mpFilter !== 'all' && mpRegistry.length && !have.has(mpFilter)) { mpFilter = 'all'; localStorage.setItem('mpFilter', 'all'); }
+      if (mpFilter !== 'all' && mpRegistry.length && !mpByCode(mpFilter)) { mpFilter = 'all'; localStorage.setItem('mpFilter', 'all'); }
       updateMpUI();
     }
     async function loadMarketplaces() {

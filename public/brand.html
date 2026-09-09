@@ -9,6 +9,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="/style.css" />
   <script src="/mobile-nav.js" defer></script>
+  <script src="/mp-scope.js"></script>
   <style>
     #salesPopup, #inventoryPopup { pointer-events: none; transition: opacity 0.1s ease; }
     .asin-remove-btn { opacity: 0; transition: opacity 0.15s ease; }
@@ -202,15 +203,14 @@
     let asinSortCol = null;
     let asinSortDir = -1;
 
-    function fmt(cad, usd) {
-      if (currency === 'CAD') {
-        const total = (cad || 0) + (usd || 0) * fxRate.usdToCad;
-        return 'CA$' + total.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      } else {
-        const total = (usd || 0) + (cad || 0) * fxRate.cadToUsd;
-        return 'US$' + total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      }
-    }
+    // Legacy CAD/USD pair → display under the global marketplace scope
+    // (Today/Yesterday payloads). byMp payloads use the sku helpers below.
+    function fmt(cad, usd) { return MpScope.fmt(MpScope.legacyNum(cad, usd)); }
+    const hasMp = s => !!(s?.byMp && Object.keys(s.byMp).length);
+    const skuRev   = s => hasMp(s) ? (MpScope.sumMp(s.byMp, 'sales') || 0)   : MpScope.legacyNum(s?.revenueCad, s?.revenueUsd);
+    const skuSpend = s => hasMp(s) ? (MpScope.sumMp(s.byMp, 'adSpend') || 0) : MpScope.legacyNum(s?.spendCad, s?.spendUsd);
+    const skuUnits = s => hasMp(s) ? (MpScope.sumMp(s.byMp, 'units') || 0)
+      : (MpScope.scoped() ? (MpScope.filter() === 'CA' ? (s?.unitsCad ?? s?.unitsCa ?? 0) : MpScope.filter() === 'US' ? (s?.unitsUsd ?? s?.unitsUs ?? 0) : 0) : (s?.units || 0));
 
     function calcVelocity(asin, brandId) {
       const candidates = [
@@ -236,9 +236,26 @@
     // the Today preset (trailing-rate fees, self-corrects within 24-48h).
     function calcSkuNet(brand, s) {
       if (!s) return { fees: null, netProfit: null, margin: null, estimated: false };
-      const conv = (cad, usd) => currency === 'CAD'
-        ? (cad || 0) + (usd || 0) * fxRate.usdToCad
-        : (usd || 0) + (cad || 0) * fxRate.cadToUsd;
+      if (hasMp(s)) {
+        // Resolved per-marketplace payload: marketplaces in scope, native
+        // currency each, converted to display. Fees follow Sellerboard where
+        // it covers the marketplace, else the Amazon per-ASIN fee rows.
+        let fees = 0, feesKnown = false, cogsTot = 0, cogsOk = true, refunds = 0;
+        for (const m of MpScope.scopedMps(s.byMp)) {
+          const legacyFees = m.code === 'CA' ? s.feesCad : m.code === 'US' ? s.feesUsd : null;
+          const f = m.fees != null ? m.fees : legacyFees;
+          if (f != null) { feesKnown = true; fees += MpScope.toDisplay(f, m.currency); }
+          const c = MpScope.cogsFor(brand, s.asin, m.code);
+          if (m.units > 0 && !(c > 0)) cogsOk = false;
+          cogsTot += MpScope.toDisplay(m.units * c, m.currency);
+          refunds += MpScope.toDisplay(m.code === 'CA' ? (s.refundPostedCad || 0) : m.code === 'US' ? (s.refundPostedUsd || 0) : (m.refundAmount || 0), m.currency);
+        }
+        const rev = skuRev(s), spend = skuSpend(s);
+        const netProfit = (feesKnown && cogsOk && cogsTot > 0) ? rev - cogsTot - fees - spend - refunds : null;
+        const margin = netProfit != null && rev > 0 ? netProfit / rev * 100 : null;
+        return { fees: feesKnown ? fees : null, netProfit, margin, estimated: !!s.feesEstimated };
+      }
+      const conv = (cad, usd) => MpScope.legacyNum(cad, usd);
       const feesKnown = s.feesCad != null || s.feesUsd != null;
       const fees = feesKnown ? conv(s.feesCad, s.feesUsd) : null;
       const cmp = brand.cogsPerMarketplace?.[s.asin];
@@ -282,11 +299,8 @@
         if (asinSortCol === 'asin') { av = a; bv = b; }
         else if (asinSortCol === 'title') { av = sa?.title || ''; bv = sb?.title || ''; }
         else if (asinSortCol === 'status') { av = sa?.status || ''; bv = sb?.status || ''; }
-        else if (asinSortCol === 'revenue') {
-          av = sa ? (sa.revenueCad || 0) + (sa.revenueUsd || 0) * fxRate.usdToCad : 0;
-          bv = sb ? (sb.revenueCad || 0) + (sb.revenueUsd || 0) * fxRate.usdToCad : 0;
-        }
-        else if (asinSortCol === 'units') { av = sa?.units ?? 0; bv = sb?.units ?? 0; }
+        else if (asinSortCol === 'revenue') { av = sa ? skuRev(sa) : 0; bv = sb ? skuRev(sb) : 0; }
+        else if (asinSortCol === 'units') { av = sa ? skuUnits(sa) : 0; bv = sb ? skuUnits(sb) : 0; }
         else if (asinSortCol === 'sessions') { av = sa?.sessions ?? 0; bv = sb?.sessions ?? 0; }
         else if (asinSortCol === 'pageViews') { av = sa?.pageViews ?? 0; bv = sb?.pageViews ?? 0; }
         else if (asinSortCol === 'buyBox') { av = sa?.buyBox ?? -1; bv = sb?.buyBox ?? -1; }
@@ -308,10 +322,7 @@
         }
         else if (asinSortCol === 'leadTime') { av = brand.leadTimes?.[a] ?? -1; bv = brand.leadTimes?.[b] ?? -1; }
         else if (asinSortCol === 'cogs') { av = brand.cogs?.[a] ?? -1; bv = brand.cogs?.[b] ?? -1; }
-        else if (asinSortCol === 'adSpend') {
-          av = currency === 'CAD' ? (sa?.spendCad || 0) + (sa?.spendUsd || 0) * fxRate.usdToCad : (sa?.spendUsd || 0) + (sa?.spendCad || 0) * fxRate.cadToUsd;
-          bv = currency === 'CAD' ? (sb?.spendCad || 0) + (sb?.spendUsd || 0) * fxRate.usdToCad : (sb?.spendUsd || 0) + (sb?.spendCad || 0) * fxRate.cadToUsd;
-        }
+        else if (asinSortCol === 'adSpend') { av = sa ? skuSpend(sa) : 0; bv = sb ? skuSpend(sb) : 0; }
         else if (asinSortCol === 'acos') { av = sa?.acos ?? -1; bv = sb?.acos ?? -1; }
         else if (asinSortCol === 'fees') { av = calcSkuNet(brand, sa).fees ?? -Infinity; bv = calcSkuNet(brand, sb).fees ?? -Infinity; }
         else if (asinSortCol === 'netProfit') { av = calcSkuNet(brand, sa).netProfit ?? -Infinity; bv = calcSkuNet(brand, sb).netProfit ?? -Infinity; }
@@ -475,6 +486,11 @@
         presetMetrics = pmRes;
         brandCache = brandRes;
         allBrandsData = allBrandsRes?.brands || [];
+        MpScope.init({
+          onChange: () => { if (brandCache) renderBrand({ ...brandCache, metrics: getCurrentBrandMetrics(brandCache.id) }); },
+          fx: () => fxRate, currency: () => currency,
+          datasets: () => [todayData, customData, ...Object.values(presetMetrics.presets || {})],
+        });
 
         const availablePresets = Object.keys(presetMetrics.presets || {});
         if (activePreset !== 'today' && activePreset !== 'custom' && !availablePresets.includes(activePreset) && availablePresets.length > 0) {
@@ -499,6 +515,7 @@
     }
 
     function _renderBrand(brand) {
+      MpScope.syncOptions();
 
       // Header
       document.title = `${brand.name} — RMC Dashboard`;
@@ -514,9 +531,14 @@
       // Ad Spend / ACOS tiles don't silently blank out.
       const ad = brand.metrics ? (brand.metrics.adSummary || brand.metrics.summary?.adSummary || null) : null;
 
-      // Build summary tile data
-      const adSpendDisp = ad && (ad.spendCad > 0 || ad.spendUsd > 0)
-        ? fmt(ad.spendCad, ad.spendUsd) : '—';
+      // Build summary tile data (byMp payloads: marketplaces in scope,
+      // Sellerboard first; otherwise the legacy CAD/USD pair)
+      const mBy = m?.byMp && Object.keys(m.byMp).length ? m.byMp : null;
+      const adSpendVal = mBy ? (MpScope.sumMp(mBy, 'adSpend') || 0) : MpScope.legacyNum(ad?.spendCad, ad?.spendUsd);
+      const adSpendDisp = adSpendVal > 0 ? MpScope.fmt(adSpendVal) : '—';
+      const revenueDisp = m ? (mBy ? MpScope.fmt(MpScope.sumMp(mBy, 'sales') || 0) : fmt(m.revenueCad, m.revenueUsd)) : '—';
+      const unitsVal = m ? (mBy ? (MpScope.sumMp(mBy, 'units') || 0) : (m.units || 0)) : 0;
+      const srcBadge = mBy ? ` ${MpScope.sourceBadge(MpScope.sourceOf(mBy))} ${MpScope.flagBadge(MpScope.scopedFlags(mBy))}` : '';
       const acosDisp = ad?.acos != null ? ad.acos.toFixed(1) + '%' : '—';
       const roasDisp = ad?.roas != null ? ad.roas.toFixed(2) + 'x' : '—';
       const acosColor = ad?.acos != null
@@ -532,9 +554,9 @@
 
       const totalSns = Object.values(brand.asinSns || {}).reduce((a, b) => a + b, 0);
       document.getElementById('summaryTiles').innerHTML = [
-        tile('Revenue',  m ? fmt(m.revenueCad, m.revenueUsd) : '—', m ? (m.units || 0).toLocaleString() + ' units' : null),
-        tile('Sessions', m ? (m.sessions || 0).toLocaleString() : '—', m?.avgCvr != null ? 'CVR ' + m.avgCvr.toFixed(2) + '%' : null),
-        tile('Ad Spend', adSpendDisp, ad?.clicks ? ad.clicks.toLocaleString() + ' clicks' : null, ad && (ad.spendCad > 0 || ad.spendUsd > 0) ? '#f87171' : undefined),
+        tile('Revenue',  revenueDisp, m ? unitsVal.toLocaleString() + ' units' + srcBadge : null),
+        tile('Sessions', m && !MpScope.scoped() ? (m.sessions || 0).toLocaleString() : '—', m?.avgCvr != null && !MpScope.scoped() ? 'CVR ' + m.avgCvr.toFixed(2) + '%' : (MpScope.scoped() ? 'not split by marketplace' : null)),
+        tile('Ad Spend', adSpendDisp, ad?.clicks ? ad.clicks.toLocaleString() + ' clicks' : null, adSpendVal > 0 ? '#f87171' : undefined),
         tile('ACOS',     acosDisp,    ad?.roas != null ? 'ROAS ' + roasDisp : null, acosColor),
         tile('S&S Subs', totalSns > 0 ? totalSns.toLocaleString() : '—', totalSns > 0 ? 'active subscribers' : null),
       ].join('');
@@ -572,8 +594,7 @@
       if (m && (m.alerts.suppressedListings > 0 || m.alerts.lostBuyBox > 0)) {
         const row = document.getElementById('alertsRow');
         row.classList.remove('hidden');
-        const isCA = brand.marketplace !== 'US';
-        const scBase = isCA ? 'https://sellercentral.amazon.ca' : 'https://sellercentral.amazon.com';
+        const scBase = MpScope.sellerCentralFor((brand.marketplace || 'CA').split(',')[0].trim());
         row.innerHTML = [
           m.alerts.suppressedListings > 0
             ? `<a href="${scBase}/inventory?viewId=SUPPRESSED" target="_blank" rel="noopener"
@@ -606,10 +627,10 @@
       if (!skus || skus.length === 0) {
         document.getElementById('noDataState').classList.remove('hidden');
         document.getElementById('skuTable').innerHTML = brand.asins.map(asin => {
-          const mp = brand.asinMarketplaces?.[asin] || brand.marketplace;
+          const mp = brand.asinMarketplaces?.[asin] || (brand.marketplace || 'CA').split(',')[0].trim();
           return `<tr class="border-b border-slate-700/40 last:border-0">
             <td class="px-5 py-3">
-              <a href="${mp === 'US' ? 'https://www.amazon.com' : 'https://www.amazon.ca'}/dp/${asin}" target="_blank" rel="noopener" class="font-mono text-xs text-slate-400 hover:underline">${asin}</a>
+              <a href="${MpScope.storefrontFor(mp)}/dp/${asin}" target="_blank" rel="noopener" class="font-mono text-xs text-slate-400 hover:underline">${asin}</a>
             </td>
             <td class="px-4 py-3 text-slate-500 text-xs" colspan="22">No data yet</td>
           </tr>`;
@@ -656,47 +677,43 @@
 
       const titleEsc = (s.title || '').replace(/"/g, '&quot;');
       const asinSku  = s.sellerSku || brand.asinSkus?.[s.asin] || '';
-      const asinMp   = s.marketplace || brand.asinMarketplaces?.[s.asin] || brand.marketplace;
+      const homeMp   = s.marketplace || brand.asinMarketplaces?.[s.asin] || (brand.marketplace || 'CA').split(',')[0].trim();
+      const asinMp   = MpScope.scoped() ? MpScope.filter() : homeMp;
       const skuEsc   = asinSku.replace(/"/g, '&quot;');
       const invJson  = JSON.stringify(s.inventory ?? {}).replace(/"/g, '&quot;');
       const invTotal = ((s.inventory?.onHand ?? 0) + (s.inventory?.inbound ?? 0) + (s.inventory?.reserved ?? 0) + (s.inventory?.researching ?? 0) + (s.inventory?.unfulfillable ?? 0)).toLocaleString();
 
-      const mpBadgeHtml = (mp => {
-        const s2 = mp === 'CA' ? 'background:#1e3a5f;color:#60a5fa' : mp === 'US' ? 'background:#1a3a1a;color:#4ade80' : 'background:#2a2a2a;color:#888';
-        return '<span style="' + s2 + ';font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;letter-spacing:0.05em;vertical-align:middle;display:inline-block;margin-left:4px">' + mp + '</span>';
-      })(asinMp);
+      const codes = hasMp(s) ? MpScope.activeCodes(s.byMp) : [homeMp];
+      const mpBadgeHtml = (codes.length ? codes : [homeMp]).map(c => MpScope.mpBadge(c, 'margin-left:4px')).join('') +
+        (hasMp(s) ? MpScope.flagBadge(MpScope.scopedFlags(s.byMp)) : '');
 
       return '<tr class="border-b border-slate-700/40 last:border-0 hover:bg-slate-700/20">' +
         '<td class="px-5 py-3 whitespace-nowrap">' +
           '<div class="flex items-center gap-1">' +
-            '<a href="' + (asinMp === 'US' ? 'https://www.amazon.com' : 'https://www.amazon.ca') + '/dp/' + s.asin + '" target="_blank" rel="noopener" class="font-mono text-xs text-slate-400 hover:underline">' + s.asin + '</a>' +
+            '<a href="' + MpScope.storefrontFor(asinMp) + '/dp/' + s.asin + '" target="_blank" rel="noopener" class="font-mono text-xs text-slate-400 hover:underline">' + s.asin + '</a>' +
             mpBadgeHtml +
           '</div>' +
-          (asinSku ? '<a href="' + (asinMp === 'US' ? 'https://sellercentral.amazon.com' : 'https://sellercentral.amazon.ca') + '/skucentral?mSku=' + encodeURIComponent(asinSku) + '" target="_blank" rel="noopener" class="font-mono text-xs text-slate-500 mt-0.5 max-w-[160px] truncate hover:underline block" title="' + skuEsc + '">' + skuEsc + '</a>' : '') +
+          (asinSku ? '<a href="' + MpScope.sellerCentralFor(asinMp) + '/skucentral?mSku=' + encodeURIComponent(asinSku) + '" target="_blank" rel="noopener" class="font-mono text-xs text-slate-500 mt-0.5 max-w-[160px] truncate hover:underline block" title="' + skuEsc + '">' + skuEsc + '</a>' : '') +
         '</td>' +
         '<td class="px-4 py-3 text-slate-300 text-xs max-w-xs truncate" title="' + titleEsc + '">' + titleEsc + '</td>' +
         '<td class="px-4 py-3">' + (s.status
           ? '<span class="text-xs px-2 py-0.5 rounded-full font-medium ' + statusColor + '">' + s.status + '</span>'
           : '<span class="text-xs text-slate-600">—</span>') + '</td>' +
-        '<td class="px-4 py-3 text-right font-medium text-slate-100 cursor-pointer underline decoration-dotted decoration-slate-600" onmouseenter="showSalesPopup(event, \'' + s.asin + '\')" onmouseleave="hideSalesPopup()">' + fmt(s.revenueCad, s.revenueUsd) + '</td>' +
-        '<td class="px-4 py-3 text-right text-slate-300">' + s.units + '</td>' +
+        '<td class="px-4 py-3 text-right font-medium text-slate-100 cursor-pointer underline decoration-dotted decoration-slate-600" onmouseenter="showSalesPopup(event, \'' + s.asin + '\')" onmouseleave="hideSalesPopup()">' + MpScope.fmt(skuRev(s)) + '</td>' +
+        '<td class="px-4 py-3 text-right text-slate-300">' + skuUnits(s) + '</td>' +
         '<td class="px-4 py-3 text-right font-medium ' + bbColor + '">' + (s.buyBox != null ? s.buyBox.toFixed(1) + '%' : '—') + '</td>' +
         '<td class="px-4 py-3 text-right text-slate-300">' + (s.cvr != null ? s.cvr.toFixed(2) + '%' : '—') + '</td>' +
         (function() {
-          const hasSpend = (s.spendCad > 0 || s.spendUsd > 0);
-          const spendDisp = hasSpend
-            ? (currency === 'CAD'
-                ? 'CA$' + ((s.spendCad || 0) + (s.spendUsd || 0) * fxRate.usdToCad).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                : 'US$' + ((s.spendUsd || 0) + (s.spendCad || 0) * fxRate.cadToUsd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
-            : '—';
+          const spendVal = skuSpend(s);
+          const hasSpend = spendVal > 0;
+          const spendDisp = hasSpend ? MpScope.fmt(spendVal) : '—';
           const acosColor = s.acos != null ? (s.acos > 30 ? 'text-red-400' : s.acos > 20 ? 'text-amber-400' : 'text-emerald-400') : 'text-slate-500';
           return '<td class="px-4 py-3 text-right ' + (hasSpend ? 'text-red-400' : 'text-slate-500') + '">' + spendDisp + '</td>' +
                  '<td class="px-4 py-3 text-right font-medium ' + acosColor + '">' + (s.acos != null ? s.acos.toFixed(1) + '%' : '—') + '</td>';
         })() +
         (function() {
           const n = calcSkuNet(brand, s);
-          const sym = currency === 'CAD' ? 'CA$' : 'US$';
-          const money = v => sym + Math.abs(v).toLocaleString(currency === 'CAD' ? 'en-CA' : 'en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          const money = v => MpScope.fmt(v, { abs: true });
           const tilde = n.estimated ? '~' : '';
           const feesCell = n.fees != null
             ? '<td class="px-4 py-3 text-right text-slate-400">' + tilde + money(n.fees) + '</td>'

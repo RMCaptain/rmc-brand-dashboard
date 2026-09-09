@@ -52,11 +52,11 @@
 
 ## Currency Handling
 
-- CA marketplace (`A2EUQ1WTGCTBG2`) = CAD
-- US marketplace (`ATVPDKIKX0DER`) = USD
-- Revenue stored as `revenueCad` / `revenueUsd` everywhere — never mixed
-- Frontend `fmt(cad, usd)` converts using live FX rate
-- CA$/US$ toggle in nav, persisted in `localStorage`
+- Marketplaces live in `sync/marketplaces.js` (id, code, currency, Sellerboard name, storefront). CA = CAD, US = USD, UK = GBP, Walmart.ca = CAD.
+- Range payloads carry `byMp` (native currency per marketplace, with `source` + `flags`) on skus, brand summaries and financials; legacy `revenueCad` / `revenueUsd` are the CA/US slices of the same resolution (`sync/metricsResolver.js`, Sellerboard first).
+- `/api/fx` returns `toCad` for every registry currency; `public/mp-scope.js` blends the marketplaces in scope through CAD into the display currency. A single marketplace shows its native currency.
+- Global marketplace picker (`localStorage.mpFilter`) + CA$/US$ toggle (All view only, `localStorage.currency`) in every nav.
+- Sellerboard days are UTC, dashboard days are PST — daily reconciliation rows carry that noise; the trailing-7-day rows are the alert signal (`sync/reconcileSellerboard.js`).
 
 ## Buy Cost vs COGS
 

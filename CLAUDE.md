@@ -12,10 +12,23 @@ No emojis, no hype, no summaries of what you just did.
 ## Run
 ```bash
 npm install
-node server.js    # production
-npm run dev       # nodemon
+node server.js          # production
+npm run dev             # nodemon
+npm run test:marketplace  # no-DB regression suite: resolver, Sellerboard parser, /api/metrics, every page under All/CA/US/UK
 ```
 `http://localhost:3000` — auth bypassed locally when `AUTH_USERNAME`/`AUTH_PASSWORD` unset.
+
+## Marketplaces (registry-driven, Sellerboard first)
+`sync/marketplaces.js` is the only place a marketplace is defined. Every range
+payload (`buildBrandMetricsForRange`) carries `byMp` per sku / brand summary /
+financials: native-currency slice per marketplace with `source`
+(sellerboard | amazon | mixed) and `flags`. `sync/metricsResolver.js` picks
+Sellerboard per marketplace-day where it has rows, Amazon otherwise. Legacy
+`revenueCad/Usd` fields are the CA/US slices of the same resolution. The
+global picker (`public/mp-scope.js`, localStorage `mpFilter`) scopes every
+page; All blends through `fx.toCad`, a single marketplace shows its native
+currency. Traffic (sessions, buy box) and inventory stay Amazon-only;
+Today/Yesterday endpoints are still Amazon-only.
 
 ## Key API Routes
 ```

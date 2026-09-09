@@ -9,6 +9,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="/style.css" />
   <script src="/mobile-nav.js" defer></script>
+  <script src="/mp-scope.js"></script>
 </head>
 <body class="min-h-screen">
 
@@ -211,19 +212,11 @@
     }
 
     // ── Formatting ──────────────────────────────────────────────────────────────
-    function fmt(cad, usd = 0) {
-      if (currency === 'CAD') {
-        const t = (cad || 0) + (usd || 0) * fxRate.usdToCad;
-        return 'CA$' + t.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      }
-      const t = (usd || 0) + (cad || 0) * fxRate.cadToUsd;
-      return 'US$' + t.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    }
-
-    function getNum(cad, usd = 0) {
-      if (currency === 'CAD') return (cad || 0) + (usd || 0) * fxRate.usdToCad;
-      return (usd || 0) + (cad || 0) * fxRate.cadToUsd;
-    }
+    // Legacy CAD/USD pair → display value under the global marketplace scope
+    // (Today/Yesterday payloads). byMp payloads go through MpScope.sumMp.
+    function fmt(cad, usd = 0) { return MpScope.fmt(MpScope.legacyNum(cad, usd)); }
+    function getNum(cad, usd = 0) { return MpScope.legacyNum(cad, usd); }
+    const fmtDisp = v => MpScope.fmt(v);
 
     // ── Velocity (same logic as brand.html) ─────────────────────────────────────
     function calcVelocity(asin, brandId) {
@@ -293,38 +286,68 @@
           // fees − ad spend − refunds. null net when fee data is absent for the
           // period or a marketplace with units lacks COGS (no fake margins).
           // feesEstimated marks Today's trailing-rate estimate (~ in the UI).
-          const uCa = s?.unitsCad ?? s?.unitsCa ?? 0, uUs = s?.unitsUsd ?? s?.unitsUs ?? 0;
-          const feesKnown = s != null && (s.feesCad != null || s.feesUsd != null);
-          const fees = feesKnown ? getNum(s.feesCad || 0, s.feesUsd || 0) : null;
-          const cogsOk = (!(uCa > 0) || cogsCa != null) && (!(uUs > 0) || cogsUs != null) && (cogsCa != null || cogsUs != null);
-          const netProfit = (feesKnown && cogsOk)
-            ? getNum(s.revenueCad || 0, s.revenueUsd || 0)
-              - getNum(uCa * (cogsCa || 0), uUs * (cogsUs || 0))
-              - fees
-              - getNum(s.spendCad || 0, s.spendUsd || 0)
-              - getNum(s.refundPostedCad || 0, s.refundPostedUsd || 0)
-            : null;
-          const revDisp = s ? getNum(s.revenueCad, s.revenueUsd) : 0;
+          let fees, netProfit, revDisp, unitsDisp, spendDisp, marketplaces, flags = [], source = null;
+          if (s?.byMp && Object.keys(s.byMp).length) {
+            // Resolved per-marketplace payload (Sellerboard first): sum the
+            // marketplaces in scope; fees/COGS per marketplace in native currency.
+            const mps = MpScope.scopedMps(s.byMp);
+            revDisp   = MpScope.sumMp(s.byMp, 'sales') || 0;
+            unitsDisp = MpScope.sumMp(s.byMp, 'units') || 0;
+            spendDisp = MpScope.sumMp(s.byMp, 'adSpend') || 0;
+            let feesTot = 0, feesKnown = false, cogsTot = 0, cogsOk = true, refunds = 0;
+            for (const m of mps) {
+              const legacyFees = m.code === 'CA' ? s.feesCad : m.code === 'US' ? s.feesUsd : null;
+              const f = m.fees != null ? m.fees : legacyFees;
+              if (f != null) { feesKnown = true; feesTot += MpScope.toDisplay(f, m.currency); }
+              const c = MpScope.cogsFor(brand, asin, m.code);
+              if (m.units > 0 && !(c > 0)) cogsOk = false;
+              cogsTot += MpScope.toDisplay(m.units * c, m.currency);
+              refunds += MpScope.toDisplay(m.code === 'CA' ? (s.refundPostedCad || 0) : m.code === 'US' ? (s.refundPostedUsd || 0) : (m.refundAmount || 0), m.currency);
+            }
+            fees = feesKnown ? feesTot : null;
+            netProfit = (feesKnown && cogsOk && cogsTot > 0) ? revDisp - cogsTot - fees - spendDisp - refunds : null;
+            marketplaces = MpScope.activeCodes(s.byMp);
+            flags = MpScope.scopedFlags(s.byMp);
+            source = MpScope.sourceOf(s.byMp);
+          } else {
+            const uCa = s?.unitsCad ?? s?.unitsCa ?? 0, uUs = s?.unitsUsd ?? s?.unitsUs ?? 0;
+            const feesKnown = s != null && (s.feesCad != null || s.feesUsd != null);
+            fees = feesKnown ? getNum(s.feesCad || 0, s.feesUsd || 0) : null;
+            const cogsOk = (!(uCa > 0) || cogsCa != null) && (!(uUs > 0) || cogsUs != null) && (cogsCa != null || cogsUs != null);
+            netProfit = (feesKnown && cogsOk)
+              ? getNum(s.revenueCad || 0, s.revenueUsd || 0)
+                - getNum(uCa * (cogsCa || 0), uUs * (cogsUs || 0))
+                - fees
+                - getNum(s.spendCad || 0, s.spendUsd || 0)
+                - getNum(s.refundPostedCad || 0, s.refundPostedUsd || 0)
+              : null;
+            revDisp   = s ? getNum(s.revenueCad, s.revenueUsd) : 0;
+            unitsDisp = MpScope.scoped() ? (MpScope.filter() === 'CA' ? uCa : MpScope.filter() === 'US' ? uUs : 0) : (s?.units || 0);
+            spendDisp = getNum(s?.spendCad || 0, s?.spendUsd || 0);
+            marketplaces = s?.marketplaces || [];
+          }
           const margin = netProfit != null && revDisp > 0 ? netProfit / revDisp * 100 : null;
+          const homeMp = s?.marketplace || brand.asinMarketplaces?.[asin] || (brand.marketplace || 'CA').split(',')[0].trim();
           rows.push({
-            fees, feesEstimated: !!s?.feesEstimated, netProfit, margin,
+            fees, feesEstimated: !!s?.feesEstimated, netProfit, margin, flags, source,
             asin,
             brandId: brand.id,
             brandName: brand.name,
             brandColor: brand.color,
-            marketplace: s?.marketplace || brand.asinMarketplaces?.[asin] || brand.marketplace,
+            marketplace: MpScope.scoped() ? MpScope.filter() : homeMp,
             title: s?.title || brand.asinTitles?.[asin] || asin,
             sellerSku: s?.sellerSku || brand.asinSkus?.[asin] || '',
             imageUrl: s?.imageUrl || null,
             status: s?.status || null,
-            revenue: s ? getNum(s.revenueCad, s.revenueUsd) : 0,
+            revenue: revDisp,
             revenueCad: s?.revenueCad || 0,
             revenueUsd: s?.revenueUsd || 0,
-            units: s?.units || 0,
+            units: unitsDisp,
             buyBox: s?.buyBox ?? null,
             cvr: s?.cvr ?? null,
             spendCad: s?.spendCad || 0,
             spendUsd: s?.spendUsd || 0,
+            spendDisp,
             acos: s?.acos ?? null,
             inventory,
             velocity,
@@ -334,7 +357,7 @@
             cogs: brand.cogs?.[asin] ?? null,
             cogsCa, cogsUs,
             buyCost: brand.buyCost?.[asin] ?? null,
-            marketplaces: s?.marketplaces || [],
+            marketplaces,
             promos: brand.asinPromos?.[asin] || [],
             sns: brand.asinSns?.[asin] ?? null,
             upc: brand.upcs?.[asin] ?? '',
@@ -443,6 +466,7 @@
 
     // ── Render ──────────────────────────────────────────────────────────────────
     function render() {
+      MpScope.syncOptions();
       const tbody = document.getElementById('productTableBody');
       const rows = buildProductList();
 
@@ -480,7 +504,7 @@
           case 'units':     return r.units;
           case 'buyBox':    return r.buyBox ?? -1;
           case 'cvr':       return r.cvr ?? -1;
-          case 'adSpend':   return getNum(r.spendCad, r.spendUsd);
+          case 'adSpend':   return r.spendDisp ?? getNum(r.spendCad, r.spendUsd);
           case 'acos':      return r.acos ?? -1;
           case 'fees':      return r.fees ?? -Infinity;
           case 'netProfit': return r.netProfit ?? -Infinity;
@@ -537,9 +561,10 @@
             </div>
             <div class="min-w-0">
               <div class="flex items-center gap-2 flex-wrap">
-                <a href="${r.marketplace === 'US' ? 'https://www.amazon.com' : 'https://www.amazon.ca'}/dp/${r.asin}" target="_blank" rel="noopener" class="font-mono text-xs hover:underline" style="color:var(--text-3)">${r.asin}</a>
-                ${(mps => mps.length ? mps.map(mp => { const sc = mp === 'CA' ? 'background:#1e3a5f;color:#60a5fa' : mp === 'US' ? 'background:#1a3a1a;color:#4ade80' : 'background:#2a2a2a;color:#888'; return `<span style="${sc};font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;letter-spacing:0.05em">${mp}</span>`; }).join('') : '')(r.marketplaces?.length ? r.marketplaces : r.marketplace ? [r.marketplace] : [])}
-                ${r.sellerSku ? `<a href="${r.marketplace === 'US' ? 'https://sellercentral.amazon.com' : 'https://sellercentral.amazon.ca'}/inventory?searchSKU=${encodeURIComponent(r.sellerSku)}" target="_blank" rel="noopener" class="font-mono text-xs truncate max-w-[140px] hover:underline" style="color:var(--text-3)" title="${skuEsc}">${skuEsc}</a>` : ''}
+                <a href="${MpScope.storefrontFor(r.marketplace)}/dp/${r.asin}" target="_blank" rel="noopener" class="font-mono text-xs hover:underline" style="color:var(--text-3)">${r.asin}</a>
+                ${(r.marketplaces?.length ? r.marketplaces : r.marketplace ? [r.marketplace] : []).map(mp => MpScope.mpBadge(mp)).join('')}
+                ${MpScope.flagBadge(r.flags || [])}
+                ${r.sellerSku ? `<a href="${MpScope.sellerCentralFor(r.marketplace)}/inventory?searchSKU=${encodeURIComponent(r.sellerSku)}" target="_blank" rel="noopener" class="font-mono text-xs truncate max-w-[140px] hover:underline" style="color:var(--text-3)" title="${skuEsc}">${skuEsc}</a>` : ''}
               </div>
               <div class="text-xs mt-0.5 max-w-xs truncate" style="color:var(--text-2)" title="${titleEsc}">${r.title}</div>
               <div class="flex items-center gap-1.5 mt-0.5">
@@ -552,15 +577,15 @@
         <td class="px-4 py-3">
           ${r.status ? `<span class="text-xs px-2 py-0.5 rounded-full font-medium ${statusColor}">${r.status}</span>` : `<span style="color:var(--text-3)">—</span>`}
         </td>
-        <td class="px-4 py-3 text-right font-medium" style="color:var(--text)">${r.revenue > 0 ? fmt(r.revenueCad, r.revenueUsd) : '—'}</td>
+        <td class="px-4 py-3 text-right font-medium" style="color:var(--text)">${r.revenue > 0 ? fmtDisp(r.revenue) : '—'}</td>
         <td class="px-4 py-3 text-right" style="color:var(--text-2)">${r.units > 0 ? r.units.toLocaleString() : '—'}</td>
         <td class="px-4 py-3 text-right font-medium ${bbColor}">${r.buyBox != null ? r.buyBox.toFixed(1) + '%' : '—'}</td>
         <td class="px-4 py-3 text-right" style="color:var(--text-2)">${r.cvr != null ? r.cvr.toFixed(2) + '%' : '—'}</td>
-        <td class="px-4 py-3 text-right ${(r.spendCad > 0 || r.spendUsd > 0) ? 'text-red-400' : ''}" style="${(r.spendCad === 0 && r.spendUsd === 0) ? 'color:var(--text-3)' : ''}">${(r.spendCad > 0 || r.spendUsd > 0) ? fmt(r.spendCad, r.spendUsd) : '—'}</td>
+        <td class="px-4 py-3 text-right ${r.spendDisp > 0 ? 'text-red-400' : ''}" style="${!(r.spendDisp > 0) ? 'color:var(--text-3)' : ''}">${r.spendDisp > 0 ? fmtDisp(r.spendDisp) : '—'}</td>
         <td class="px-4 py-3 text-right font-medium ${r.acos != null ? (r.acos > 30 ? 'text-red-400' : r.acos > 20 ? 'text-amber-400' : 'text-emerald-400') : ''}" style="${r.acos == null ? 'color:var(--text-3)' : ''}">${r.acos != null ? r.acos.toFixed(1) + '%' : '—'}</td>
         ${(() => {
           const tilde = r.feesEstimated ? '~' : '';
-          const money = v => (currency === 'CAD' ? 'CA$' : 'US$') + Math.abs(v).toLocaleString(currency === 'CAD' ? 'en-CA' : 'en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          const money = v => MpScope.fmt(v, { abs: true });
           const feesCell = r.fees != null
             ? `<td class="px-4 py-3 text-right" style="color:var(--text-2)">${tilde}${money(r.fees)}</td>`
             : `<td class="px-4 py-3 text-right" style="color:var(--text-3)">—</td>`;
@@ -1083,11 +1108,11 @@
             </div>
               <div class="min-w-0">
                 <div class="flex items-center gap-1.5">
-                  <a href="${r.marketplace === 'US' ? 'https://www.amazon.com' : 'https://www.amazon.ca'}/dp/${r.asin}" target="_blank" rel="noopener" class="font-mono text-xs hover:underline" style="color:var(--text-3)">${r.asin}</a>
-                  <span style="${r.marketplace === 'US' ? 'background:#1a3a1a;color:#4ade80' : 'background:#1e3a5f;color:#60a5fa'};font-size:9px;font-weight:700;padding:1px 4px;border-radius:3px;flex-shrink:0">${r.marketplace === 'US' ? 'US' : 'CA'}</span>
+                  <a href="${MpScope.storefrontFor(r.marketplace)}/dp/${r.asin}" target="_blank" rel="noopener" class="font-mono text-xs hover:underline" style="color:var(--text-3)">${r.asin}</a>
+                  ${MpScope.mpBadge(r.marketplace || 'CA', 'flex-shrink:0')}
                 </div>
                 <div class="text-xs mt-0.5 max-w-xs truncate" style="color:var(--text-2)" title="${titleEsc}">${r.title}</div>
-                ${r.sellerSku ? `<a href="${r.marketplace === 'US' ? 'https://sellercentral.amazon.com' : 'https://sellercentral.amazon.ca'}/skucentral?mSku=${encodeURIComponent(r.sellerSku)}" target="_blank" rel="noopener" class="font-mono text-xs hover:underline truncate max-w-xs block mt-0.5" style="color:var(--text-3);opacity:0.6" title="${(r.sellerSku).replace(/"/g,'&quot;')}">${r.sellerSku}</a>` : ''}
+                ${r.sellerSku ? `<a href="${MpScope.sellerCentralFor(r.marketplace)}/skucentral?mSku=${encodeURIComponent(r.sellerSku)}" target="_blank" rel="noopener" class="font-mono text-xs hover:underline truncate max-w-xs block mt-0.5" style="color:var(--text-3);opacity:0.6" title="${(r.sellerSku).replace(/"/g,'&quot;')}">${r.sellerSku}</a>` : ''}
               </div>
             </div>
           </td>
@@ -1419,6 +1444,11 @@
       ]);
       fxRate = fxRes;
       presetMetrics = pmRes;
+      MpScope.init({
+        onChange: () => { if (activeTab === 'data') renderDataTable(); else render(); },
+        fx: () => fxRate, currency: () => currency,
+        datasets: () => [todayData, customData, ...Object.values(rangeData), ...Object.values(presetMetrics.presets || {})],
+      });
       brandsData = (brandsRes.brands || []).filter(b => b.asins.length > 0);
       if (customFrom) document.getElementById('customFrom').value = customFrom;
       if (customTo)   document.getElementById('customTo').value   = customTo;
