@@ -68,8 +68,17 @@ plus the multi-marketplace Phase-2 checklist. Triage into the Notion Build Log.
 
 ## Multi-marketplace Phase 2 — hardcoded CA/US map (must fix before activating UK/Walmart)
 
-Every site below assumes CAD→CA / USD→US or `!== CA ⇒ US`. Activating UK (GBP)
-or Walmart.ca (CAD — collides with Amazon.ca!) mis-buckets silently:
+**FIXED 2026-09-09 (`3df3446`)** — every site below now routes through
+`sync/marketplaces.js` helpers and skips a third marketplace with a
+console.error instead of mis-bucketing. The live health bug (`'CA,US'` brand
+→ CA checks only) is fixed via `codeForAsin`. Exceptions: `report-render.js`
+headline tiles stay currency-keyed until the Phase 2b reader migration
+(scoped in MARKETPLACE-EXPANSION-PLAN.md); `dailyFees.js` currency→mp is
+correct for the NA Finances walk and documented as such. Table kept for
+history.
+
+Every site below assumed CAD→CA / USD→US or `!== CA ⇒ US`. Activating UK (GBP)
+or Walmart.ca (CAD — collides with Amazon.ca!) mis-bucketed silently:
 
 | Site | Issue |
 |---|---|

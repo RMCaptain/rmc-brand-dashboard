@@ -126,7 +126,63 @@ loadMarketplaces().*
 - VAT normalization decided from sampled orders (Phase 2 gate).
 - Readers migrate: buildBrandMetricsForRange → mp tables (CA/US read from mp
   double-writes going forward; historical wide data merged or backfilled).
+  **Scoped 2026-09-09 — see "Phase 2b" below.**
 - Reconcile + integrity checks extended to UK (S&T comparison works there).
+
+**Phase 2a — DONE 2026-09-09 (`3df3446`):** every hardcoded `!== CA ⇒ US`
+site from SYSTEM-AUDIT-2026-08-23's Phase 2 table now routes through
+registry helpers (`wideTableOnly`, `isCaMp`, `codesForBrand`, `codeForAsin`,
+`storefrontHost`). A third marketplace in `SP_API_MARKETPLACE_IDS` is skipped
+with a console.error by every wide-table writer instead of being booked as
+USD. Health checks route 'CA,US' brands' ASINs by their listed marketplace
+(the live bug). Nothing reads `daily_metrics_mp` yet.
+
+**Phase 2b — reader migration (scoped 2026-09-09, not started):**
+
+What `daily_metrics_mp` actually holds today — writers exist for three column
+groups only: orders (`units`, `revenue`), ads (`ad_spend`,
+`ad_attributed_sales`), refunds (`refunded_units`, `refund_amount`,
+`refund_count`). Never written: `sessions`, `page_views`, `buy_box_pct`,
+`ad_clicks/impressions/orders` (blended at sync time), and inventory has no
+mp column at all. So a reader cannot simply switch tables; it splits.
+
+Wide-table readers to migrate (server.js unless noted):
+`buildBrandMetricsForRange` (central aggregator, ~3692), `/api/brands/:id`
+(~394), `/api/metrics/yesterday` (~2369), `/api/metrics/today` (~2676/2716;
+intraday state is the in-memory orders poller, wide-shaped `unitsCa/unitsUs`),
+`getTrailingFeeRates` (~2617), `getDataCoverage` (~4993),
+`buildBrandReportDataset` + `/api/report-data` (~5127/5292/5307),
+`sync/priceCache.js` trailing prices, `sync/refunds.js` avg-price lookup.
+`persistOrdersDay` / `_syncDailyAdSpendInner` are writer-side reads — they
+stay wide until contract. Frontend carries ~45 wide-shaped field references
+(index.html 18, brand.html 9, products.html 7, report-render.js 11).
+
+Order of work (each step verified against `sync/integrityCheck.js`
+mp_mirror + Sellerboard before the next — none of this can be validated
+without DB access):
+1. **Traffic mp writer.** Add a `traffic` group (`sessions`, `page_views`,
+   `buy_box_pct`) to `sync/metricsMp.js` and emit per-marketplace rows from
+   the S&T persist path (S&T datasets are already per marketplace —
+   `buildPresetMetrics` / `backfill.js`). Forward-only: wide `sessions` is
+   blended CA+US, so history cannot be split. Same for ad engagement once
+   `sync/ads.js` keeps per-profile clicks/impressions/orders.
+2. **`buildBrandMetricsForRange` hybrid read.** Money/units/refunds from
+   `daily_metrics_mp` grouped by `mp_id` (new `byMp: { [mp_id]: {...} }` on
+   every sku + summary); traffic/inventory/engagement from the wide table
+   until step 1 has coverage. Derive the legacy `revenueCad/Usd`,
+   `unitsCa/Us`, `spendCad/Usd`, `refund*Cad/Usd` fields FROM the mp groups
+   (CA → cad, US → usd) so no consumer changes. Cut over only after a
+   90-day diff script shows the two reads agree to the cent.
+3. **Report datasets** (`buildBrandReportDataset`) and `/api/brands/:id` —
+   same pattern.
+4. **Intraday.** Generalize the orders poller's in-memory `byAsin` to per-mp
+   buckets; `/api/metrics/today|yesterday` follow. Walmart's today tile
+   depends on this.
+5. **Frontend.** Lift the `scopable = CA/US` gate in `index.html`
+   `loadMarketplaces()` once the payload carries `byMp`; the switcher then
+   scopes off mp groups instead of cad/usd columns. Then Phase 3 proper.
+6. **Contract** (much later): wide currency columns retire after the last
+   reader is on mp and a full cycle reconciles.
 
 **Phase 3 — frontend:**
 - Separate the two concepts the UI currently conflates: a **marketplace
