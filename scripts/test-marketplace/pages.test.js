@@ -58,8 +58,8 @@ const near = (a, b, what) => assert.ok(Math.abs(a - b) <= 0.01, `${what}: ${a} v
       vm.runInContext('renderPerformance()', w);
       const html = w.document.getElementById('brandsGrid').innerHTML;
       assert.ok(html.includes('Zellies') && html.includes('Acure'), `brands ${f}: cards rendered`);
-      if (f === 'UK') { assert.ok(html.includes('£40.00'), `brands UK: ${html.match(/£[\d.,]+/g)}`); assert.ok(html.includes('Sellerboard'), 'UK source badge'); }
-      if (f === 'CA') { assert.ok(html.includes('CA$380.00') && html.includes('CA$30.00'), 'brands CA revenue'); assert.ok(html.includes('⚑'), 'CA flag badge on Acure'); }
+      if (f === 'UK') { assert.ok(html.includes('CA$' + (40 * gbp).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })), `brands UK in CAD: ${html.match(/CA\$[\d.,]+/g)}`); assert.ok(!html.includes('£'), 'no native currency'); }
+      if (f === 'CA') { assert.ok(html.includes('CA$380.00') && html.includes('CA$30.00'), 'brands CA revenue'); assert.ok(!html.includes('⚑') && !html.includes('Sellerboard'), 'reconciliation is not user-facing'); }
       if (f === 'all') { const allZ = 30 + 120 * usd + 40 * gbp; assert.ok(html.includes('CA$' + allZ.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })), `brands all Zellies: ${html.match(/CA\$[\d.,]+/g)}`); }
     }
     console.log('brands.html: OK (all/CA/US/UK)');
@@ -81,13 +81,13 @@ const near = (a, b, what) => assert.ok(Math.abs(a - b) <= 0.01, `${what}: ${a} v
     assert.deepStrictEqual(z1.marketplaces.sort(), ['CA', 'UK', 'US']);
     const uk = rowsUnder('UK');
     const z1uk = uk.find(r => r.asin === 'Z1');
-    near(z1uk.revenue, 40, 'products UK Z1'); assert.strictEqual(z1uk.units, 4); near(z1uk.fees, 12, 'UK fees'); near(z1uk.netProfit, 40 - 8 - 12 - 1, 'UK net');
+    near(z1uk.revenue, 40 * gbp, 'products UK Z1 in CAD'); assert.strictEqual(z1uk.units, 4); near(z1uk.fees, 12 * gbp, 'UK fees'); near(z1uk.netProfit, (40 - 8 - 12 - 1) * gbp, 'UK net');
     assert.strictEqual(uk.find(r => r.asin === 'A1').revenue, 0);
     const us = rowsUnder('US');
-    near(us.find(r => r.asin === 'Z1').revenue, 120, 'products US Z1'); assert.strictEqual(us.find(r => r.asin === 'Z1').source, 'amazon');
+    near(us.find(r => r.asin === 'Z1').revenue, 120 * usd, 'products US Z1 in CAD'); assert.strictEqual(us.find(r => r.asin === 'Z1').source, 'amazon');
     for (const f of ['all', 'CA', 'US', 'UK']) { w.MpScope.state.filter = f; vm.runInContext('render()', w); }
     const html = w.document.getElementById('productTableBody').innerHTML;
-    assert.ok(html.includes('£'), 'products UK render uses £');
+    assert.ok(!html.includes('£') && !html.includes('⚑'), 'toggle currency only, no badges');
     console.log('products.html: OK (all/CA/US/UK)');
   }
 
@@ -103,8 +103,8 @@ const near = (a, b, what) => assert.ok(Math.abs(a - b) <= 0.01, `${what}: ${a} v
       assert.ok(!w.document.getElementById('brandName').textContent.startsWith('Render error'), `brand.html ${f}: ${w.document.getElementById('brandName').textContent}`);
       const tiles = w.document.getElementById('summaryTiles').innerHTML;
       const rows = w.document.getElementById('skuTable').innerHTML;
-      if (f === 'UK') { assert.ok(tiles.includes('£40.00'), `brand UK tile: ${tiles.match(/£[\d.,]+/g)}`); assert.ok(rows.includes('£40.00'), 'brand UK row'); assert.ok(tiles.includes('Sellerboard'), 'brand UK source'); }
-      if (f === 'US') { assert.ok(tiles.includes('US$120.00'), `brand US tile: ${tiles.match(/US\$[\d.,]+/g)}`); assert.ok(tiles.includes('Amazon'), 'brand US source'); }
+      if (f === 'UK') { const v = 'CA$' + (40 * gbp).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); assert.ok(tiles.includes(v), `brand UK tile: ${tiles.match(/CA\$[\d.,]+/g)}`); assert.ok(rows.includes(v), 'brand UK row'); assert.ok(!tiles.includes('Sellerboard') && !rows.includes('⚑'), 'no badges'); }
+      if (f === 'US') { const v = 'CA$' + (120 * usd).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); assert.ok(tiles.includes(v), `brand US tile: ${tiles.match(/CA\$[\d.,]+/g)}`); }
       if (f === 'CA') { assert.ok(tiles.includes('CA$30.00'), 'brand CA tile'); }
       if (f === 'all') { assert.ok(rows.includes('UK') && rows.includes('US') && rows.includes('CA'), 'brand all badges'); }
     }

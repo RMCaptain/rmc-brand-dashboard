@@ -30,8 +30,8 @@
       </div>
       <div class="flex items-center gap-3">
         <div class="cur-toggle">
-          <button id="toggleCAD" onclick="setCurrency('CAD')" class="cur-btn">CA$</button>
-          <button id="toggleUSD" onclick="setCurrency('USD')" class="cur-btn">US$</button>
+          <button id="toggleCAD" onclick="setCurrency('CAD')" class="cur-btn">CAD</button>
+          <button id="toggleUSD" onclick="setCurrency('USD')" class="cur-btn">USD</button>
         </div>
       </div>
     </div>
@@ -563,7 +563,6 @@
               <div class="flex items-center gap-2 flex-wrap">
                 <a href="${MpScope.storefrontFor(r.marketplace)}/dp/${r.asin}" target="_blank" rel="noopener" class="font-mono text-xs hover:underline" style="color:var(--text-3)">${r.asin}</a>
                 ${(r.marketplaces?.length ? r.marketplaces : r.marketplace ? [r.marketplace] : []).map(mp => MpScope.mpBadge(mp)).join('')}
-                ${MpScope.flagBadge(r.flags || [])}
                 ${r.sellerSku ? `<a href="${MpScope.sellerCentralFor(r.marketplace)}/inventory?searchSKU=${encodeURIComponent(r.sellerSku)}" target="_blank" rel="noopener" class="font-mono text-xs truncate max-w-[140px] hover:underline" style="color:var(--text-3)" title="${skuEsc}">${skuEsc}</a>` : ''}
               </div>
               <div class="text-xs mt-0.5 max-w-xs truncate" style="color:var(--text-2)" title="${titleEsc}">${r.title}</div>

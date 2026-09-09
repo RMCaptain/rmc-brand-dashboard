@@ -223,7 +223,9 @@ async function runIntegrityChecks({ supabase, loadBrands }) {
     const fmt = r => `${codeOf(r.mp_id) || r.mp_id} ${r.metric} Amazon ${r.amazon_value} vs Sellerboard ${r.sellerboard_value} (${r.delta > 0 ? '+' : ''}${r.delta}${r.delta_pct != null ? `, ${r.delta_pct}%` : ''})`;
     const hard = recon.filter(r => r.scope === 'account_7d' && r.status === 'flag' && ['sales', 'units', 'ad_spend'].includes(r.metric));
     for (const r of hard) {
-      findings.push({ check: 'sellerboard', level: 'fail', detail: `7-day ${fmt(r)} — Amazon-side data and Sellerboard disagree beyond tolerance; Sellerboard is shown, Amazon path needs a look.` });
+      // warn, not fail: reconciliation is reviewed internally (Claude's overnight
+      // check), not something the team acts on from Slack (Mike, 2026-09-09).
+      findings.push({ check: 'sellerboard', level: 'warn', detail: `7-day ${fmt(r)} — Amazon-side data and Sellerboard disagree beyond tolerance; Sellerboard is shown, Amazon path needs a look.` });
     }
     const soft = recon.filter(r => r.scope === 'account' && r.status === 'flag');
     if (soft.length) {

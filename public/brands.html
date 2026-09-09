@@ -29,8 +29,8 @@
       </div>
       <div class="flex items-center gap-3">
         <div class="cur-toggle">
-          <button id="toggleCAD" onclick="setCurrency('CAD')" class="cur-btn">CA$</button>
-          <button id="toggleUSD" onclick="setCurrency('USD')" class="cur-btn">US$</button>
+          <button id="toggleCAD" onclick="setCurrency('CAD')" class="cur-btn">CAD</button>
+          <button id="toggleUSD" onclick="setCurrency('USD')" class="cur-btn">USD</button>
         </div>
         <span id="lastSyncText" class="text-xs" style="color:var(--text-3)"></span>
       </div>
@@ -404,7 +404,7 @@
                   <h3 class="font-semibold text-sm" style="color:var(--text)">${brand.name}</h3>
                   <span class="text-xs" style="color:var(--text-3)">${brand.marketplace} · ${brand.asins.length} ASINs</span>
                 </div>
-                <div class="flex flex-wrap gap-1 justify-end items-center">${m?.byMp ? MpScope.sourceBadge(MpScope.sourceOf(m.byMp)) + MpScope.flagBadge(MpScope.scopedFlags(m.byMp)) : ''}${alertBadges}</div>
+                <div class="flex flex-wrap gap-1 justify-end items-center">${alertBadges}</div>
               </div>
               ${m ? `
               ${m.carriedOver ? '<p class="text-xs mb-2" style="color:var(--warn,#f59e0b)" title="No rows in this window — showing the last data this brand had">⚠ cached — no data in this period</p>' : ''}

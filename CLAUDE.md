@@ -26,8 +26,9 @@ financials: native-currency slice per marketplace with `source`
 Sellerboard per marketplace-day where it has rows, Amazon otherwise. Legacy
 `revenueCad/Usd` fields are the CA/US slices of the same resolution. The
 global picker (`public/mp-scope.js`, localStorage `mpFilter`) scopes every
-page; All blends through `fx.toCad`, a single marketplace shows its native
-currency. Traffic (sessions, buy box) and inventory stay Amazon-only;
+page; every view is FX-converted into the CAD/USD toggle's currency via
+`fx.toCad`. Reconciliation flags are internal only (ledger + integrity
+check), never shown in the UI. Traffic (sessions, buy box) and inventory stay Amazon-only;
 Today/Yesterday endpoints are still Amazon-only.
 
 ## Key API Routes

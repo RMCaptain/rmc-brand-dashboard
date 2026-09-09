@@ -4,9 +4,9 @@
 // CONTRACT: classic script, loads before the page's inline script, exposes
 // window.MpScope. The selected scope lives in localStorage 'mpFilter' (a
 // marketplace CODE like 'CA' / 'US' / 'UK' / 'WMCA', or 'all') so one choice
-// follows the user across pages. Currency toggle stays in localStorage
-// 'currency' and only means something in the All view — a single marketplace
-// always shows its native currency.
+// follows the user across pages. The CAD/USD toggle (localStorage
+// 'currency') is the display currency in every view: a scoped marketplace's
+// native figures are FX-converted into it like everything else.
 //
 // Money math: every server payload built by buildBrandMetricsForRange carries
 // byMp = { [mp_id]: { code, currency, units, sales, adSpend, fees, … , source,
@@ -35,10 +35,10 @@
 
   const byCode = code => state.registry.find(m => m.code === code) || null;
   const scoped = () => state.filter !== 'all';
-  function displayCurrency() {
-    if (!scoped()) return state.currency();
-    return byCode(state.filter)?.currency || FALLBACK_CUR[state.filter] || 'CAD';
-  }
+  // Display currency is ALWAYS the top-right CAD/USD toggle (Mike, 2026-09-09):
+  // a scoped marketplace converts its native figures into it like everything else.
+  function displayCurrency() { return state.currency() || 'CAD'; }
+  const nativeCurrencyOf = code => byCode(code)?.currency || FALLBACK_CUR[code] || 'CAD';
   const curSym = () => CUR_SYM[displayCurrency()] || (displayCurrency() + ' ');
   const locale = () => CUR_LOCALE[displayCurrency()] || 'en-CA';
 
@@ -58,8 +58,8 @@
   }
   // Legacy CAD/USD pair → display value under the current scope.
   function legacyNum(cad, usd) {
-    if (state.filter === 'CA') return cad || 0;
-    if (state.filter === 'US') return usd || 0;
+    if (state.filter === 'CA') return toDisplay(cad || 0, 'CAD');
+    if (state.filter === 'US') return toDisplay(usd || 0, 'USD');
     if (scoped()) return 0;
     return toDisplay(cad || 0, 'CAD') + toDisplay(usd || 0, 'USD');
   }
@@ -152,12 +152,6 @@
   function updateUI() {
     const sel = document.getElementById('mpSwitch');
     if (sel && sel.value !== state.filter) sel.value = state.filter;
-    const tog = document.querySelector('.cur-toggle');
-    if (tog) {
-      tog.style.opacity = scoped() ? '0.35' : '';
-      tog.style.pointerEvents = scoped() ? 'none' : '';
-      tog.title = scoped() ? 'Single marketplace shows its native currency' : '';
-    }
   }
   function syncOptions() {
     const sel = ensureSelect();
@@ -206,7 +200,7 @@
 
   window.MpScope = {
     state, init, setFilter, syncOptions, updateUI,
-    filter: () => state.filter, scoped, byCode, displayCurrency, curSym, locale,
+    filter: () => state.filter, scoped, byCode, displayCurrency, nativeCurrencyOf, curSym, locale,
     toCadRate, toDisplay, legacyNum, fmt, fmtIn,
     scopedMps, sumMp, scopedFlags, sourceOf, flagBadge, sourceBadge, mpBadge,
     storefrontFor, sellerCentralFor, labelFor, cogsFor, activeCodes,

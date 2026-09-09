@@ -35,8 +35,8 @@
       </div>
       <div class="flex items-center gap-3">
         <div class="cur-toggle">
-          <button id="toggleCAD" onclick="setCurrency('CAD')" class="cur-btn">CA$</button>
-          <button id="toggleUSD" onclick="setCurrency('USD')" class="cur-btn">US$</button>
+          <button id="toggleCAD" onclick="setCurrency('CAD')" class="cur-btn">CAD</button>
+          <button id="toggleUSD" onclick="setCurrency('USD')" class="cur-btn">USD</button>
         </div>
         <span id="syncBadge" class="text-xs px-2 py-0.5 rounded-full font-medium"></span>
       </div>
@@ -538,7 +538,6 @@
       const adSpendDisp = adSpendVal > 0 ? MpScope.fmt(adSpendVal) : '—';
       const revenueDisp = m ? (mBy ? MpScope.fmt(MpScope.sumMp(mBy, 'sales') || 0) : fmt(m.revenueCad, m.revenueUsd)) : '—';
       const unitsVal = m ? (mBy ? (MpScope.sumMp(mBy, 'units') || 0) : (m.units || 0)) : 0;
-      const srcBadge = mBy ? ` ${MpScope.sourceBadge(MpScope.sourceOf(mBy))} ${MpScope.flagBadge(MpScope.scopedFlags(mBy))}` : '';
       const acosDisp = ad?.acos != null ? ad.acos.toFixed(1) + '%' : '—';
       const roasDisp = ad?.roas != null ? ad.roas.toFixed(2) + 'x' : '—';
       const acosColor = ad?.acos != null
@@ -554,7 +553,7 @@
 
       const totalSns = Object.values(brand.asinSns || {}).reduce((a, b) => a + b, 0);
       document.getElementById('summaryTiles').innerHTML = [
-        tile('Revenue',  revenueDisp, m ? unitsVal.toLocaleString() + ' units' + srcBadge : null),
+        tile('Revenue',  revenueDisp, m ? unitsVal.toLocaleString() + ' units' : null),
         tile('Sessions', m && !MpScope.scoped() ? (m.sessions || 0).toLocaleString() : '—', m?.avgCvr != null && !MpScope.scoped() ? 'CVR ' + m.avgCvr.toFixed(2) + '%' : (MpScope.scoped() ? 'not split by marketplace' : null)),
         tile('Ad Spend', adSpendDisp, ad?.clicks ? ad.clicks.toLocaleString() + ' clicks' : null, adSpendVal > 0 ? '#f87171' : undefined),
         tile('ACOS',     acosDisp,    ad?.roas != null ? 'ROAS ' + roasDisp : null, acosColor),
@@ -684,8 +683,7 @@
       const invTotal = ((s.inventory?.onHand ?? 0) + (s.inventory?.inbound ?? 0) + (s.inventory?.reserved ?? 0) + (s.inventory?.researching ?? 0) + (s.inventory?.unfulfillable ?? 0)).toLocaleString();
 
       const codes = hasMp(s) ? MpScope.activeCodes(s.byMp) : [homeMp];
-      const mpBadgeHtml = (codes.length ? codes : [homeMp]).map(c => MpScope.mpBadge(c, 'margin-left:4px')).join('') +
-        (hasMp(s) ? MpScope.flagBadge(MpScope.scopedFlags(s.byMp)) : '');
+      const mpBadgeHtml = (codes.length ? codes : [homeMp]).map(c => MpScope.mpBadge(c, 'margin-left:4px')).join('');
 
       return '<tr class="border-b border-slate-700/40 last:border-0 hover:bg-slate-700/20">' +
         '<td class="px-5 py-3 whitespace-nowrap">' +

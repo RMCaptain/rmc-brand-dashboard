@@ -54,8 +54,8 @@
 
 - Marketplaces live in `sync/marketplaces.js` (id, code, currency, Sellerboard name, storefront). CA = CAD, US = USD, UK = GBP, Walmart.ca = CAD.
 - Range payloads carry `byMp` (native currency per marketplace, with `source` + `flags`) on skus, brand summaries and financials; legacy `revenueCad` / `revenueUsd` are the CA/US slices of the same resolution (`sync/metricsResolver.js`, Sellerboard first).
-- `/api/fx` returns `toCad` for every registry currency; `public/mp-scope.js` blends the marketplaces in scope through CAD into the display currency. A single marketplace shows its native currency.
-- Global marketplace picker (`localStorage.mpFilter`) + CA$/US$ toggle (All view only, `localStorage.currency`) in every nav.
+- `/api/fx` returns `toCad` for every registry currency; `public/mp-scope.js` blends the marketplaces in scope through CAD into the display currency (the CAD/USD toggle, in every view).
+- Global marketplace picker (`localStorage.mpFilter`) + CAD/USD display-currency toggle (`localStorage.currency`) in every nav. Reconciliation results are internal only (ledger + integrity check), never rendered in the UI.
 - Sellerboard days are UTC, dashboard days are PST — daily reconciliation rows carry that noise; the trailing-7-day rows are the alert signal (`sync/reconcileSellerboard.js`).
 
 ## Buy Cost vs COGS
