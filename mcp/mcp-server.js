@@ -154,6 +154,24 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     handler: () => localApi('/api/health'),
   },
+  {
+    name: 'get_reconciliation',
+    description: 'INTERNAL (never client-facing): the nightly Amazon-vs-Sellerboard reconciliation ledger. Rows per day × marketplace × scope (account | account_7d | brand | asin) × metric with amazon_value, sellerboard_value, delta, delta_pct and status (match | flag | sb_only | amz_only). Tolerance: money max($25, 1%), counts max(2, 1%). Sellerboard days are UTC vs PST here, so daily rows carry boundary noise — read account_7d for the real signal. Defaults to the last 7 days; pass status=flag to see only disagreements.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        from: { type: 'string', description: 'YYYY-MM-DD (default: 7 days ago)' },
+        to: { type: 'string', description: 'YYYY-MM-DD (default: yesterday)' },
+        scope: { type: 'string', enum: ['account', 'account_7d', 'brand', 'asin'] },
+        mp: { type: 'string', description: 'Marketplace code (CA, US, UK, WMCA) or "*" for blended sessions rows' },
+        status: { type: 'string', enum: ['match', 'flag', 'sb_only', 'amz_only'] },
+        metric: { type: 'string', description: 'units | sales | ad_spend | refunds | refund_amount | amazon_fees | sessions' },
+        limit: { type: 'number', description: 'Max rows (default 500, max 5000)' },
+      },
+      additionalProperties: false,
+    },
+    handler: args => localApi('/api/reconciliation' + qs({ from: args.from, to: args.to, scope: args.scope, mp: args.mp, status: args.status, metric: args.metric, limit: args.limit })),
+  },
 ];
 
 // ── JSON-RPC over Streamable HTTP ────────────────────────────────────────────
