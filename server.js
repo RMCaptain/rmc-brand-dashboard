@@ -5685,6 +5685,55 @@ app.get('/api/revenue-check', async (req, res) => {
   res.json({ preset: presetKey, label: preset.label, totalCad, totalUsd, brands: rows });
 });
 
+// ── Sellerboard feed + reconciliation ────────────────────────────────────────
+// Manual ingest (same path as the 10:45 UTC cron). Gated like the other
+// sync triggers so a local machine never burns a fetch against prod feeds.
+app.post('/api/sellerboard/sync', async (req, res) => {
+  if (process.env.SYNC_ENABLED !== 'true') return res.status(403).json({ error: 'SYNC_ENABLED is false' });
+  try {
+    const { syncSellerboardFeeds } = require('./sync/sellerboard');
+    const { reconcileSellerboard } = require('./sync/reconcileSellerboard');
+    const ingest = await syncSellerboardFeeds({ supabase, loadBrands, label: 'Sellerboard-manual' });
+    const recon = ingest.feeds.some(f => f.status === 'ok') && req.query.reconcile !== '0'
+      ? await reconcileSellerboard({ supabase, loadBrands, label: 'Reconcile-manual' })
+      : null;
+    res.json({ ingest, recon });
+  } catch (err) {
+    console.error('[sellerboard/sync]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Reconciliation ledger. ?from&to (YYYY-MM-DD, default last 7 days), ?scope
+// (account|account_7d|brand|asin), ?mp (registry id or code, '*' = blended),
+// ?status (flag|match|sb_only|amz_only), ?metric, ?limit (default 500).
+app.get('/api/reconciliation', async (req, res) => {
+  try {
+    const reg = require('./sync/marketplaces');
+    const to = req.query.to || pstSubtractDays(pstDateStr(), 1);
+    const from = req.query.from || pstSubtractDays(to, 6);
+    let q = supabase.from('metric_reconciliation').select('*').gte('date', from).lte('date', to)
+      .order('date', { ascending: false }).order('scope').order('scope_id').order('metric');
+    if (req.query.scope)  q = q.eq('scope', req.query.scope);
+    if (req.query.status) q = q.eq('status', req.query.status);
+    if (req.query.metric) q = q.eq('metric', req.query.metric);
+    if (req.query.mp) {
+      const m = req.query.mp === '*' ? '*' : (reg.byId(req.query.mp) ? req.query.mp : reg.idByCode(req.query.mp));
+      if (!m) return res.status(400).json({ error: `unknown marketplace ${req.query.mp}` });
+      q = q.eq('mp_id', m);
+    }
+    const limit = Math.min(parseInt(req.query.limit || '500', 10) || 500, 5000);
+    const { data, error } = await q.range(0, limit - 1);
+    if (error) throw new Error(error.message);
+    const counts = {};
+    for (const r of data) counts[`${r.scope}:${r.status}`] = (counts[`${r.scope}:${r.status}`] || 0) + 1;
+    res.json({ from, to, count: data.length, counts, rows: data });
+  } catch (err) {
+    console.error('[reconciliation]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // On-demand run of the nightly data-integrity checks (see sync/integrityCheck).
 // Read-only by default — the cron owns alerting. ?post=1 additionally sends
 // the result to the integrity Slack channel (webhook wiring test / manual ping).
@@ -5994,7 +6043,7 @@ app.post('/api/bulk-update', async (req, res) => {
 // standing scripts/run-migration.js flow still covers everything else. Only
 // migrations listed here run, and each MUST be safe to re-run on every boot
 // (CREATE TABLE / CREATE INDEX IF NOT EXISTS only — no data rewrites).
-const BOOT_MIGRATIONS = ['sql/daily-fees-asin.sql'];
+const BOOT_MIGRATIONS = ['sql/daily-fees-asin.sql', 'sql/sellerboard-daily.sql', 'sql/metric-reconciliation.sql'];
 async function ensureBootMigrations() {
   if (!process.env.DATABASE_URL) {
     console.log('[BootMigrate] DATABASE_URL not set — skipped (use scripts/run-migration.js)');
@@ -6592,6 +6641,26 @@ function scheduleDailySync() {
       }
     });
   }
+
+  // Sellerboard feed ingest + reconciliation: 10:45 UTC daily (after the 10:00
+  // fees refresh so daily_fees_asin for yesterday exists). Sellerboard builds
+  // the automation report on its own schedule; if the link still says "not
+  // ready", the 12:45 backup re-fetches. Both runs are idempotent upserts.
+  const runSellerboard = async (tag) => {
+    const { syncSellerboardFeeds } = require('./sync/sellerboard');
+    const { reconcileSellerboard } = require('./sync/reconcileSellerboard');
+    const ingest = await syncSellerboardFeeds({ supabase, loadBrands, label: tag });
+    const ok = ingest.feeds.some(f => f.status === 'ok');
+    if (!ok) { console.warn(`[${tag}] no feed ingested (${ingest.feeds.map(f => `${f.key}=${f.status}`).join(' ')}) — reconciliation skipped`); return { ingest }; }
+    const recon = await reconcileSellerboard({ supabase, loadBrands, label: tag });
+    return { ingest, recon };
+  };
+  cron.schedule('45 10 * * *', () => {
+    runSellerboard('Sellerboard-10:45').catch(err => console.error('[Sellerboard] cron error:', err.message));
+  });
+  cron.schedule('45 12 * * *', () => {
+    runSellerboard('Sellerboard-12:45').catch(err => console.error('[Sellerboard] backup cron error:', err.message));
+  });
 
   // Monthly external reconcile: 3rd of the month 13:00 UTC, previous calendar
   // month vs Amazon's own S&T report — the day BEFORE the 4th-of-month auto

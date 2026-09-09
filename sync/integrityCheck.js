@@ -206,6 +206,38 @@ async function runIntegrityChecks({ supabase, loadBrands }) {
       detail: `${b.id}: ${b.pct}% of last-30d revenue has COGS (${b.missing} ASIN(s) missing) — profit overstated for the rest.` });
   }
 
+  // sellerboard — the external reference (sync/reconcileSellerboard.js).
+  // fail: a trailing-7d account-level flag on sales/units/ad_spend for any
+  //       marketplace — the two sources disagree beyond tolerance in a way
+  //       the day-boundary can't explain.
+  // warn: feed stale (no Sellerboard rows for the day before yesterday), or
+  //       daily account-level flags in the last 3 days (boundary noise until
+  //       proven otherwise; posts Mondays).
+  // Wrapped: the tables only exist once the boot migration has run.
+  try {
+    const dayBefore = pstSubtractDays(yesterday, 1);
+    const recon = await fetchAll(supabase, 'metric_reconciliation',
+      'date,mp_id,scope,scope_id,metric,amazon_value,sellerboard_value,delta,delta_pct,status',
+      pstSubtractDays(yesterday, 2), yesterday, ['scope', 'scope_id', 'metric']);
+    const { codeOf } = require('./marketplaces');
+    const fmt = r => `${codeOf(r.mp_id) || r.mp_id} ${r.metric} Amazon ${r.amazon_value} vs Sellerboard ${r.sellerboard_value} (${r.delta > 0 ? '+' : ''}${r.delta}${r.delta_pct != null ? `, ${r.delta_pct}%` : ''})`;
+    const hard = recon.filter(r => r.scope === 'account_7d' && r.status === 'flag' && ['sales', 'units', 'ad_spend'].includes(r.metric));
+    for (const r of hard) {
+      findings.push({ check: 'sellerboard', level: 'fail', detail: `7-day ${fmt(r)} — Amazon-side data and Sellerboard disagree beyond tolerance; Sellerboard is shown, Amazon path needs a look.` });
+    }
+    const soft = recon.filter(r => r.scope === 'account' && r.status === 'flag');
+    if (soft.length) {
+      const top = soft.slice(0, 3).map(r => `${r.date} ${fmt(r)}`).join('; ');
+      findings.push({ check: 'sellerboard', level: 'warn', detail: `${soft.length} daily account-level flag(s) in last 3d (UTC/PST boundary noise unless the 7-day row also flags): ${top}${soft.length > 3 ? '; …' : ''}` });
+    }
+    const sbCover = await fetchAll(supabase, 'sellerboard_daily', 'date', dayBefore, dayBefore, ['mp_id', 'sku']);
+    if (!sbCover.length) {
+      findings.push({ check: 'sellerboard', level: 'warn', detail: `No Sellerboard rows for ${dayBefore} — feed not ingested (link stale, "report not ready" on both crons, or env SELLERBOARD_FEED_* unset).` });
+    }
+  } catch (e) {
+    findings.push({ check: 'sellerboard', level: 'warn', detail: `Sellerboard reconciliation unreadable: ${e.message}` });
+  }
+
   return { findings, checkedAt: new Date().toISOString(), window: `${from30} → ${yesterday}` };
 }
 

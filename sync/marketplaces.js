@@ -18,28 +18,33 @@
  * can't represent a third marketplace and rows can.
  */
 
+// `sellerboard` is the marketplace name as it appears in Sellerboard's
+// Product Dashboard CSV ("Marketplace" column) — the join key for
+// sync/sellerboard.js. Verified for CA/US from the live feed 2026-09-09; UK
+// and Walmart follow Sellerboard's naming pattern and get confirmed the day
+// their feeds carry rows (an unknown name is logged loudly, never guessed).
 const MARKETPLACES = {
   A2EUQ1WTGCTBG2: {
     code: 'CA', platform: 'amazon', currency: 'CAD', region: 'na',
-    label: 'Amazon.ca', flag: '🇨🇦',
+    label: 'Amazon.ca', flag: '🇨🇦', sellerboard: 'Amazon.ca',
     storefront: 'https://www.amazon.ca', sellerCentral: 'https://sellercentral.amazon.ca',
     adsProfileEnv: 'ADS_PROFILE_CA', active: true,
   },
   ATVPDKIKX0DER: {
     code: 'US', platform: 'amazon', currency: 'USD', region: 'na',
-    label: 'Amazon.com', flag: '🇺🇸',
+    label: 'Amazon.com', flag: '🇺🇸', sellerboard: 'Amazon.com',
     storefront: 'https://www.amazon.com', sellerCentral: 'https://sellercentral.amazon.com',
     adsProfileEnv: 'ADS_PROFILE_US', active: true,
   },
   A1F83G8C2ARO7P: {
     code: 'UK', platform: 'amazon', currency: 'GBP', region: 'eu',
-    label: 'Amazon.co.uk', flag: '🇬🇧',
+    label: 'Amazon.co.uk', flag: '🇬🇧', sellerboard: 'Amazon.co.uk',
     storefront: 'https://www.amazon.co.uk', sellerCentral: 'https://sellercentral.amazon.co.uk',
     adsProfileEnv: 'ADS_PROFILE_UK', active: false,   // flip when EU creds land
   },
   walmart_ca: {
     code: 'WMCA', platform: 'walmart', currency: 'CAD', region: null,
-    label: 'Walmart.ca', flag: '🇨🇦',
+    label: 'Walmart.ca', flag: '🇨🇦', sellerboard: 'Walmart.ca',
     storefront: 'https://www.walmart.ca', sellerCentral: 'https://seller.walmart.ca',
     adsProfileEnv: null,                              // Walmart Connect CA is partner-gated
     active: false,
@@ -129,6 +134,15 @@ function codeForAsin(brand, asin, tag = 'Marketplaces') {
   return codes.includes(listed) ? listed : codes[0];
 }
 
+// Registry entry for a Sellerboard "Marketplace" cell ('Amazon.ca' → CA row).
+// Case-insensitive; null for anything the registry doesn't know.
+function bySellerboardName(name) {
+  const n = (name || '').trim().toLowerCase();
+  if (!n) return null;
+  const hit = Object.entries(MARKETPLACES).find(([, m]) => (m.sellerboard || '').toLowerCase() === n);
+  return hit ? { id: hit[0], ...hit[1] } : null;
+}
+
 // Public storefront hostname for a marketplace code ('CA' → www.amazon.ca).
 function storefrontHost(code) {
   const m = byCode(code);
@@ -140,4 +154,5 @@ module.exports = {
   MARKETPLACES, SP_API_HOSTS, ADS_HOSTS, SP_REFRESH_TOKEN_ENV, WIDE_TABLE_IDS,
   active, all, byId, byCode, currencyOf, codeOf, currencyMap, codeMap, idByCode,
   isWideTableMp, wideTableOnly, isCaMp, codesForBrand, codeForAsin, storefrontHost,
+  bySellerboardName,
 };

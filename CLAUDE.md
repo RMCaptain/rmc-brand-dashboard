@@ -29,7 +29,20 @@ GET  /api/fx                        FX rate USD↔CAD (cached 24h)
 PUT  /api/brands/:id/asins/:asin/buy-cost
 POST /api/brands/:id/asins/bulk-move
 POST /api/patch-ad-spend
+POST /api/sellerboard/sync          fetch Sellerboard feed CSVs + reconcile (cron 10:45/12:45 UTC)
+GET  /api/reconciliation            Amazon vs Sellerboard ledger (?from&to&scope&mp&status)
 ```
+
+## Sellerboard (external reference)
+Sellerboard is the source of truth for money metrics; Amazon APIs feed the
+dashboard and get reconciled against it nightly (`sync/sellerboard.js` →
+`sellerboard_daily`, `sync/reconcileSellerboard.js` → `metric_reconciliation`).
+Feeds are Sellerboard **Settings → Automation** Product Dashboard CSV links,
+one per Sellerboard account, env-only (`SELLERBOARD_FEED_RMC|WMCA|INTL`).
+Tolerance: money max($25, 1%), counts max(2, 1%). Sellerboard days are UTC,
+ours PST — daily rows carry that noise; the `account_7d` scope is the alert
+signal. Traffic (sessions/buy box) stays Amazon-first; Sellerboard sessions
+lag a day.
 
 ## Cron Schedule (VPS)
 - 6am, 9am, 12pm UTC — full SP-API sync
@@ -43,6 +56,7 @@ ADS_CLIENT_ID, ADS_CLIENT_SECRET, ADS_REFRESH_TOKEN, ADS_PROFILE_CA, ADS_PROFILE
 SUPABASE_URL, SUPABASE_SERVICE_KEY
 AUTH_USERNAME, AUTH_PASSWORD   # VPS only — unset locally to bypass; quote values with #
 SLACK_WEBHOOK_URL
+SELLERBOARD_FEED_RMC, SELLERBOARD_FEED_WMCA, SELLERBOARD_FEED_INTL   # Automation CSV links — the URL is the secret
 DASHBOARD_URL=https://dashboard.rockymountainco.ca/brands.html
 SYNC_ENABLED=true              # false locally to avoid burning API quota
 PORT=3000

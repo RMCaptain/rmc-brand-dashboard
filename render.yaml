@@ -72,5 +72,12 @@ services:
         sync: false
       - key: SLACK_INTEGRITY_WEBHOOK_URL
         sync: false
+      # Sellerboard Settings → Automation report links (the URL is the credential)
+      - key: SELLERBOARD_FEED_RMC     # Rocky Mountain Co account (Amazon CA/US)
+        sync: false
+      - key: SELLERBOARD_FEED_WMCA    # RMC WMCA (Walmart.ca)
+        sync: false
+      - key: SELLERBOARD_FEED_INTL    # RMCo Intl (Amazon UK/EU)
+        sync: false
       - key: SLACK_AUDIT_WEBHOOK_URL
         sync: false
