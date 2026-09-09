@@ -2292,7 +2292,7 @@ app.get('/api/marketplaces', (req, res) => {
   res.json(reg.all().map(m => ({
     id: m.id, code: m.code, label: m.label, flag: m.flag,
     platform: m.platform, currency: m.currency, storefront: m.storefront,
-    active: m.active,
+    sellerCentral: m.sellerCentral, active: m.active,
   })));
 });
 

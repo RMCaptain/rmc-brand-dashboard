@@ -196,7 +196,7 @@
     // under a US marketplace filter.
     function fmtDisplay(v) {
       const dc = displayCurrency();
-      return curSym() + (v || 0).toLocaleString(dc === 'CAD' ? 'en-CA' : 'en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      return curSym() + (v || 0).toLocaleString(CUR_LOCALE[dc] || 'en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
 
     function fmtPct(val) {
@@ -208,48 +208,139 @@
     // a single marketplace shows ITS slice in ITS native currency (the CA$/US$
     // toggle only applies to the All view). Menu is registry-driven via
     // /api/marketplaces — new marketplaces appear when their data path lands.
+    // mpFilter is a marketplace CODE ('CA', 'US', 'UK', 'WMCA') or 'all'. The
+    // localStorage key is shared by every page, so the picker is global.
     let mpFilter = localStorage.getItem('mpFilter') || 'all';
     let mpRegistry = [];
     const mpScoped = () => mpFilter !== 'all';
+    const mpByCode = code => mpRegistry.find(m => m.code === code) || null;
+    const CUR_SYM = { CAD: 'CA$', USD: 'US$', GBP: '£' };
+    const CUR_LOCALE = { CAD: 'en-CA', USD: 'en-US', GBP: 'en-GB' };
     function displayCurrency() {
-      if (mpFilter === 'CA') return 'CAD';
-      if (mpFilter === 'US') return 'USD';
-      return currency;
+      if (!mpScoped()) return currency;
+      // Single marketplace shows its native currency (registry-driven; the
+      // CA/US fallbacks keep working before /api/marketplaces has answered).
+      return mpByCode(mpFilter)?.currency || (mpFilter === 'US' ? 'USD' : mpFilter === 'UK' ? 'GBP' : 'CAD');
     }
-    function curSym() { return displayCurrency() === 'CAD' ? 'CA$' : 'US$'; }
+    function curSym() { return CUR_SYM[displayCurrency()] || displayCurrency() + ' '; }
 
+    // FX: everything blends through CAD. fx.toCad comes from /api/fx for every
+    // registry currency; the two-rate fallback covers an older cached payload.
+    function toCadRate(cur) {
+      const t = fxRate?.toCad;
+      if (t && t[cur] != null) return t[cur];
+      if (cur === 'CAD') return 1;
+      if (cur === 'USD') return fxRate?.usdToCad || 1.38;
+      return 1;
+    }
+    function toDisplay(v, cur) {
+      const dc = displayCurrency();
+      if (!v) return 0;
+      if (cur === dc) return v;
+      const inCad = v * toCadRate(cur);
+      return dc === 'CAD' ? inCad : inCad / toCadRate(dc);
+    }
+
+    // Legacy two-currency blend (payloads without byMp: Today / Yesterday).
     function getNum(cad, usd = 0) {
       if (mpFilter === 'CA') return (cad || 0);
       if (mpFilter === 'US') return (usd || 0);
-      if (currency === 'CAD') return (cad || 0) + (usd || 0) * fxRate.usdToCad;
-      return (usd || 0) + (cad || 0) * fxRate.cadToUsd;
+      if (mpScoped()) return 0; // a marketplace this payload can't split
+      return toDisplay(cad || 0, 'CAD') + toDisplay(usd || 0, 'USD');
+    }
+
+    // byMp helpers — the resolved per-marketplace slices the server emits on
+    // every sku / brand summary / financials block (Sellerboard first).
+    function scopedMps(byMp) {
+      return Object.values(byMp || {}).filter(m => !mpScoped() || m.code === mpFilter);
+    }
+    // Sum one metric across the marketplaces in scope, converted to the display
+    // currency. null when no marketplace in scope carries the metric.
+    const COUNT_METRICS = new Set(['units', 'refunds', 'refundCount', 'sbDays']);
+    function sumMp(byMp, metric) {
+      let total = 0, any = false;
+      const isCount = COUNT_METRICS.has(metric);
+      for (const m of scopedMps(byMp)) {
+        if (m[metric] == null) continue;
+        any = true;
+        total += isCount ? m[metric] : toDisplay(m[metric], m.currency);
+      }
+      return any ? total : null;
+    }
+    // Flags (Amazon vs Sellerboard disagreement) across the marketplaces in scope.
+    function scopedFlags(byMp) {
+      const out = [];
+      for (const m of scopedMps(byMp)) {
+        for (const [metric, f] of Object.entries(m.flags || {})) out.push({ mp: m.code, metric, ...f });
+      }
+      return out;
+    }
+    const FLAG_LABEL = { units: 'Units', sales: 'Sales', adSpend: 'Ad spend', refunds: 'Refunds', refundAmount: 'Refund $', fees: 'Fees', amazonFees: 'Fees' };
+    function flagTitle(flags) {
+      return flags.map(f => `${f.mp} ${FLAG_LABEL[f.metric] || f.metric}: Amazon ${f.amazon} vs Sellerboard ${f.sellerboard} (${f.delta > 0 ? '+' : ''}${f.delta}${f.deltaPct != null ? `, ${f.deltaPct}%` : ''})`).join('\n');
+    }
+    function flagBadge(flags, size = 'text-xs') {
+      if (!flags.length) return '';
+      return `<span class="${size} text-amber-400 cursor-help" title="Amazon and Sellerboard disagree on the days both have data. Sellerboard is shown.\n${flagTitle(flags)}">⚑${flags.length > 1 ? flags.length : ''}</span>`;
+    }
+    function sourceBadge(source) {
+      if (!source) return '';
+      const map = { sellerboard: ['Sellerboard', '#1a3a2a', '#4ade80'], mixed: ['Sellerboard + Amazon', '#3a2f1a', '#fbbf24'], amazon: ['Amazon', '#1e293b', '#94a3b8'] };
+      const [label, bg, fg] = map[source] || map.amazon;
+      return `<span style="background:${bg};color:${fg};font-size:9px;font-weight:600;padding:1px 6px;border-radius:3px;letter-spacing:0.04em" title="Source of the money metrics in this view. Sellerboard is shown wherever it has data; Amazon fills the rest.">${label}</span>`;
+    }
+    // Source label for a payload under the current scope.
+    function payloadSource(data) {
+      const fin = data?.financials?.byMp;
+      if (!fin) return null;
+      const set = new Set(scopedMps(fin).map(m => m.source));
+      if (!set.size) return null;
+      return set.size === 1 ? [...set][0] : 'mixed';
     }
 
     // Per-marketplace units for a sku row; falls back to the brand's home
     // marketplace when the split fields are absent (single-marketplace brands).
     function skuUnitsFor(sku, brand, code) {
+      if (sku.byMp) return sku.byMp && Object.values(sku.byMp).find(m => m.code === code)?.units || 0;
       if (code === 'CA') return sku.unitsCad != null ? sku.unitsCad : ((brand?.marketplace || 'CA') !== 'US' ? (sku.units || 0) : 0);
       if (code === 'US') return sku.unitsUsd != null ? sku.unitsUsd : ((brand?.marketplace || 'CA') === 'US' ? (sku.units || 0) : 0);
       return sku.units || 0;
     }
+    // COGS per unit for an ASIN on a marketplace code. Per-marketplace buy
+    // costs win; the legacy single cost applies to the brand's home marketplace.
+    function cogsFor(brand, asin, code) {
+      const per = brand?.cogsPerMarketplace?.[asin]?.[code];
+      if (per != null) return per;
+      const home = (brand?.marketplace || 'CA').split(',')[0].trim();
+      return code === home ? (brand?.cogs?.[asin] ?? 0) : 0;
+    }
 
 
     // ── COGS calculation ──────────────────────────────────────────────────────
-    function calcCogs(presetData) {
+    // COGS in DISPLAY currency across the marketplaces in scope (byMp payloads),
+    // or the legacy {cad, usd} pair for payloads without byMp.
+    function calcCogsDisplay(presetData) {
+      let total = 0, hasByMp = false;
       let cad = 0, usd = 0;
       for (const brand of brandsData) {
         const bm = presetData?.brands?.[brand.id];
         if (!bm?.skus) continue;
         for (const sku of bm.skus) {
-          const cogsCA = brand.cogsPerMarketplace?.[sku.asin]?.CA ?? (brand.marketplace !== 'US' ? brand.cogs?.[sku.asin] : null) ?? 0;
-          const cogsUS = brand.cogsPerMarketplace?.[sku.asin]?.US ?? (brand.marketplace === 'US' ? brand.cogs?.[sku.asin] : null) ?? 0;
-          const unitsCa = sku.unitsCad != null ? sku.unitsCad : (brand.marketplace !== 'US' ? sku.units : 0);
-          const unitsUs = sku.unitsUsd != null ? sku.unitsUsd : (brand.marketplace === 'US' ? sku.units : 0);
-          cad += unitsCa * cogsCA;
-          usd += unitsUs * cogsUS;
+          if (sku.byMp) {
+            hasByMp = true;
+            for (const m of scopedMps(sku.byMp)) total += toDisplay(m.units * cogsFor(brand, sku.asin, m.code), m.currency);
+          } else {
+            const cogsCA = brand.cogsPerMarketplace?.[sku.asin]?.CA ?? (brand.marketplace !== 'US' ? brand.cogs?.[sku.asin] : null) ?? 0;
+            const cogsUS = brand.cogsPerMarketplace?.[sku.asin]?.US ?? (brand.marketplace === 'US' ? brand.cogs?.[sku.asin] : null) ?? 0;
+            const unitsCa = sku.unitsCad != null ? sku.unitsCad : (brand.marketplace !== 'US' ? sku.units : 0);
+            const unitsUs = sku.unitsUsd != null ? sku.unitsUsd : (brand.marketplace === 'US' ? sku.units : 0);
+            cad += unitsCa * cogsCA;
+            usd += unitsUs * cogsUS;
+          }
         }
       }
-      return { cad: Math.round(cad * 100) / 100, usd: Math.round(usd * 100) / 100 };
+      if (hasByMp) return Math.round(total * 100) / 100;
+      return getNum(Math.round(cad * 100) / 100, Math.round(usd * 100) / 100);
     }
 
     // ── Tile metrics ──────────────────────────────────────────────────────────
@@ -259,7 +350,13 @@
 
       // Aggregate across all brands
       let revCad = 0, revUsd = 0, units = 0, sessions = 0, refundUnits = 0;
+      let salesMp = 0, unitsMp = 0, hasByMp = false;
       for (const [brandId, bm] of Object.entries(preset.brands || {})) {
+        if (bm.summary?.byMp) {
+          hasByMp = true;
+          salesMp += sumMp(bm.summary.byMp, 'sales') || 0;
+          unitsMp += sumMp(bm.summary.byMp, 'units') || 0;
+        }
         revCad += bm.summary?.revenueCad || 0;
         revUsd += bm.summary?.revenueUsd || 0;
         if (mpScoped()) {
@@ -271,26 +368,41 @@
         }
         sessions += bm.summary?.sessions || 0;
       }
+      if (hasByMp) { units = unitsMp; }
 
       const fin = preset.financials || {};
       const fCad = fin.CAD || {};
       const fUsd = fin.USD || {};
+      const finMp = fin.byMp || null;
 
-      const cogs = calcCogs(preset);
+      const cogsTotal = calcCogsDisplay(preset);
 
-      // All figures in selected display currency
-      const sales       = getNum(revCad, revUsd);
-      const amzFees     = getNum(fCad.amazonFees, fUsd.amazonFees);
-      const serviceFees = getNum(fCad.serviceFees || 0, fUsd.serviceFees || 0);
-      const refunds     = getNum(fCad.refundAmount, fUsd.refundAmount);
-      const refundFee   = getNum(fCad.refundFees, fUsd.refundFees);
-      // Per-currency counts only exist on rows collected after 2026-08-13 —
-      // under a marketplace filter show the split when known, else '—'.
-      const refundCount = mpScoped()
-        ? ((mpFilter === 'CA' ? fCad.refundCount : fUsd.refundCount) ?? null)
-        : (fin.refundCount || 0);
-      const adSpend     = getNum(fCad.adSpend, fUsd.adSpend);
-      const cogsTotal   = getNum(cogs.cad, cogs.usd);
+      // All figures in selected display currency. byMp payloads (every
+      // range view) blend any marketplace mix; Today/Yesterday keep the
+      // legacy CAD/USD pair.
+      let sales, amzFees, serviceFees, refunds, refundFee, adSpend, refundCount;
+      if (finMp) {
+        sales       = salesMp;
+        amzFees     = sumMp(finMp, 'amazonFees') || 0;
+        serviceFees = sumMp(finMp, 'serviceFees') || 0;
+        refunds     = sumMp(finMp, 'refundAmount') || 0;
+        refundFee   = sumMp(finMp, 'refundFees') || 0;
+        adSpend     = sumMp(finMp, 'adSpend') || 0;
+        const rc = scopedMps(finMp).reduce((s, m) => s + (m.refundCount || 0), 0);
+        refundCount = scopedMps(finMp).length ? rc : null;
+      } else {
+        sales       = getNum(revCad, revUsd);
+        amzFees     = getNum(fCad.amazonFees, fUsd.amazonFees);
+        serviceFees = getNum(fCad.serviceFees || 0, fUsd.serviceFees || 0);
+        refunds     = getNum(fCad.refundAmount, fUsd.refundAmount);
+        refundFee   = getNum(fCad.refundFees, fUsd.refundFees);
+        // Per-currency counts only exist on rows collected after 2026-08-13 —
+        // under a marketplace filter show the split when known, else '—'.
+        refundCount = mpScoped()
+          ? ((mpFilter === 'CA' ? fCad.refundCount : fUsd.refundCount) ?? null)
+          : (fin.refundCount || 0);
+        adSpend     = getNum(fCad.adSpend, fUsd.adSpend);
+      }
 
       const grossProfit = sales - cogsTotal - amzFees - serviceFees - refunds - refundFee - adSpend;
       const netProfit   = grossProfit;
@@ -302,13 +414,24 @@
 
       const fmtC = v => {
         const dc = displayCurrency();
-        return curSym() + Math.abs(v).toLocaleString(dc === 'CAD' ? 'en-CA' : 'en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        return curSym() + Math.abs(v).toLocaleString(CUR_LOCALE[dc] || 'en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       };
+
+      // Source + disagreement flags for the header badge (byMp payloads only).
+      const source = payloadSource(preset);
+      const flags = [];
+      if (preset.flags) {
+        for (const [mpId, fl] of Object.entries(preset.flags)) {
+          const code = (preset.marketplaces || []).find(m => m.id === mpId)?.code || mpId;
+          if (mpScoped() && code !== mpFilter) continue;
+          for (const [metric, f] of Object.entries(fl)) flags.push({ mp: code, metric, ...f });
+        }
+      }
 
       return {
         sales, units, sessions, amzFees, serviceFees, refunds, refundCount, refundFee, adSpend,
         cogsTotal, grossProfit, netProfit, estPayout, margin, roi,
-        realAcos, pctRefunds,
+        realAcos, pctRefunds, source, flags,
         // Today: fees are trailing-rate estimates (server sets this) — tile
         // renders ~ so an estimate never reads as settled truth.
         estimated: !!preset.financialsEstimated,
@@ -321,6 +444,7 @@
     function renderTiles() {
       const container = document.getElementById('tilesRow');
       const data = getActiveTableData();
+      syncMpOptions();
       const label = PRESET_LABEL_MAP[activeBrandPreset] || activeBrandPreset;
       container.innerHTML = buildTile({ key: 'main', label, accent: '#537D30', data });
     }
@@ -421,6 +545,7 @@
                 <div class="text-xs mt-0.5" style="color:var(--text-3)">${dateStr}</div>
                 ${liveNote}
               </div>
+              <div class="flex items-center gap-1.5">${sourceBadge(m.source)}${flagBadge(m.flags || [], 'text-sm')}</div>
             </div>
             <div class="mb-3 pb-3" style="border-bottom:1px solid var(--border)">
               <div class="text-xs mb-1" style="color:var(--text-2)">Sales</div>
@@ -494,7 +619,11 @@
         return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
       });
       return sorted.map(g => {
-        const total = getNum(cadBD[g] || 0, usdBD[g] || 0);
+        // Breakdown groups are Amazon-side (Finances API) and CA/US only —
+        // shown for reference even when the total above follows Sellerboard.
+        const total = fin.byMp
+          ? scopedMps(fin.byMp).reduce((s, m) => s + toDisplay((m.breakdown || {})[g] || 0, m.currency), 0)
+          : getNum(cadBD[g] || 0, usdBD[g] || 0);
         if (total < 0.01) return '';
         return `<div class="flex items-center justify-between py-1.5 pl-5" style="border-bottom:1px solid rgba(255,255,255,0.04)">
           <span class="text-xs" style="color:var(--text-2)">${g}</span>
@@ -514,10 +643,13 @@
     }
 
     // ── Product table ─────────────────────────────────────────────────────────
+    const MP_BADGE = { CA: 'background:#1e3a5f;color:#60a5fa', US: 'background:#1a3a1a;color:#4ade80', UK: 'background:#3a1a2a;color:#f472b6', WMCA: 'background:#3a2a10;color:#fbbf24' };
     function mpBadge(mp) {
-      const s = mp === 'CA' ? 'background:#1e3a5f;color:#60a5fa' : mp === 'US' ? 'background:#1a3a1a;color:#4ade80' : 'background:#2a2a2a;color:#888';
+      const s = MP_BADGE[mp] || 'background:#2a2a2a;color:#888';
       return `<span style="${s};font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;letter-spacing:0.05em;vertical-align:middle;display:inline-block">${mp}</span>`;
     }
+    function storefrontFor(code) { return mpByCode(code)?.storefront || (code === 'US' ? 'https://www.amazon.com' : 'https://www.amazon.ca'); }
+    function sellerCentralFor(code) { return mpByCode(code)?.sellerCentral || (code === 'US' ? 'https://sellercentral.amazon.com' : 'https://sellercentral.amazon.ca'); }
 
     function getAllSkus(presetData) {
       const preset = presetData;
@@ -527,6 +659,46 @@
         const bm = preset.brands?.[brand.id];
         if (!bm?.skus) continue;
         for (const sku of bm.skus) {
+          // byMp payload: one row per marketplace slice, native currency
+          // converted to display. Fees/net profit follow Sellerboard where it
+          // covers the marketplace; refunds (posted) stay Amazon-side CA/US.
+          if (sku.byMp && Object.keys(sku.byMp).length) {
+            for (const m of Object.values(sku.byMp)) {
+              if (!(m.units > 0 || m.sales > 0 || m.adSpend > 0 || m.fees > 0)) continue;
+              const mp = m.code;
+              const costPerUnit = cogsFor(brand, sku.asin, mp);
+              const disp = v => toDisplay(v, m.currency);
+              const rev = disp(m.sales || 0);
+              const legacyFees = mp === 'CA' ? sku.feesCad : mp === 'US' ? sku.feesUsd : null;
+              const feesNative = m.fees != null ? m.fees : (legacyFees ?? null);
+              const fees = feesNative != null ? disp(feesNative) : null;
+              const adSpend = disp(m.adSpend || 0);
+              const refunds = disp(mp === 'CA' ? (sku.refundPostedCad || 0) : mp === 'US' ? (sku.refundPostedUsd || 0) : (m.refundAmount || 0));
+              const totalCogs = (m.units || 0) * costPerUnit;
+              const cogsDisp = disp(totalCogs);
+              const netProfit = (costPerUnit > 0 && fees != null) ? rev - cogsDisp - fees - adSpend - refunds : null;
+              const margin = netProfit != null && rev > 0 ? (netProfit / rev) * 100 : null;
+              const inv = sku.inventory || {};
+              const inventory = (inv.onHand ?? 0) + (inv.inbound ?? 0) + (inv.reserved ?? 0) + (inv.researching ?? 0) + (inv.unfulfillable ?? 0);
+              const flags = Object.entries(m.flags || {}).map(([metric, f]) => ({ mp, metric, ...f }));
+              skus.push({
+                asin: sku.asin, sellerSku: sku.sellerSku || '',
+                title: sku.title || brand.asinTitles?.[sku.asin] || sku.asin,
+                brand: brand.name, brandId: brand.id, brandColor: brand.color, marketplace: mp,
+                status: sku.status,
+                units: m.units || 0,
+                revenueCad: mp === 'CA' ? m.sales : 0, revenueUsd: mp === 'US' ? m.sales : 0, revenue: rev,
+                sessions: sku.sessions || 0,
+                buyBox: sku.buyBox ?? null, cvr: sku.cvr ?? null,
+                inventory, costPerUnit, totalCogs,
+                costPerUnitDisp: disp(costPerUnit), totalCogsDisp: cogsDisp,
+                fees, feesEstimated: !!sku.feesEstimated, adSpend, refunds, netProfit, margin,
+                source: m.source, flags,
+                imageUrl: sku.imageUrl || null,
+              });
+            }
+            continue;
+          }
           const mps = sku.marketplaces?.length ? sku.marketplaces
             : (sku.revenueCad > 0 && sku.revenueUsd > 0 ? ['CA', 'US']
                : sku.revenueUsd > 0 ? ['US'] : ['CA']);
@@ -715,7 +887,7 @@
       const paginated = sorted.slice((productPage - 1) * pageSize, productPage * pageSize);
 
       const sym = curSym();
-      const fmtN = v => v != null ? sym + Math.abs(v).toLocaleString(currency === 'CAD' ? 'en-CA' : 'en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
+      const fmtN = v => v != null ? sym + Math.abs(v).toLocaleString(CUR_LOCALE[displayCurrency()] || 'en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
 
       tbody.innerHTML = paginated.map(s => {
         const statusColor = s.status === 'active' ? 'text-emerald-400' : s.status === 'inactive' ? 'text-red-400' : 'text-slate-500';
@@ -737,9 +909,10 @@
               </div>
               <div class="min-w-0">
                 <div class="flex items-center gap-2">
-                  <a href="${s.marketplace === 'US' ? 'https://www.amazon.com' : 'https://www.amazon.ca'}/dp/${s.asin}" target="_blank" rel="noopener" class="font-mono text-slate-400 text-xs hover:underline">${s.asin}</a>
+                  <a href="${storefrontFor(s.marketplace)}/dp/${s.asin}" target="_blank" rel="noopener" class="font-mono text-slate-400 text-xs hover:underline">${s.asin}</a>
                   ${mpBadge(s.marketplace)}
-                  ${s.sellerSku ? `<a href="${s.marketplace === 'US' ? 'https://sellercentral.amazon.com' : 'https://sellercentral.amazon.ca'}/inventory?searchSKU=${encodeURIComponent(s.sellerSku)}" target="_blank" rel="noopener" class="font-mono text-slate-500 text-xs truncate max-w-[160px] hover:underline" title="${s.sellerSku}">${s.sellerSku}</a>` : ''}
+                  ${flagBadge(s.flags || [])}
+                  ${s.sellerSku ? `<a href="${sellerCentralFor(s.marketplace)}/inventory?searchSKU=${encodeURIComponent(s.sellerSku)}" target="_blank" rel="noopener" class="font-mono text-slate-500 text-xs truncate max-w-[160px] hover:underline" title="${s.sellerSku}">${s.sellerSku}</a>` : ''}
                 </div>
                 <div class="text-slate-200 text-xs mt-0.5 max-w-xs truncate">${s.title}</div>
                 <div class="flex items-center gap-2 mt-0.5">
@@ -869,7 +1042,27 @@
         const s = bm?.summary;
         let rev = 0, cogsNum = 0, fees = null, feesEstimated = false, adSpend = 0, refunds = 0, netProfit = null, margin = null,
             units = 0, sessions = 0, buyBox = null, cogs = { cad: 0, usd: 0 };
-        if (s) {
+        let flags = [], source = null;
+        if (s && s.byMp) {
+          // Resolved per-marketplace payload: sum the product rows in scope so
+          // the brand line equals what its products add up to.
+          const rows = getAllSkus(getActiveTableData()).filter(r => r.brandId === brand.id && (!mpScoped() || r.marketplace === mpFilter));
+          rev = rows.reduce((t, r) => t + r.revenue, 0);
+          cogsNum = rows.reduce((t, r) => t + r.totalCogsDisp, 0);
+          const feesKnown = rows.some(r => r.fees != null);
+          fees = feesKnown ? rows.reduce((t, r) => t + (r.fees || 0), 0) : null;
+          feesEstimated = rows.some(r => r.feesEstimated);
+          adSpend = rows.reduce((t, r) => t + r.adSpend, 0);
+          refunds = rows.reduce((t, r) => t + r.refunds, 0);
+          units = rows.reduce((t, r) => t + r.units, 0);
+          netProfit = (cogsNum > 0 && fees != null) ? rev - cogsNum - fees - adSpend - refunds : null;
+          margin = netProfit != null && rev > 0 ? (netProfit / rev) * 100 : null;
+          sessions = mpScoped() ? null : (s.sessions || 0);
+          buyBox = s.buyBox ?? null;
+          flags = scopedFlags(s.byMp);
+          const set = new Set(scopedMps(s.byMp).map(m => m.source));
+          source = set.size === 1 ? [...set][0] : set.size ? 'mixed' : null;
+        } else if (s) {
           cogs = calcBrandCogs(brand, getActiveTableData());
           rev = getNum(s.revenueCad, s.revenueUsd);
           cogsNum = getNum(cogs.cad, cogs.usd);
@@ -897,7 +1090,7 @@
           }
           buyBox = s.buyBox ?? null;
         }
-        return { brand, s, rev, cogs, cogsNum, fees, feesEstimated, adSpend, refunds, netProfit, margin, units, sessions, buyBox };
+        return { brand, s, rev, cogs, cogsNum, fees, feesEstimated, adSpend, refunds, netProfit, margin, units, sessions, buyBox, flags, source };
       });
 
       brandItems.sort((a, b) => {
@@ -912,7 +1105,7 @@
       if (brandPage > brandTotalPages) brandPage = brandTotalPages;
       const paginatedBrands = brandItems.slice((brandPage - 1) * pageSize, brandPage * pageSize);
 
-      tbody.innerHTML = paginatedBrands.map(({ brand, s, rev, cogs, cogsNum, fees, feesEstimated, adSpend, refunds, netProfit, margin, units, sessions, buyBox }) => {
+      tbody.innerHTML = paginatedBrands.map(({ brand, s, rev, cogs, cogsNum, fees, feesEstimated, adSpend, refunds, netProfit, margin, units, sessions, buyBox, flags, source }) => {
         if (!s) {
           return `<tr class="cursor-pointer" onclick="location.href='/brand.html?id=${brand.id}'">
             <td class="px-5 py-3">
@@ -938,6 +1131,7 @@
               <div class="w-2.5 h-2.5 rounded-full flex-shrink-0" style="background:${brand.color}"></div>
               <span class="font-medium text-slate-200 text-xs">${brand.name}</span>
               <span class="text-slate-600 text-xs">${brand.marketplace} · ${brand.asins.length} ASINs</span>
+              ${flagBadge(flags || [])}
             </div>
           </td>
           <td class="px-4 py-3 text-right text-slate-200 font-medium">${fmtDisplay(rev)}</td>
@@ -1009,23 +1203,37 @@
       }
     }
 
+    // Picker options = registry actives ∪ every marketplace the loaded data
+    // actually carries (UK shows up the day its Sellerboard rows do, without
+    // flipping `active` first). Re-run after every data load.
+    function syncMpOptions() {
+      const sel = document.getElementById('mpSwitch');
+      if (!sel) return;
+      const present = new Set();
+      for (const d of [customTableData, ...Object.values(rangeTableData), ...Object.values(presetMetrics.presets || {})]) {
+        for (const m of (d?.marketplaces || [])) present.add(m.code);
+      }
+      const wanted = mpRegistry.filter(m => m.active || present.has(m.code));
+      for (const code of present) if (!wanted.some(m => m.code === code)) wanted.push({ code, label: code, flag: '' });
+      const options = () => Array.from(sel.options || []);
+      const have = new Set(options().map(o => o.value));
+      for (const m of wanted) {
+        if (have.has(m.code)) continue;
+        const opt = document.createElement('option');
+        opt.value = m.code;
+        opt.textContent = `${m.flag || ''} ${m.label}`.trim();
+        sel.appendChild(opt);
+        have.add(m.code);
+      }
+      // Keep a persisted selection even before its option exists (registry
+      // still loading); only fall back to All once the registry has answered.
+      if (mpFilter !== 'all' && mpRegistry.length && !have.has(mpFilter)) { mpFilter = 'all'; localStorage.setItem('mpFilter', 'all'); }
+      updateMpUI();
+    }
     async function loadMarketplaces() {
       try {
-        const list = await fetch('/api/marketplaces').then(r => r.json());
-        mpRegistry = list;
-        const sel = document.getElementById('mpSwitch');
-        if (!sel) return;
-        // The wide-shaped payload can only scope CA/US today; other actives
-        // join the menu when the per-marketplace read path lands.
-        const scopable = new Set(['CA', 'US']);
-        for (const m of list.filter(m => m.active && scopable.has(m.code))) {
-          const opt = document.createElement('option');
-          opt.value = m.code;
-          opt.textContent = `${m.flag} ${m.label}`;
-          sel.appendChild(opt);
-        }
-        if (mpFilter !== 'all' && ![...sel.options].some(o => o.value === mpFilter)) mpFilter = 'all';
-        updateMpUI();
+        mpRegistry = await fetch('/api/marketplaces').then(r => r.json());
+        syncMpOptions();
       } catch (e) { console.warn('marketplaces load failed:', e.message); }
     }
     loadMarketplaces();
