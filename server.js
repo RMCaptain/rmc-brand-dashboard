@@ -301,24 +301,37 @@ async function writeDailyMetrics(yesterdayBrands, date) {
   else console.log(`[DailyMetrics] Wrote traffic for ${rows.length} rows on ${date} (units/revenue owned by Orders API)`);
 }
 
+// FX: USD-base quote → every currency the registry knows, expressed as
+// "1 unit of X in CAD" (`toCad`) so the frontend blends any marketplace mix
+// into the display currency. usdToCad/cadToUsd kept for existing callers.
+const FX_FALLBACK = { usdToCad: 1.38, cadToUsd: 0.724, toCad: { CAD: 1, USD: 1.38, GBP: 1.75 } };
 async function fetchFxRate() {
   const cached = loadFx();
-  if (cached) return cached;
+  if (cached && cached.toCad) return cached;
+  const reg = require('./sync/marketplaces');
+  const wanted = [...new Set(reg.all().map(m => m.currency))];
   return new Promise(resolve => {
     const https = require('https');
+    const fallback = () => resolve({ ...FX_FALLBACK, fetched: new Date().toISOString(), fallback: true });
     https.get('https://open.er-api.com/v6/latest/USD', res => {
       let body = '';
       res.on('data', c => body += c);
       res.on('end', () => {
         try {
           const json = JSON.parse(body);
-          const usdToCad = json.rates?.CAD || 1.38;
-          const result = { usdToCad, cadToUsd: Math.round(1 / usdToCad * 10000) / 10000, fetched: new Date().toISOString() };
+          const usdToCad = json.rates?.CAD || FX_FALLBACK.usdToCad;
+          const toCad = { CAD: 1, USD: usdToCad };
+          for (const cur of wanted) {
+            if (toCad[cur] != null) continue;
+            const perUsd = json.rates?.[cur];             // 1 USD = perUsd units of cur
+            toCad[cur] = perUsd ? Math.round(usdToCad / perUsd * 10000) / 10000 : (FX_FALLBACK.toCad[cur] ?? null);
+          }
+          const result = { usdToCad, cadToUsd: Math.round(1 / usdToCad * 10000) / 10000, toCad, fetched: new Date().toISOString() };
           saveFx(result);
           resolve(result);
-        } catch { resolve({ usdToCad: 1.38, cadToUsd: 0.724, fetched: new Date().toISOString() }); }
+        } catch { fallback(); }
       });
-    }).on('error', () => resolve({ usdToCad: 1.38, cadToUsd: 0.724, fetched: new Date().toISOString() }));
+    }).on('error', fallback);
   });
 }
 
@@ -2304,11 +2317,17 @@ app.get('/api/preset-metrics', async (req, res) => {
 async function fetchFeesByAsin(fromDate, toDate) {
   const byAsin = {};
   const days = new Set();
+  // Per (asin, marketplace, day) fees — the resolver (sync/metricsResolver)
+  // needs day granularity to decide Sellerboard-vs-Amazon per marketplace-day.
+  const byAsinMpDate = {};
   try {
+    // Ordered paging: unordered .range() shreds across pages under load.
     for (let off = 0; ; off += 1000) {
       const { data, error } = await supabase.from('daily_fees_asin')
-        .select('date,asin,currency,fees,refund_amount,refund_fees')
-        .gte('date', fromDate).lte('date', toDate).range(off, off + 999);
+        .select('date,asin,mp_id,currency,fees,refund_amount,refund_fees')
+        .gte('date', fromDate).lte('date', toDate)
+        .order('date', { ascending: true }).order('asin', { ascending: true }).order('mp_id', { ascending: true })
+        .range(off, off + 999);
       if (error) throw new Error(error.message);
       for (const r of (data || [])) {
         days.add(r.date);
@@ -2316,17 +2335,44 @@ async function fetchFeesByAsin(fromDate, toDate) {
         const refund = (Number(r.refund_amount) || 0) + (Number(r.refund_fees) || 0);
         if (r.currency === 'CAD')      { a.feesCad += Number(r.fees) || 0; a.refundCad += refund; }
         else if (r.currency === 'USD') { a.feesUsd += Number(r.fees) || 0; a.refundUsd += refund; }
+        if (r.mp_id) {
+          const k = `${r.asin}|${r.mp_id}|${r.date}`;
+          byAsinMpDate[k] = (byAsinMpDate[k] || 0) + (Number(r.fees) || 0);
+        }
       }
       if (!data || data.length < 1000) break;
     }
   } catch (e) {
     console.warn('[FeesByAsin] unavailable:', e.message);
-    return { byAsin: {}, days: 0 };
+    return { byAsin: {}, days: 0, byAsinMpDate: {} };
   }
   for (const a of Object.values(byAsin)) {
     for (const k of Object.keys(a)) a[k] = Math.round(a[k] * 100) / 100;
   }
-  return { byAsin, days: days.size };
+  return { byAsin, days: days.size, byAsinMpDate };
+}
+
+// sellerboard_daily rows for a range — the Sellerboard side of the resolver.
+// Returns [] (never throws) so a missing table or a fetch failure degrades to
+// Amazon-only numbers, loudly.
+async function fetchSellerboardRows(fromDate, toDate) {
+  const rows = [];
+  try {
+    for (let off = 0; ; off += 1000) {
+      const { data, error } = await supabase.from('sellerboard_daily')
+        .select('date,mp_id,asin,sku,units,sales,ad_spend,refunds,refund_amount,amazon_fees,net_profit,promo_value,product_costs,sessions')
+        .gte('date', fromDate).lte('date', toDate)
+        .order('date', { ascending: true }).order('mp_id', { ascending: true }).order('sku', { ascending: true })
+        .range(off, off + 999);
+      if (error) throw new Error(error.message);
+      rows.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+  } catch (e) {
+    console.warn('[Sellerboard] rows unavailable for resolver — Amazon-only numbers:', e.message);
+    return [];
+  }
+  return rows;
 }
 
 // Attach per-ASIN fee fields to a sku object. FULL range coverage is required:
@@ -3703,6 +3749,23 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
       if (offset > 100000) { console.warn('[Metrics] Pagination safety cap hit'); break; }
     }
 
+    // ── Source-of-truth resolution (sync/metricsResolver) ──────────────────
+    // Sellerboard first, Amazon otherwise, per marketplace-day. Everything
+    // money-shaped below (units/revenue/spend/refunds/fees) comes out of
+    // `resolved`; traffic, inventory and ad engagement stay on the wide rows.
+    const { resolveByAsin, aggregateMp, resolveFinancials } = require('./sync/metricsResolver');
+    const MPreg = require('./sync/marketplaces');
+    const MP_CA = MPreg.idByCode('CA'), MP_US = MPreg.idByCode('US');
+    const sbRows = await fetchSellerboardRows(from, to);
+    const resolved = resolveByAsin({ wideRows: rows, sbRows, feeByAsinMpDate: feesData.byAsinMpDate || {}, from, to });
+    const slotFor = (asin, mp) => resolved.byAsin[asin]?.[mp] || null;
+    const sourceOf = asin => {
+      const mps = Object.values(resolved.byAsin[asin] || {});
+      if (!mps.length) return 'amazon';
+      const set = new Set(mps.map(s => s.source));
+      return set.size === 1 ? [...set][0] : 'mixed';
+    };
+
     // Sum all fields per ASIN across days
     const byAsin = {};
     for (const row of (rows || [])) {
@@ -3744,6 +3807,50 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
       if (row.inventory_inbound != null) a.inv_inbound = row.inventory_inbound;
       if (row.inventory_reserved      != null) a.inv_reserved      = row.inventory_reserved;
       if (row.inventory_unfulfillable != null) a.inv_unfulfillable = row.inventory_unfulfillable;
+    }
+
+    // Overlay resolved money metrics onto the per-ASIN accumulator. ASINs that
+    // exist only on the Sellerboard side (e.g. UK-only) get a fresh entry with
+    // no traffic. Legacy cad/usd fields = the CA/US marketplace slices, so
+    // every existing consumer keeps working; byMp carries the rest.
+    for (const [asin, mps] of Object.entries(resolved.byAsin)) {
+      if (!byAsin[asin]) {
+        byAsin[asin] = {
+          brand_id: null, units: 0, units_ca: 0, units_us: 0, revenue_cad: 0, revenue_usd: 0,
+          sessions: 0, page_views: 0, bb_sum: 0, bb_count: 0, spend_cad: 0, spend_usd: 0,
+          attr_sales_cad: 0, attr_sales_usd: 0, ad_clicks: 0, ad_impressions: 0, ad_orders: 0,
+          inv_onhand: null, inv_inbound: null, inv_reserved: null, inv_unfulfillable: null,
+          traffic: false,
+        };
+      }
+      const a = byAsin[asin];
+      a.mp = mps;
+      const ca = mps[MP_CA]?.resolved, us = mps[MP_US]?.resolved;
+      a.units_ca = ca ? ca.units : 0;            a.units_us = us ? us.units : 0;
+      a.revenue_cad = ca ? ca.sales : 0;         a.revenue_usd = us ? us.sales : 0;
+      a.spend_cad = ca ? ca.adSpend : 0;         a.spend_usd = us ? us.adSpend : 0;
+      a.attr_sales_cad = ca ? ca.attributedSales : 0; a.attr_sales_usd = us ? us.attributedSales : 0;
+      a.refund_amount_cad = ca ? ca.refundAmount : 0; a.refund_amount_usd = us ? us.refundAmount : 0;
+      // Blended units/refunds = every marketplace, UK included.
+      a.units = Object.values(mps).reduce((s, m) => s + m.resolved.units, 0);
+      a.refunded_units = Object.values(mps).reduce((s, m) => s + m.resolved.refunds, 0);
+    }
+
+    // Brand-level per-marketplace aggregate (native currency) with source +
+    // flags computed on the brand's summed Amazon vs Sellerboard sides.
+    function brandByMp(slotsByMp) {
+      const out = {};
+      for (const [mp, slots] of Object.entries(slotsByMp)) {
+        const g = aggregateMp(slots);
+        out[mp] = {
+          code: MPreg.codeOf(mp) || mp, currency: MPreg.currencyOf(mp),
+          units: g.units, sales: g.sales, adSpend: g.adSpend, attributedSales: g.attributedSales,
+          refunds: g.refunds, refundAmount: g.refundAmount,
+          fees: g.sbDays ? g.fees : null, netProfit: g.sbDays ? g.netProfit : null, promo: g.sbDays ? g.promo : null,
+          source: g.source, sbDays: g.sbDays, flags: g.flags,
+        };
+      }
+      return out;
     }
 
     function lookupSkuMeta(brandId, asin) {
@@ -3788,8 +3895,23 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
           ? { onHand: a.inv_onhand, inbound: a.inv_inbound || 0,
               reserved: a.inv_reserved ?? null, unfulfillable: a.inv_unfulfillable ?? null }
           : null,
-        marketplaces: [...((a.units_ca||0) > 0 ? ['CA'] : []), ...((a.units_us||0) > 0 ? ['US'] : [])],
+        marketplaces: Object.entries(a.mp || {})
+          .filter(([, m]) => m.resolved.units > 0 || m.resolved.sales > 0)
+          .map(([mp]) => MPreg.codeOf(mp) || mp),
         imageUrl: imagesByAsin[asin] || null,
+        // Per-marketplace slice in native currency + where it came from.
+        // flags: metrics where Amazon and Sellerboard disagree on the days
+        // both have data (absent = agree or only one source).
+        byMp: Object.fromEntries(Object.entries(a.mp || {}).map(([mp, m]) => [mp, {
+          code: MPreg.codeOf(mp) || mp, currency: MPreg.currencyOf(mp),
+          units: m.resolved.units, sales: m.resolved.sales, adSpend: m.resolved.adSpend,
+          attributedSales: m.resolved.attributedSales, refunds: m.resolved.refunds,
+          refundAmount: m.resolved.refundAmount, fees: m.sbDays ? m.resolved.fees : null,
+          netProfit: m.sbDays ? m.resolved.netProfit : null, promo: m.sbDays ? m.resolved.promo : null,
+          source: m.source, sbDays: m.sbDays, flags: m.flags,
+        }])),
+        source: sourceOf(asin),
+        flagged: Object.values(a.mp || {}).some(m => Object.keys(m.flags || {}).length > 0),
       };
     }
 
@@ -3803,11 +3925,13 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
       let bRefundedUnits=0, bRefundCad=0, bRefundUsd=0, bRefundCount=0;
       const buyBoxSamples = [];
       const skus = [];
+      const brandSlots = {}; // mp → resolver slots, for the brand-level byMp
 
       for (const asin of (brand.asins || [])) {
         mappedAsins.add(asin);
         const a = byAsin[asin];
         if (!a) continue;
+        for (const [mp, s] of Object.entries(a.mp || {})) (brandSlots[mp] = brandSlots[mp] || []).push(s);
         const meta = lookupSkuMeta(brand.id, asin);
         // Product name priority: the supplier's own name (set on the Products
         // page) wins, because that's what the brand calls the product. Fall
@@ -3819,6 +3943,10 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
         sku.amazonTitle  = meta.title || brand.asinTitles?.[asin] || '';
         sku.imageUrl = imagesByAsin[asin] || meta.imageUrl || null;
         attachSkuFees(sku, feesData, asin, from, to);
+        // Sellerboard-covered marketplaces carry their own per-product fees —
+        // those win over the daily_fees_asin coverage rule.
+        if (a.mp?.[MP_CA]?.sbDays) sku.feesCad = a.mp[MP_CA].resolved.fees;
+        if (a.mp?.[MP_US]?.sbDays) sku.feesUsd = a.mp[MP_US].resolved.fees;
         skus.push(sku);
         bUnits += a.units; bUnitsCa += a.units_ca; bUnitsUs += a.units_us;
         bRevCad += a.revenue_cad; bRevUsd += a.revenue_usd;
@@ -3881,6 +4009,7 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
             };
           })() : null,
           alerts: stSummary.alerts || {},
+          byMp: brandByMp(brandSlots),
         },
         skus,
       };
@@ -3889,11 +4018,13 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
     // Safety net: roll any unmapped ASINs into unknown-brand
     let uUnits=0, uCa=0, uUs=0, uRevCad=0, uRevUsd=0;
     const uSkus = [];
+    const uSlots = {};
     for (const [asin, a] of Object.entries(byAsin)) {
       if (mappedAsins.has(asin)) continue;
       if (!a.units && !a.revenue_cad && !a.revenue_usd) continue;
       uUnits += a.units; uCa += a.units_ca; uUs += a.units_us;
       uRevCad += a.revenue_cad; uRevUsd += a.revenue_usd;
+      for (const [mp, s] of Object.entries(a.mp || {})) (uSlots[mp] = uSlots[mp] || []).push(s);
       uSkus.push(buildSku(asin, 'unknown-brand', a, ''));
     }
     if (uSkus.length > 0) {
@@ -3905,6 +4036,7 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
           revenueCad: Math.round(uRevCad * 100) / 100,
           revenueUsd: Math.round(uRevUsd * 100) / 100,
           sessions: null, buyBox: null, avgCvr: null, adSummary: null, alerts: {},
+          byMp: brandByMp(uSlots),
         },
         skus: uSkus,
       };
@@ -3932,9 +4064,11 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
     let fFeesCad = 0, fFeesUsd = 0, fSvcCad = 0, fSvcUsd = 0;
     let fRefCad = 0, fRefUsd = 0, fRefFeeCad = 0, fRefFeeUsd = 0, fRefCount = 0;
     const fBreakCad = {}, fBreakUsd = {};
+    let feeRowsAll = [];
     try {
       const { data: feeRows } = await supabase
         .from('daily_fees').select('*').gte('date', from).lte('date', to);
+      feeRowsAll = feeRows || [];
       for (const r of (feeRows || [])) {
         feeDays++;
         fFeesCad += r.fees_cad || 0;           fFeesUsd += r.fees_usd || 0;
@@ -3997,6 +4131,43 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
       feeSource: Object.keys(passthrough).length ? 'preset_passthrough' : 'none',
     };
 
+    // Per-marketplace financials, Sellerboard first (account-level fees /
+    // refunds / net profit in native currency). Where Sellerboard covers a
+    // CA/US day, the legacy CAD/USD block follows it too, so tiles and the
+    // byMp view never disagree with each other.
+    const finByMp = resolveFinancials({ feeRows: feeRowsAll, sbRows, coverageDates: resolved.coverageDates, from, to });
+    for (const [mp, f] of Object.entries(finByMp)) {
+      const slots = [];
+      for (const a of Object.values(byAsin)) if (a.mp?.[mp]) slots.push(a.mp[mp]);
+      const g = aggregateMp(slots);
+      f.adSpend = g.adSpend; f.sales = g.sales; f.units = g.units;
+      f.code = MPreg.codeOf(mp) || mp;
+      delete f.amazonSide; delete f.sellerboardSide;
+    }
+    financials.byMp = finByMp;
+    for (const [mp, cur] of [[MP_CA, 'CAD'], [MP_US, 'USD']]) {
+      const f = finByMp[mp];
+      if (!f || !f.sbDays) continue;
+      financials[cur].amazonFees   = f.amazonFees;
+      financials[cur].serviceFees  = f.serviceFees;
+      financials[cur].refundAmount = f.refundAmount;
+      financials[cur].refundFees   = f.refundFees;
+      financials[cur].source       = f.source;
+      financials[cur].flags        = f.flags;
+    }
+    if (Object.values(finByMp).some(f => f.sbDays)) financials.feeSource = `sellerboard+${financials.feeSource}`;
+
+    // Account-level flag roll-up for the header badge: any marketplace where
+    // the two sources disagree on the days both have data.
+    const accountFlags = {};
+    for (const [mp, f] of Object.entries(finByMp)) {
+      const slots = [];
+      for (const a of Object.values(byAsin)) if (a.mp?.[mp]) slots.push(a.mp[mp]);
+      const g = aggregateMp(slots);
+      const merged = { ...g.flags, ...Object.fromEntries(Object.entries(f.flags || {}).map(([k, v]) => [k === 'amazonFees' ? 'fees' : k, v])) };
+      if (Object.keys(merged).length) accountFlags[mp] = merged;
+    }
+
     const fmtD = d => new Date(d + 'T12:00:00Z').toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' });
     return {
       from, to,
@@ -4009,6 +4180,12 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
       // fake margin (backfill may not have reached the whole range yet).
       feesDays: feesData.days,
       rangeDays: Math.round((new Date(to) - new Date(from)) / 86400000) + 1,
+      // Multi-marketplace + source-of-truth metadata (see sync/metricsResolver):
+      // marketplaces present in this range, Sellerboard coverage per
+      // marketplace, and account-level flags where the sources disagree.
+      marketplaces: resolved.marketplaces.map(mp => ({ id: mp, code: MPreg.codeOf(mp) || mp, currency: MPreg.currencyOf(mp), label: MPreg.byId(mp)?.label || mp })),
+      sources: { sellerboard: resolved.coverage },
+      flags: accountFlags,
     };
 }
 
