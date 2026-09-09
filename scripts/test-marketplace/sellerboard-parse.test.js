@@ -73,3 +73,50 @@ const headerOnly = text.split('\n')[0] + '\n';
 assert.strictEqual(sb.parseFeed(headerOnly).rows.length, 0);
 
 console.log('all sellerboard parse checks passed');
+
+// ── fee split + feed-currency conversion (sync/fxRates.js) ──
+assert.strictEqual(t1.fee_charges, 52.9, 'charges only: 22.5 + 30 + 0.4');
+assert.strictEqual(t1.reimbursements, 5);
+assert.strictEqual(Math.round((t1.fee_charges - t1.reimbursements) * 100) / 100, t1.amazon_fees);
+assert.strictEqual(t1.storage_fees, 0.4, 'fixture books the 0.40 as FBAStorageFee');
+assert.strictEqual(t1.feed_currency, 'CAD', 'no feedCurrency → assumed native');
+assert.strictEqual(t1.fx_source, 'same');
+
+const usdFeed = sb.parseFeed(text, { account: 'RMC', asinBrand: {}, feedCurrency: 'USD' }).rows;
+const rateFor = (date, from, to) => ({ rate: from === 'USD' && to === 'CAD' ? 1.4 : from === 'USD' && to === 'GBP' ? 0.8 : 1, source: 'daily' });
+const { stats } = sb.convertRows(usdFeed, { rateFor });
+const c1 = usdFeed.find(r => r.sku === 'T1-CAD'), c2 = usdFeed.find(r => r.sku === 'T2-USD'), cuk = usdFeed.find(r => r.sku === 'T2-GBP');
+assert.strictEqual(c1.feed_currency, 'USD'); assert.strictEqual(c1.currency, 'CAD');
+assert.strictEqual(c1.sales, 210, 'CA row converted USD → CAD at 1.4');
+assert.strictEqual(c1.amazon_fees, 67.06); assert.strictEqual(c1.net_profit, 28.14);
+assert.strictEqual(c1.units, 6, 'counts untouched');
+assert.strictEqual(c1.fx_rate, 1.4); assert.strictEqual(c1.fx_source, 'daily');
+assert.strictEqual(c1.raw.SalesOrganic, '100.00', 'raw stays in feed currency');
+assert.strictEqual(c2.sales, 80, 'US row already native'); assert.strictEqual(c2.fx_source, 'same');
+assert.strictEqual(cuk.sales, 48, 'UK row USD → GBP at 0.8');
+assert.deepStrictEqual(stats, { daily: 3 });
+
+// implied rate: Amazon native sales ÷ feed sales, only where units agree and it sits near the external rate
+const CA = 'A2EUQ1WTGCTBG2';
+const mk = (date, units, sales) => ({ mp_id: CA, date, currency: 'CAD', feed_currency: 'USD', units, sales });
+const ext = () => ({ rate: 1.4, source: 'live' });
+assert.deepStrictEqual(sb.impliedRates([mk('2026-09-01', 100, 1000)], { [`${CA}|2026-09-01`]: { units: 101, sales: 1380 } }, ext), { [`${CA}|2026-09-01`]: 1.38 });
+assert.deepStrictEqual(sb.impliedRates([mk('2026-09-01', 100, 1000)], { [`${CA}|2026-09-01`]: { units: 110, sales: 1380 } }, ext), {}, 'units disagree → no implied rate');
+assert.deepStrictEqual(sb.impliedRates([mk('2026-09-01', 100, 1000)], { [`${CA}|2026-09-01`]: { units: 100, sales: 1500 } }, ext), {}, 'drifts >4% from external → rejected');
+assert.deepStrictEqual(sb.impliedRates([mk('2026-09-01', 10, 100)], { [`${CA}|2026-09-01`]: { units: 10, sales: 138 } }, ext), {}, 'below minimum sales → rejected');
+assert.deepStrictEqual(sb.impliedRates([mk('2026-09-01', 100, 1000)], {}, ext), {}, 'no Amazon day → nothing');
+const conv = [mk('2026-09-01', 50, 500), mk('2026-09-02', 50, 500)];
+sb.convertRows(conv, { rateFor: ext, implied: { [`${CA}|2026-09-01`]: 1.38 } });
+assert.strictEqual(conv[0].sales, 690); assert.strictEqual(conv[0].fx_source, 'implied');
+assert.strictEqual(conv[1].sales, 700); assert.strictEqual(conv[1].fx_source, 'live');
+
+// fxRates resolver: daily → carry-forward → live → fallback
+const FX = require(ROOT + '/sync/fxRates.js');
+const rf = FX.makeRateResolver({ daily: { '2026-09-01': { CAD: 1, USD: 1.38, GBP: 1.8 } }, live: { CAD: 1, USD: 1.4, GBP: 1.75 } });
+assert.deepStrictEqual(rf('2026-09-01', 'USD', 'CAD'), { rate: 1.38, source: 'daily' });
+assert.deepStrictEqual(rf('2026-09-05', 'USD', 'CAD'), { rate: 1.38, source: 'carry' });
+assert.deepStrictEqual(rf('2026-08-20', 'USD', 'CAD'), { rate: 1.4, source: 'live' });
+assert.deepStrictEqual(rf('2026-09-01', 'USD', 'GBP'), { rate: 0.7667, source: 'daily' });
+assert.deepStrictEqual(rf('2026-09-01', 'CAD', 'CAD'), { rate: 1, source: 'same' });
+assert.strictEqual(FX.makeRateResolver({})('2026-09-01', 'USD', 'CAD').source, 'fallback');
+console.log('all sellerboard fx/conversion checks passed');

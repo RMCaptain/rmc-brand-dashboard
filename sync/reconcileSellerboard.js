@@ -8,17 +8,28 @@
  * rows; this module never decides what to DISPLAY, only what disagrees.
  *
  * Amazon side (what the dashboard computes itself):
- *   units / sales / ad_spend / refunds / refund_amount  ← daily_metrics_mp
- *   amazon_fees                                          ← daily_fees_asin (per ASIN),
- *                                                          daily_fees_mp (account)
- *   sessions                                             ← daily_metrics (wide; CA+US
- *                                                          blended, so compared at mp '*')
- * Sellerboard side: sellerboard_daily, aggregated SKU → ASIN.
+ *   units / sales / ad_spend        ← daily_metrics_mp (ad_spend is Sponsored
+ *                                     Products only, so the Sellerboard side is
+ *                                     ad_spend_sp, not the SB+SD-inclusive total)
+ *   amazon_fees                     ← daily_fees_asin (per ASIN), daily_fees_mp
+ *                                     (account): charges minus the Storage bucket
+ *   refunds / refund_amount         ← daily_fees_asin / daily_fees_mp (posted-day
+ *                                     refund events — the basis Sellerboard uses;
+ *                                     daily_metrics_mp keys refunds to the ORDER day)
+ * Sellerboard side: sellerboard_daily, aggregated SKU → ASIN, in marketplace
+ * currency (the ingest converts the account-currency feed; see sync/sellerboard.js).
+ *   amazon_fees ← fee_charges - storage_fees (reimbursements are not fees on
+ *   the Amazon side, and Sellerboard amortizes storage over the month).
  *
- * Tolerance (Mike, 2026-09-09): money max($25, 1%), counts max(2, 1%).
- * Day boundary: Sellerboard days are UTC, ours are PST — daily rows carry
- * that noise by design; the `account_7d` scope (trailing 7-day sums) is the
- * one that should stay green and is what the Slack alert keys off.
+ * Sessions are not reconciled: traffic is Amazon-first by design and
+ * Sellerboard's sessions lag and count differently (~10% low, verified 2026-09-09).
+ *
+ * Tolerance (Mike, 2026-09-09): money max($25, 1%), counts max(2, 1%) for
+ * units / sales / ad_spend, which share a basis with Amazon and match to the
+ * cent on a clean day. Fees and refunds get 10%: Sellerboard books them to
+ * the order day, Amazon's Finances walk to the posted day (a day or two
+ * later), so daily rows lag each other by design and the `account_7d` scope
+ * (trailing 7-day sums) is the row that should stay green.
  *
  * Volume control: account / account_7d / brand rows are stored for every
  * status; asin rows only when status != 'match', and only for the trailing
@@ -30,18 +41,22 @@ const MP = require('./marketplaces');
 const { pstDateStr, pstSubtractDays } = require('./dateUtils');
 
 const MONEY_METRICS = new Set(['sales', 'ad_spend', 'refund_amount', 'amazon_fees']);
-const COUNT_METRICS = new Set(['units', 'refunds', 'sessions']);
-const METRICS = ['units', 'sales', 'ad_spend', 'refunds', 'refund_amount', 'amazon_fees', 'sessions'];
-const TOL = { moneyAbs: 25, countAbs: 2, pct: 0.01 };
+const LAGGED_METRICS = new Set(['amazon_fees', 'refunds', 'refund_amount']); // order-day vs posted-day basis
+const METRICS = ['units', 'sales', 'ad_spend', 'refunds', 'refund_amount', 'amazon_fees'];
+const TOL = { moneyAbs: 25, countAbs: 2, pct: 0.01, laggedPct: 0.10 };
 const ASIN_DAYS = 7;
 
 const num = v => (Number.isFinite(v) ? v : (Number.isFinite(Number(v)) ? Number(v) : 0));
 const r2  = v => Math.round(v * 100) / 100;
 
 function tolerance(metric, a, b) {
-  const base = Math.max(Math.abs(a), Math.abs(b)) * TOL.pct;
+  const pct = LAGGED_METRICS.has(metric) ? TOL.laggedPct : TOL.pct;
+  const base = Math.max(Math.abs(a), Math.abs(b)) * pct;
   return Math.max(MONEY_METRICS.has(metric) ? TOL.moneyAbs : TOL.countAbs, base);
 }
+
+// Amazon fee row → charges excluding the Storage bucket (see header).
+const feesExStorage = r => num(r.fees) - num(r.breakdown?.Storage);
 
 // One comparison → row fields (or null when both sides are absent/zero).
 function compare(metric, amazon, sellerboard) {
@@ -82,7 +97,7 @@ function bump(acc, date, mp, scope, scopeId, metric, v) {
  * Pure core: given both sides' rows and an asin→brand map, produce the
  * reconciliation rows. Exported for tests.
  */
-function reconcileRows({ sbRows, mpRows, feeAsinRows, feeMpRows, wideRows, asinBrand, yesterday, days = 30 }) {
+function reconcileRows({ sbRows, mpRows, feeAsinRows, feeMpRows, asinBrand, yesterday, days = 30 }) {
   const from = pstSubtractDays(yesterday, days - 1);
   const asinFrom = pstSubtractDays(yesterday, ASIN_DAYS - 1);
   const brandOf = asin => asinBrand[asin] || 'unknown-brand';
@@ -92,7 +107,7 @@ function reconcileRows({ sbRows, mpRows, feeAsinRows, feeMpRows, wideRows, asinB
   for (const r of mpRows) {
     if (r.date < from || r.date > yesterday) continue;
     const b = brandOf(r.asin);
-    for (const [metric, v] of [['units', r.units], ['sales', r.revenue], ['ad_spend', r.ad_spend], ['refunds', r.refunded_units], ['refund_amount', r.refund_amount]]) {
+    for (const [metric, v] of [['units', r.units], ['sales', r.revenue], ['ad_spend', r.ad_spend]]) {
       bump(A, r.date, r.mp_id, 'account', '*', metric, v);
       bump(A, r.date, r.mp_id, 'brand', b, metric, v);
       if (r.date >= asinFrom) bump(A, r.date, r.mp_id, 'asin', r.asin, metric, v);
@@ -100,31 +115,28 @@ function reconcileRows({ sbRows, mpRows, feeAsinRows, feeMpRows, wideRows, asinB
   }
   for (const r of feeAsinRows) {
     if (r.date < from || r.date > yesterday || String(r.asin).startsWith('sku:')) continue;
-    bump(A, r.date, r.mp_id, 'brand', brandOf(r.asin), 'amazon_fees', r.fees);
-    if (r.date >= asinFrom) bump(A, r.date, r.mp_id, 'asin', r.asin, 'amazon_fees', r.fees);
+    const b = brandOf(r.asin);
+    for (const [metric, v] of [['amazon_fees', feesExStorage(r)], ['refunds', r.refund_count], ['refund_amount', r.refund_amount]]) {
+      bump(A, r.date, r.mp_id, 'brand', b, metric, v);
+      if (r.date >= asinFrom) bump(A, r.date, r.mp_id, 'asin', r.asin, metric, v);
+    }
   }
   for (const r of feeMpRows) {
     if (r.date < from || r.date > yesterday) continue;
-    bump(A, r.date, r.mp_id, 'account', '*', 'amazon_fees', r.fees);
-  }
-  for (const r of wideRows) {
-    if (r.date < from || r.date > yesterday || r.sessions == null) continue;
-    bump(A, r.date, '*', 'account', '*', 'sessions', r.sessions);
-    bump(A, r.date, '*', 'brand', brandOf(r.asin), 'sessions', r.sessions);
+    for (const [metric, v] of [['amazon_fees', feesExStorage(r)], ['refunds', r.refund_count], ['refund_amount', r.refund_amount]]) {
+      bump(A, r.date, r.mp_id, 'account', '*', metric, v);
+    }
   }
 
   // ── Sellerboard side (SKU rows → ASIN) ──
   for (const r of sbRows) {
     if (r.date < from || r.date > yesterday) continue;
     const b = brandOf(r.asin);
-    for (const [metric, v] of [['units', r.units], ['sales', r.sales], ['ad_spend', r.ad_spend], ['refunds', r.refunds], ['refund_amount', r.refund_amount], ['amazon_fees', r.amazon_fees]]) {
+    const fees = num(r.fee_charges) - num(r.storage_fees);
+    for (const [metric, v] of [['units', r.units], ['sales', r.sales], ['ad_spend', r.ad_spend_sp], ['refunds', r.refunds], ['refund_amount', r.refund_amount], ['amazon_fees', fees]]) {
       bump(S, r.date, r.mp_id, 'account', '*', metric, v);
       bump(S, r.date, r.mp_id, 'brand', b, metric, v);
       if (r.date >= asinFrom) bump(S, r.date, r.mp_id, 'asin', r.asin, metric, v);
-    }
-    if (r.sessions != null) {
-      bump(S, r.date, '*', 'account', '*', 'sessions', r.sessions);
-      bump(S, r.date, '*', 'brand', b, 'sessions', r.sessions);
     }
   }
 
@@ -186,12 +198,11 @@ async function reconcileSellerboard({ supabase, loadBrands, days = 30, fetchAll 
   const { brands } = await loadBrands();
   for (const b of brands || []) for (const a of (b.asins || [])) asinBrand[a] = b.id;
 
-  const [sbRows, mpRows, feeAsinRows, feeMpRows, wideRows] = await Promise.all([
-    fetchAll(supabase, 'sellerboard_daily', 'date,mp_id,asin,units,sales,ad_spend,refunds,refund_amount,amazon_fees,sessions', from, yesterday, ['date', 'mp_id', 'sku']),
-    fetchAll(supabase, 'daily_metrics_mp', 'date,mp_id,asin,units,revenue,ad_spend,refunded_units,refund_amount', from, yesterday, ['date', 'asin', 'mp_id']),
-    fetchAll(supabase, 'daily_fees_asin', 'date,mp_id,asin,fees', from, yesterday, ['date', 'asin', 'mp_id']),
-    fetchAll(supabase, 'daily_fees_mp', 'date,mp_id,fees', from, yesterday, ['date', 'mp_id']),
-    fetchAll(supabase, 'daily_metrics', 'date,asin,sessions', from, yesterday, ['date', 'asin']),
+  const [sbRows, mpRows, feeAsinRows, feeMpRows] = await Promise.all([
+    fetchAll(supabase, 'sellerboard_daily', 'date,mp_id,asin,units,sales,ad_spend_sp,refunds,refund_amount,fee_charges,storage_fees', from, yesterday, ['date', 'mp_id', 'sku']),
+    fetchAll(supabase, 'daily_metrics_mp', 'date,mp_id,asin,units,revenue,ad_spend', from, yesterday, ['date', 'asin', 'mp_id']),
+    fetchAll(supabase, 'daily_fees_asin', 'date,mp_id,asin,fees,refund_amount,refund_count,breakdown', from, yesterday, ['date', 'asin', 'mp_id']),
+    fetchAll(supabase, 'daily_fees_mp', 'date,mp_id,fees,refund_amount,refund_count,breakdown', from, yesterday, ['date', 'mp_id']),
   ]);
 
   if (!sbRows.length) {
@@ -199,7 +210,7 @@ async function reconcileSellerboard({ supabase, loadBrands, days = 30, fetchAll 
     return { ok: false, reason: 'no_sellerboard_rows', from, yesterday };
   }
 
-  const { rows, asinFrom } = reconcileRows({ sbRows, mpRows, feeAsinRows, feeMpRows, wideRows, asinBrand, yesterday, days });
+  const { rows, asinFrom } = reconcileRows({ sbRows, mpRows, feeAsinRows, feeMpRows, asinBrand, yesterday, days });
   const checkedAt = new Date().toISOString();
 
   // ASIN scope: clear the window first so resolved flags disappear.
@@ -220,4 +231,4 @@ async function reconcileSellerboard({ supabase, loadBrands, days = 30, fetchAll 
   return { ok: true, from, yesterday, written, ...summary };
 }
 
-module.exports = { reconcileSellerboard, reconcileRows, compare, tolerance, summarize, METRICS, TOL, ASIN_DAYS };
+module.exports = { reconcileSellerboard, reconcileRows, compare, tolerance, summarize, METRICS, LAGGED_METRICS, TOL, ASIN_DAYS };

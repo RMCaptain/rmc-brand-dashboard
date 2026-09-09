@@ -305,9 +305,16 @@ async function writeDailyMetrics(yesterdayBrands, date) {
 // "1 unit of X in CAD" (`toCad`) so the frontend blends any marketplace mix
 // into the display currency. usdToCad/cadToUsd kept for existing callers.
 const FX_FALLBACK = { usdToCad: 1.38, cadToUsd: 0.724, toCad: { CAD: 1, USD: 1.38, GBP: 1.75 } };
+let fxRecordedFor = null; // PST day whose rate is already in fx_rates (one write per day)
 async function fetchFxRate() {
   const cached = loadFx();
-  if (cached && cached.toCad) return cached;
+  if (cached && cached.toCad) {
+    if (fxRecordedFor !== pstDateStr()) {
+      fxRecordedFor = pstDateStr();
+      require('./sync/fxRates').recordRate(supabase, fxRecordedFor, cached.toCad).catch(() => {});
+    }
+    return cached;
+  }
   const reg = require('./sync/marketplaces');
   const wanted = [...new Set(reg.all().map(m => m.currency))];
   return new Promise(resolve => {
@@ -328,6 +335,9 @@ async function fetchFxRate() {
           }
           const result = { usdToCad, cadToUsd: Math.round(1 / usdToCad * 10000) / 10000, toCad, fetched: new Date().toISOString() };
           saveFx(result);
+          // Keep the day's rate for the Sellerboard ingest (feed → native currency).
+          fxRecordedFor = pstDateStr();
+          require('./sync/fxRates').recordRate(supabase, fxRecordedFor, toCad).catch(() => {});
           resolve(result);
         } catch { fallback(); }
       });
@@ -5870,7 +5880,8 @@ app.post('/api/sellerboard/sync', async (req, res) => {
   try {
     const { syncSellerboardFeeds } = require('./sync/sellerboard');
     const { reconcileSellerboard } = require('./sync/reconcileSellerboard');
-    const ingest = await syncSellerboardFeeds({ supabase, loadBrands, label: 'Sellerboard-manual' });
+    const liveToCad = (await fetchFxRate().catch(() => null))?.toCad || null;
+    const ingest = await syncSellerboardFeeds({ supabase, loadBrands, label: 'Sellerboard-manual', liveToCad });
     const recon = ingest.feeds.some(f => f.status === 'ok') && req.query.reconcile !== '0'
       ? await reconcileSellerboard({ supabase, loadBrands, label: 'Reconcile-manual' })
       : null;
@@ -6220,7 +6231,7 @@ app.post('/api/bulk-update', async (req, res) => {
 // standing scripts/run-migration.js flow still covers everything else. Only
 // migrations listed here run, and each MUST be safe to re-run on every boot
 // (CREATE TABLE / CREATE INDEX IF NOT EXISTS only — no data rewrites).
-const BOOT_MIGRATIONS = ['sql/daily-fees-asin.sql', 'sql/sellerboard-daily.sql', 'sql/metric-reconciliation.sql'];
+const BOOT_MIGRATIONS = ['sql/daily-fees-asin.sql', 'sql/fx-rates.sql', 'sql/sellerboard-daily.sql', 'sql/metric-reconciliation.sql'];
 async function ensureBootMigrations() {
   if (!process.env.DATABASE_URL) {
     console.log('[BootMigrate] DATABASE_URL not set — skipped (use scripts/run-migration.js)');
@@ -6826,7 +6837,8 @@ function scheduleDailySync() {
   const runSellerboard = async (tag) => {
     const { syncSellerboardFeeds } = require('./sync/sellerboard');
     const { reconcileSellerboard } = require('./sync/reconcileSellerboard');
-    const ingest = await syncSellerboardFeeds({ supabase, loadBrands, label: tag });
+    const liveToCad = (await fetchFxRate().catch(() => null))?.toCad || null;
+    const ingest = await syncSellerboardFeeds({ supabase, loadBrands, label: tag, liveToCad });
     const ok = ingest.feeds.some(f => f.status === 'ok');
     if (!ok) { console.warn(`[${tag}] no feed ingested (${ingest.feeds.map(f => `${f.key}=${f.status}`).join(' ')}) — reconciliation skipped`); return { ingest }; }
     const recon = await reconcileSellerboard({ supabase, loadBrands, label: tag });

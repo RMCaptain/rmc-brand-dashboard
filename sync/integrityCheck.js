@@ -211,7 +211,7 @@ async function runIntegrityChecks({ supabase, loadBrands }) {
   //       marketplace — the two sources disagree beyond tolerance in a way
   //       the day-boundary can't explain.
   // warn: feed stale (no Sellerboard rows for the day before yesterday), or
-  //       daily account-level flags in the last 3 days (boundary noise until
+  //       daily account-level flags in the last 3 days (posting-lag noise until
   //       proven otherwise; posts Mondays).
   // Wrapped: the tables only exist once the boot migration has run.
   try {
@@ -230,7 +230,7 @@ async function runIntegrityChecks({ supabase, loadBrands }) {
     const soft = recon.filter(r => r.scope === 'account' && r.status === 'flag');
     if (soft.length) {
       const top = soft.slice(0, 3).map(r => `${r.date} ${fmt(r)}`).join('; ');
-      findings.push({ check: 'sellerboard', level: 'warn', detail: `${soft.length} daily account-level flag(s) in last 3d (UTC/PST boundary noise unless the 7-day row also flags): ${top}${soft.length > 3 ? '; …' : ''}` });
+      findings.push({ check: 'sellerboard', level: 'warn', detail: `${soft.length} daily account-level flag(s) in last 3d (fee/refund posting lag unless the 7-day row also flags): ${top}${soft.length > 3 ? '; …' : ''}` });
     }
     const sbCover = await fetchAll(supabase, 'sellerboard_daily', 'date', dayBefore, dayBefore, ['mp_id', 'sku']);
     if (!sbCover.length) {

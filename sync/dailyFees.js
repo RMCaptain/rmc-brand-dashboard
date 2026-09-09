@@ -21,6 +21,8 @@ require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 const { getAccessToken, getFinancialSummary, sleep } = require('./amazon');
 const { pstDateStr, pstSubtractDays, pstMidnightAsUTC } = require('./dateUtils');
 
+const decodeSku = s => (s == null ? s : String(s).replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'"));
+
 // Collect one PST day's posted fees/refunds.
 // Returns { row, mpRows, asinRows }: the wide daily_fees row, the per-marketplace
 // daily_fees_mp rows (true per-currency refund counts — the wide row's single
@@ -46,7 +48,11 @@ async function collectFeesForDay(pstDate, token, skuToAsin = {}) {
     const mpCode = s.currency === 'CAD' ? 'CA' : s.currency === 'USD' ? 'US' : null;
     if (!mpCode) { console.error(`[DailyFees] ${pstDate} sku ${s.sku}: fees in ${s.currency || 'unknown currency'} skipped — no CA/US home (ride daily_fees_mp when that marketplace goes live)`); continue; }
     const mpId = idByCode(mpCode);
-    const asin = (s.sku && (skuToAsin[`${s.sku}|${mpId}`] || skuToAsin[s.sku])) || `sku:${s.sku || 'unknown'}`;
+    // The Finances API HTML-escapes SKUs ("A&amp;B"); sku_prices and Sellerboard
+    // hold the real "A&B". Decode before the lookup — first live reconciliation
+    // (2026-09-09) found $3.7k/30d of fees parked under 'sku:' for that alone.
+    const skuKey = decodeSku(s.sku);
+    const asin = (skuKey && (skuToAsin[`${skuKey}|${mpId}`] || skuToAsin[skuKey])) || `sku:${skuKey || 'unknown'}`;
     const key = `${asin}|${mpId}`;
     if (!asinAgg.has(key)) {
       asinAgg.set(key, { date: pstDate, asin, mp_id: mpId, currency: s.currency, fees: 0, refund_amount: 0, refund_fees: 0, refund_count: 0, breakdown: {}, updated_at: new Date().toISOString() });
@@ -111,6 +117,28 @@ async function loadSkuAsinMap(supabase) {
       if (!map[r.sku]) map[r.sku] = r.asin;
     }
     if (data.length < 1000) break;
+  }
+  // Sellerboard fallback: the feed carries SKU + ASIN + marketplace for every
+  // row it has ever sold, including SKUs sku_prices never learned (first live
+  // reconciliation 2026-09-09: eight US ASINs with real sales had $0 fees on
+  // the ASIN table because their SKUs sat in the 'sku:' bucket). Only fills
+  // gaps — sku_prices stays authoritative where it has an answer.
+  try {
+    let added = 0;
+    for (let off = 0; ; off += 1000) {
+      const { data, error } = await supabase.from('sellerboard_daily')
+        .select('sku,mp_id,asin').order('date', { ascending: false }).range(off, off + 999);
+      if (error) throw new Error(error.message);
+      for (const r of data || []) {
+        if (!r.asin || !r.sku) continue;
+        if (!map[`${r.sku}|${r.mp_id}`]) { map[`${r.sku}|${r.mp_id}`] = r.asin; added++; }
+        if (!map[r.sku]) map[r.sku] = r.asin;
+      }
+      if (!data || data.length < 1000) break;
+    }
+    if (added) console.log(`[DailyFees] ${added} sku|marketplace pair(s) mapped from Sellerboard rows that sku_prices lacked`);
+  } catch (e) {
+    console.warn(`[DailyFees] Sellerboard sku map unavailable (${e.message}) — sku_prices only`);
   }
   return map;
 }

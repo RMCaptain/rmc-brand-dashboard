@@ -19,15 +19,47 @@
  * Sign convention on the way in: Sellerboard writes costs negative; the
  * normalized columns store money-out POSITIVE (dashboard convention). See the
  * table header comment. The raw row is kept verbatim in `raw`.
+ *
+ * CURRENCY: every money column in a feed is in the Sellerboard ACCOUNT's
+ * currency, not the marketplace's — "Rocky Mountain Co" is a USD account, so
+ * its Amazon.ca rows arrive in USD (first live reconciliation, 2026-09-09:
+ * CA sales came in at exactly the day's CAD→USD rate, US matched to the
+ * penny). Rows are converted to the marketplace's native currency at ingest
+ * with the day's rate; `feed_currency` / `fx_rate` / `fx_source` record it and
+ * `raw` keeps the account-currency figures. Where Amazon's own numbers for
+ * that marketplace-day agree on units, the implied rate (Amazon native sales
+ * ÷ Sellerboard feed sales) is Sellerboard's exact rate for the day and is
+ * preferred over the external one.
+ *
+ * DAY BOUNDARY: the feed's day is the marketplace's local calendar day — for
+ * Amazon NA that is Pacific time, the dashboard's own day (US daily sales
+ * match Amazon's S&T figures to the cent). Not UTC.
  */
 
 const MP = require('./marketplaces');
+const FX = require('./fxRates');
 
+// `currency` is the Sellerboard account's display currency (Sellerboard
+// Settings → account; confirmed via the Sellerboard connector 2026-09-09).
+// Change it here if the account setting changes — every feed row is stored
+// converted from it.
 const FEEDS = [
-  { key: 'RMC',  env: 'SELLERBOARD_FEED_RMC',  label: 'Rocky Mountain Co (Amazon CA/US)' },
-  { key: 'WMCA', env: 'SELLERBOARD_FEED_WMCA', label: 'RMC WMCA (Walmart.ca)' },
-  { key: 'INTL', env: 'SELLERBOARD_FEED_INTL', label: 'RMCo Intl (Amazon UK/EU)' },
+  { key: 'RMC',  env: 'SELLERBOARD_FEED_RMC',  currency: 'USD', label: 'Rocky Mountain Co (Amazon CA/US)' },
+  { key: 'WMCA', env: 'SELLERBOARD_FEED_WMCA', currency: 'CAD', label: 'RMC WMCA (Walmart.ca)' },
+  { key: 'INTL', env: 'SELLERBOARD_FEED_INTL', currency: 'USD', label: 'RMCo Intl (Amazon UK/EU)' },
 ];
+
+// Money columns converted feed-currency → marketplace-native at ingest.
+const MONEY_COLS = [
+  'sales', 'sales_ppc', 'sales_sd', 'refund_amount', 'refund_costs', 'promo_value',
+  'ad_spend', 'ad_spend_sp', 'ad_spend_sb', 'ad_spend_sbv', 'ad_spend_sd',
+  'amazon_fees', 'fee_charges', 'reimbursements', 'storage_fees', 'product_costs',
+  'est_payout', 'gross_profit', 'net_profit',
+];
+// Implied-rate guard: accept Amazon÷Sellerboard sales as the day's rate only
+// when units agree within 2%, both sides sold at least this much, and the
+// result sits within 4% of the external rate (a wrong S&T day can't poison it).
+const IMPLIED = { unitsPct: 0.02, minSales: 200, maxDrift: 0.04, minAsins: 3, minAsinSales: 50 };
 
 const NOT_READY_RE = /report not ready/i;
 
@@ -105,7 +137,7 @@ const REQUIRED = ['date', 'marketplace', 'asin', 'sku'];
  * Returns { rows, skipped: { unknownMarketplace: {name: count}, badDate, noKey }, headers }.
  * `asinBrand` maps ASIN → brand_id (from the brands blob); unmapped → 'unknown-brand'.
  */
-function parseFeed(text, { account = null, asinBrand = {} } = {}) {
+function parseFeed(text, { account = null, asinBrand = {}, feedCurrency = null } = {}) {
   const table = parseCsv(text);
   if (!table.length) return { rows: [], skipped: {}, headers: [] };
   const headers = table[0].map(normHeader);
@@ -143,6 +175,9 @@ function parseFeed(text, { account = null, asinBrand = {} } = {}) {
     rows.push({
       date, mp_id: mp.id, sku, asin,
       currency: mp.currency,
+      feed_currency: feedCurrency || mp.currency,   // money below is in this until convertRows() runs
+      fx_rate: 1,
+      fx_source: 'same',
       account,
       brand_id: asinBrand[asin] || 'unknown-brand',
       name: String(get(r, 'name')).slice(0, 500) || null,
@@ -162,6 +197,13 @@ function parseFeed(text, { account = null, asinBrand = {} } = {}) {
       ad_spend_sbv:  money(-num(get(r, 'sponsoredbrandsvideo'))),
       ad_spend_sd:   money(-num(get(r, 'sponsoreddisplay'))),
       amazon_fees:   money(-sum(r, FEE_COLS)),
+      // Split of the same columns by sign: charges (Sellerboard negative) vs
+      // reimbursements (positive — lost/damaged inventory, re-evaluations).
+      // Amazon's Finances walk counts charges only, so the reconciliation
+      // compares fee_charges; amazon_fees stays Sellerboard's netted figure.
+      fee_charges:   money(-FEE_COLS.reduce((s, c) => s + Math.min(0, num(get(r, c))), 0)),
+      reimbursements: money(FEE_COLS.reduce((s, c) => s + Math.max(0, num(get(r, c))), 0)),
+      storage_fees:  money(-(num(get(r, 'fbastoragefee')) + num(get(r, 'fbalongtermstoragefee')))),
       product_costs: money(-sum(r, PRODUCT_COST_COLS)),
       est_payout:    money(num(get(r, 'estimatedpayout'))),
       gross_profit:  money(num(get(r, 'grossprofit'))),
@@ -174,6 +216,98 @@ function parseFeed(text, { account = null, asinBrand = {} } = {}) {
     });
   }
   return { rows, skipped, headers };
+}
+
+// ── Currency conversion ──────────────────────────────────────────────────────
+
+/**
+ * Convert parsed rows from the feed currency into each row's marketplace
+ * currency. `rateFor(date, from, to)` → { rate, source } (sync/fxRates.js);
+ * `implied` is an optional { `${mp_id}|${date}`: rate } map that wins where
+ * present. Mutates and returns rows; rows already native are left alone.
+ */
+function convertRows(rows, { rateFor, implied = {} } = {}) {
+  const stats = {};
+  for (const r of rows) {
+    if (r.feed_currency === r.currency) continue;
+    const key = `${r.mp_id}|${r.date}`;
+    let rate, source;
+    if (implied[key]) { rate = implied[key]; source = 'implied'; }
+    else if (rateFor) ({ rate, source } = rateFor(r.date, r.feed_currency, r.currency));
+    else { rate = 1; source = 'none'; }
+    for (const c of MONEY_COLS) if (r[c] != null) r[c] = money(r[c] * rate);
+    r.fx_rate = rate; r.fx_source = source;
+    stats[source] = (stats[source] || 0) + 1;
+  }
+  return { rows, stats };
+}
+
+/**
+ * Sellerboard's own rate for a marketplace-day, implied by Amazon's native
+ * sales ÷ the feed's account-currency sales — exact where both sides count
+ * the same units. `amazonMpDay` is { `${mp_id}|${date}`: { units, sales } }
+ * (native currency). Returns { `${mp_id}|${date}`: rate } for accepted days.
+ */
+function impliedRates(rows, amazonMpDay, rateFor) {
+  const sb = {};
+  for (const r of rows) {
+    if (r.feed_currency === r.currency) continue;
+    const k = `${r.mp_id}|${r.date}`;
+    const s = sb[k] || (sb[k] = { units: 0, sales: 0, from: r.feed_currency, to: r.currency, byAsin: {} });
+    s.units += r.units; s.sales += r.sales;
+    const a = s.byAsin[r.asin] || (s.byAsin[r.asin] = { units: 0, sales: 0 });
+    a.units += r.units; a.sales += r.sales;
+  }
+  const out = {};
+  for (const [k, s] of Object.entries(sb)) {
+    const a = amazonMpDay[k];
+    if (!a || s.sales < IMPLIED.minSales || a.sales < IMPLIED.minSales) continue;
+    if (!s.units || Math.abs(a.units - s.units) / s.units > IMPLIED.unitsPct) continue;
+    // Sellerboard applies ONE rate per day, so per-ASIN ratios cluster on it.
+    // The median of ASINs whose units agree exactly is immune to a single
+    // product's genuine sales discrepancy (which the account ratio would
+    // otherwise smear across every other product that day). Fewer than
+    // IMPLIED.minAsins qualifying → account ratio.
+    const ratios = [];
+    for (const [asin, sa] of Object.entries(s.byAsin)) {
+      const aa = a.byAsin?.[asin];
+      if (!aa || aa.units !== sa.units || sa.sales < IMPLIED.minAsinSales) continue;
+      ratios.push(aa.sales / sa.sales);
+    }
+    ratios.sort((x, y) => x - y);
+    const mid = ratios.length >> 1;
+    const raw = ratios.length >= IMPLIED.minAsins
+      ? (ratios.length % 2 ? ratios[mid] : (ratios[mid - 1] + ratios[mid]) / 2)
+      : a.sales / s.sales;
+    const rate = Math.round(raw * 100000) / 100000;
+    const ext = rateFor ? rateFor(k.split('|')[1], s.from, s.to).rate : null;
+    if (ext && Math.abs(rate - ext) / ext > IMPLIED.maxDrift) continue;
+    out[k] = rate;
+  }
+  return out;
+}
+
+// Amazon-side native sales per marketplace-day (and per ASIN within it) for
+// the implied rate.
+async function loadAmazonMpDay(supabase, from, to) {
+  const out = {};
+  for (let off = 0; ; off += 1000) {
+    const { data, error } = await supabase.from('daily_metrics_mp').select('date,mp_id,asin,units,revenue')
+      .gte('date', from).lte('date', to).gt('units', 0)
+      .order('date', { ascending: true }).order('asin', { ascending: true }).order('mp_id', { ascending: true })
+      .range(off, off + 999);
+    if (error) throw new Error(`daily_metrics_mp read failed: ${error.message}`);
+    for (const r of data || []) {
+      const k = `${r.mp_id}|${r.date}`;
+      const s = out[k] || (out[k] = { units: 0, sales: 0, byAsin: {} });
+      const u = Number(r.units) || 0, v = Number(r.revenue) || 0;
+      s.units += u; s.sales += v;
+      const a = s.byAsin[r.asin] || (s.byAsin[r.asin] = { units: 0, sales: 0 });
+      a.units += u; a.sales += v;
+    }
+    if (!data || data.length < 1000) break;
+  }
+  return out;
 }
 
 // ── Fetch ────────────────────────────────────────────────────────────────────
@@ -213,7 +347,7 @@ async function upsertRows(supabase, rows, tag) {
  * block the Amazon rows. Returns { feeds: [{ key, status, rows, window, skipped, error }] }.
  * status: 'ok' | 'not_ready' | 'unconfigured' | 'error'
  */
-async function syncSellerboardFeeds({ supabase, loadBrands, label = 'Sellerboard' }) {
+async function syncSellerboardFeeds({ supabase, loadBrands, label = 'Sellerboard', liveToCad = null }) {
   const asinBrand = {};
   try {
     const { brands } = await loadBrands();
@@ -221,6 +355,23 @@ async function syncSellerboardFeeds({ supabase, loadBrands, label = 'Sellerboard
   } catch (e) {
     console.warn(`[${label}] brands blob unavailable (${e.message}) — rows stamped unknown-brand`);
   }
+
+  // FX for feeds whose account currency differs from a marketplace's: daily
+  // rows from fx_rates, else the live rate (passed in or fetched), else static.
+  let rateFor = null, amazonMpDay = null;
+  const getRateFor = async (from, to) => {
+    if (rateFor) return rateFor;
+    const daily = await FX.loadDailyRates(supabase, from, to);
+    const live = liveToCad || await FX.fetchLatestToCad();
+    rateFor = FX.makeRateResolver({ daily, live });
+    return rateFor;
+  };
+  const getAmazonMpDay = async (from, to) => {
+    if (amazonMpDay) return amazonMpDay;
+    try { amazonMpDay = await loadAmazonMpDay(supabase, from, to); }
+    catch (e) { console.warn(`[${label}] Amazon mp-day sales unavailable for implied FX (${e.message}) — external rate only`); amazonMpDay = {}; }
+    return amazonMpDay;
+  };
 
   const out = { feeds: [], startedAt: new Date().toISOString() };
   for (const feed of FEEDS) {
@@ -234,18 +385,25 @@ async function syncSellerboardFeeds({ supabase, loadBrands, label = 'Sellerboard
         out.feeds.push({ key: feed.key, status: 'not_ready' });
         continue;
       }
-      const { rows, skipped } = parseFeed(text, { account: feed.key, asinBrand });
+      const { rows, skipped } = parseFeed(text, { account: feed.key, asinBrand, feedCurrency: feed.currency });
       for (const [name, n] of Object.entries(skipped.unknownMarketplace)) {
         console.error(`[${tag}] ${n} row(s) for marketplace "${name}" skipped — not in sync/marketplaces.js registry (add a \`sellerboard\` name to the entry)`);
       }
       if (skipped.badDate || skipped.noKey) console.warn(`[${tag}] skipped ${skipped.badDate} bad-date + ${skipped.noKey} keyless row(s)`);
       const dates = rows.map(r => r.date);
       const window = dates.length ? { from: dates.reduce((a, b) => (a < b ? a : b)), to: dates.reduce((a, b) => (a > b ? a : b)) } : null;
+      let fx = null;
+      if (rows.some(r => r.feed_currency !== r.currency)) {
+        const rf = await getRateFor(window.from, window.to);
+        const implied = impliedRates(rows, await getAmazonMpDay(window.from, window.to), rf);
+        fx = convertRows(rows, { rateFor: rf, implied }).stats;
+        console.log(`[${tag}] converted ${feed.currency} → native: ${Object.entries(fx).map(([k, v]) => `${k}=${v}`).join(' ')} rows (${Object.keys(implied).length} marketplace-days on Sellerboard's implied rate)`);
+      }
       const written = await upsertRows(supabase, rows, tag);
       const byMp = {};
       for (const r of rows) byMp[MP.codeOf(r.mp_id) || r.mp_id] = (byMp[MP.codeOf(r.mp_id) || r.mp_id] || 0) + 1;
       console.log(`[${tag}] ${written} rows upserted, window ${window?.from}..${window?.to}, ${Object.entries(byMp).map(([k, v]) => `${k}=${v}`).join(' ')}`);
-      out.feeds.push({ key: feed.key, status: 'ok', rows: written, window, byMp, skipped });
+      out.feeds.push({ key: feed.key, status: 'ok', rows: written, window, byMp, skipped, fx });
     } catch (e) {
       console.error(`[${tag}] failed: ${e.message}`);
       out.feeds.push({ key: feed.key, status: 'error', error: e.message });
@@ -255,4 +413,4 @@ async function syncSellerboardFeeds({ supabase, loadBrands, label = 'Sellerboard
   return out;
 }
 
-module.exports = { FEEDS, parseCsv, parseFeed, parseSbDate, normHeader, fetchFeed, syncSellerboardFeeds, FEE_COLS, REFUND_COST_COLS, PRODUCT_COST_COLS };
+module.exports = { FEEDS, MONEY_COLS, IMPLIED, parseCsv, parseFeed, parseSbDate, normHeader, fetchFeed, convertRows, impliedRates, loadAmazonMpDay, syncSellerboardFeeds, FEE_COLS, REFUND_COST_COLS, PRODUCT_COST_COLS };

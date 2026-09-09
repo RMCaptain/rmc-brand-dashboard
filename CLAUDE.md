@@ -53,10 +53,13 @@ dashboard and get reconciled against it nightly (`sync/sellerboard.js` →
 `sellerboard_daily`, `sync/reconcileSellerboard.js` → `metric_reconciliation`).
 Feeds are Sellerboard **Settings → Automation** Product Dashboard CSV links,
 one per Sellerboard account, env-only (`SELLERBOARD_FEED_RMC|WMCA|INTL`).
-Tolerance: money max($25, 1%), counts max(2, 1%). Sellerboard days are UTC,
-ours PST — daily rows carry that noise; the `account_7d` scope is the alert
-signal. Traffic (sessions/buy box) stays Amazon-first; Sellerboard sessions
-lag a day.
+Tolerance: money max($25, 1%), counts max(2, 1%); fees and refunds 10%
+(Sellerboard books them to the order day, Amazon posts a day or two later).
+The `account_7d` scope is the alert signal. Feeds arrive in the Sellerboard
+**account** currency (RMC = USD, even for Amazon.ca) and are converted to
+each marketplace's native currency at ingest (`sync/fxRates.js`, `fx_rates`
+table). Feed days are the marketplace's local (PST) day, not UTC. Traffic
+(sessions/buy box) stays Amazon-first and is not reconciled.
 
 ## Cron Schedule (VPS)
 - 6am, 9am, 12pm UTC — full SP-API sync

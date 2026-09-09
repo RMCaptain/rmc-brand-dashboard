@@ -56,7 +56,8 @@
 - Range payloads carry `byMp` (native currency per marketplace, with `source` + `flags`) on skus, brand summaries and financials; legacy `revenueCad` / `revenueUsd` are the CA/US slices of the same resolution (`sync/metricsResolver.js`, Sellerboard first).
 - `/api/fx` returns `toCad` for every registry currency; `public/mp-scope.js` blends the marketplaces in scope through CAD into the display currency (the CAD/USD toggle, in every view).
 - Global marketplace picker (`localStorage.mpFilter`) + CAD/USD display-currency toggle (`localStorage.currency`) in every nav. Reconciliation results are internal only (ledger + integrity check), never rendered in the UI.
-- Sellerboard days are UTC, dashboard days are PST — daily reconciliation rows carry that noise; the trailing-7-day rows are the alert signal (`sync/reconcileSellerboard.js`).
+- Sellerboard feeds report in the Sellerboard **account** currency (Rocky Mountain Co = USD, so Amazon.ca rows arrive in USD). `sync/sellerboard.js` converts money columns to the marketplace's native currency at ingest with that day's rate — Sellerboard's own implied rate where Amazon's units for the marketplace-day agree, else `fx_rates` (recorded daily by the FX fetch), else the live rate. `feed_currency` / `fx_rate` / `fx_source` on each row record it.
+- Feed days are the marketplace's local day (Pacific for Amazon NA — the dashboard's own day; US sales match to the cent). Fees and refunds still lag: Sellerboard books them to the order day, Amazon's Finances walk to the posted day, so those daily reconciliation rows carry lag noise and get a 10% tolerance; the trailing-7-day rows are the alert signal (`sync/reconcileSellerboard.js`).
 
 ## Buy Cost vs COGS
 

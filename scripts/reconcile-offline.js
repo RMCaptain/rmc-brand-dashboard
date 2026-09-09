@@ -15,8 +15,10 @@
  * spendCad, spendUsd, feesCad, feesUsd, refundedUnits? }] } — that is the
  * get_brand_report shape. ASIN → brand comes from the reports themselves.
  *
- * Day boundary: Sellerboard days are UTC, the reports are PST days — a 7-day
- * or longer window absorbs most of it; single days will not match.
+ * Currency: the feed is in the Sellerboard ACCOUNT currency (RMC = USD), and
+ * this script does not convert it — Amazon.ca rows will sit at the CAD→USD
+ * rate below the report's CAD figures. The live ingest converts; use the
+ * ledger (get_reconciliation) once the branch is deployed.
  */
 const fs = require('fs');
 const path = require('path');
@@ -89,7 +91,8 @@ for (const file of opt.feeds) {
     sbRows++;
     if (!asinBrand[r.asin]) sbUnknownAsin++;
     const s = slot(sbAgg, r.brand_id, r.mp_id);
-    s.units += r.units; s.sales += r.sales; s.adSpend += r.ad_spend; s.fees += r.amazon_fees; s.refundAmount += r.refund_amount;
+    // Amazon-side ad spend is Sponsored Products only; fees are charges (no reimbursements).
+    s.units += r.units; s.sales += r.sales; s.adSpend += r.ad_spend_sp; s.fees += r.fee_charges; s.refundAmount += r.refund_amount;
   }
 }
 

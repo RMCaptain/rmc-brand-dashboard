@@ -15,17 +15,26 @@
 -- negatives; the raw row is kept verbatim in `raw` for anything not
 -- normalized. net_profit / gross_profit / est_payout keep their sign.
 --
--- DAY BOUNDARY: `date` is Sellerboard's own calendar day for the row (the
--- backend resolves to UTC dates), NOT the dashboard's PST day. Daily
--- comparisons therefore carry boundary noise; the reconciliation job also
--- compares trailing-7-day sums, which absorb it.
+-- DAY BOUNDARY: `date` is the marketplace's local calendar day — Pacific for
+-- Amazon NA, i.e. the dashboard's own day (verified 2026-09-09: US daily
+-- sales match Amazon's S&T report to the cent). Fees and refunds still differ
+-- by BASIS (Sellerboard books them to the order day, Amazon's Finances walk
+-- to the posted day), so those daily rows carry lag noise by design.
+--
+-- CURRENCY: the feed reports in the Sellerboard ACCOUNT's currency (RMC =
+-- USD), so the ingest converts money columns to the marketplace's native
+-- currency (`currency`) with the day's rate. `feed_currency` / `fx_rate` /
+-- `fx_source` record the conversion; `raw` keeps the account-currency values.
 
 CREATE TABLE IF NOT EXISTS sellerboard_daily (
   date              date        NOT NULL,
   mp_id             text        NOT NULL,   -- registry id (A2EUQ1WTGCTBG2 = Amazon.ca …)
   sku               text        NOT NULL,
   asin              text        NOT NULL,
-  currency          text        NOT NULL,   -- marketplace currency from the registry
+  currency          text        NOT NULL,   -- marketplace currency from the registry (money columns are in this)
+  feed_currency     text,                   -- Sellerboard account currency the feed arrived in
+  fx_rate           numeric     NOT NULL DEFAULT 1,   -- feed_currency → currency multiplier applied
+  fx_source         text,                   -- same | implied | daily | carry | live | fallback
   account           text,                   -- feed key: RMC | WMCA | INTL
   brand_id          text,                   -- stamped from the brands blob at ingest (asin → brand)
   name              text,
@@ -44,7 +53,10 @@ CREATE TABLE IF NOT EXISTS sellerboard_daily (
   ad_spend_sb       numeric     NOT NULL DEFAULT 0,
   ad_spend_sbv      numeric     NOT NULL DEFAULT 0,
   ad_spend_sd       numeric     NOT NULL DEFAULT 0,
-  amazon_fees       numeric     NOT NULL DEFAULT 0,   -- all Amazon fee columns netted (positive = cost; reimbursements reduce it)
+  amazon_fees       numeric     NOT NULL DEFAULT 0,   -- all Amazon fee columns netted (positive = cost; reimbursements reduce it) — Sellerboard's "Amazon fees"
+  fee_charges       numeric     NOT NULL DEFAULT 0,   -- charges only (positive) — comparable to daily_fees_*.fees
+  reimbursements    numeric     NOT NULL DEFAULT 0,   -- Amazon reimbursements (positive = money in); amazon_fees = fee_charges - reimbursements
+  storage_fees      numeric     NOT NULL DEFAULT 0,   -- FBA storage + long-term storage (subset of fee_charges; Sellerboard amortizes these)
   product_costs     numeric     NOT NULL DEFAULT 0,   -- COGS incl. non-Amazon / multichannel / missing-inbound (positive)
   est_payout        numeric     NOT NULL DEFAULT 0,
   gross_profit      numeric     NOT NULL DEFAULT 0,
@@ -56,6 +68,15 @@ CREATE TABLE IF NOT EXISTS sellerboard_daily (
   fetched_at        timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (date, mp_id, sku)
 );
+
+-- Columns added after the first cut (no-ops on a fresh table).
+ALTER TABLE sellerboard_daily
+  ADD COLUMN IF NOT EXISTS feed_currency  text,
+  ADD COLUMN IF NOT EXISTS fx_rate        numeric NOT NULL DEFAULT 1,
+  ADD COLUMN IF NOT EXISTS fx_source      text,
+  ADD COLUMN IF NOT EXISTS fee_charges    numeric NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS reimbursements numeric NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS storage_fees   numeric NOT NULL DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS sellerboard_daily_asin_date_idx  ON sellerboard_daily (asin, date);
 CREATE INDEX IF NOT EXISTS sellerboard_daily_brand_date_idx ON sellerboard_daily (brand_id, date);
