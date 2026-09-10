@@ -6794,13 +6794,15 @@ function scheduleDailySync() {
       .catch(err => console.warn('[PriceCache] snapshot cron error:', err.message));
   });
 
-  // Daily fees refresh: 10am UTC — re-collect trailing 4 posted-days from the
-  // Finances API (fees/refunds keep posting after order day). Sundays sweep
-  // the trailing 40 days so late-posting refunds are eventually captured.
+  // Daily fees refresh: 10am UTC — re-collect trailing 8 posted-days from the
+  // Finances API (fees/refunds keep posting after order day; the Sellerboard
+  // reconciliation showed refund rows 4–6 days old still catching up, so the
+  // window went 4 → 8 on 2026-09-10). Sundays sweep the trailing 40 days so
+  // late-posting refunds are eventually captured.
   cron.schedule('0 10 * * *', () => {
     const { syncDailyFees, trailingDates } = require('./sync/dailyFees');
     const isSunday = new Date().getUTCDay() === 0;
-    const days = trailingDates(isSunday ? 40 : 4);
+    const days = trailingDates(isSunday ? 40 : 8);
     syncDailyFees(supabase, days, { label: isSunday ? 'FeesSweep' : 'FeesRefresh' })
       .catch(err => console.warn('[DailyFees] cron error:', err.message));
   });

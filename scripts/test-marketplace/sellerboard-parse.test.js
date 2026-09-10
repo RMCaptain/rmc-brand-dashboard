@@ -79,6 +79,7 @@ assert.strictEqual(t1.fee_charges, 52.9, 'charges only: 22.5 + 30 + 0.4');
 assert.strictEqual(t1.reimbursements, 5);
 assert.strictEqual(Math.round((t1.fee_charges - t1.reimbursements) * 100) / 100, t1.amazon_fees);
 assert.strictEqual(t1.storage_fees, 0.4, 'fixture books the 0.40 as FBAStorageFee');
+assert.strictEqual(t1.order_fees, 52.5, 'commission 22.5 + FBA per-unit 30; storage excluded');
 assert.strictEqual(t1.feed_currency, 'CAD', 'no feedCurrency → assumed native');
 assert.strictEqual(t1.fx_source, 'same');
 
@@ -88,7 +89,7 @@ const { stats } = sb.convertRows(usdFeed, { rateFor });
 const c1 = usdFeed.find(r => r.sku === 'T1-CAD'), c2 = usdFeed.find(r => r.sku === 'T2-USD'), cuk = usdFeed.find(r => r.sku === 'T2-GBP');
 assert.strictEqual(c1.feed_currency, 'USD'); assert.strictEqual(c1.currency, 'CAD');
 assert.strictEqual(c1.sales, 210, 'CA row converted USD → CAD at 1.4');
-assert.strictEqual(c1.amazon_fees, 67.06); assert.strictEqual(c1.net_profit, 28.14);
+assert.strictEqual(c1.amazon_fees, 67.06); assert.strictEqual(c1.net_profit, 28.14); assert.strictEqual(c1.order_fees, 73.5);
 assert.strictEqual(c1.units, 6, 'counts untouched');
 assert.strictEqual(c1.fx_rate, 1.4); assert.strictEqual(c1.fx_source, 'daily');
 assert.strictEqual(c1.raw.SalesOrganic, '100.00', 'raw stays in feed currency');

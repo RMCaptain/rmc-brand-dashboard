@@ -12,14 +12,17 @@
  *                                     Products only, so the Sellerboard side is
  *                                     ad_spend_sp, not the SB+SD-inclusive total)
  *   amazon_fees                     ← daily_fees_asin (per ASIN), daily_fees_mp
- *                                     (account): charges minus the Storage bucket
+ *                                     (account): `fees` = referral + FBA fulfillment
+ *                                     (+ Other); storage / inbound / removal live in
+ *                                     service_fees and are NOT compared
  *   refunds / refund_amount         ← daily_fees_asin / daily_fees_mp (posted-day
  *                                     refund events — the basis Sellerboard uses;
  *                                     daily_metrics_mp keys refunds to the ORDER day)
  * Sellerboard side: sellerboard_daily, aggregated SKU → ASIN, in marketplace
  * currency (the ingest converts the account-currency feed; see sync/sellerboard.js).
- *   amazon_fees ← fee_charges - storage_fees (reimbursements are not fees on
- *   the Amazon side, and Sellerboard amortizes storage over the month).
+ *   amazon_fees ← order_fees (commission + FBA per-unit + sales-tax collection),
+ *   the same per-order basis; reimbursements, storage, inbound and removal are
+ *   excluded on both sides (verified 2026-09-10: CA -5%, US -1.4% over 7 days).
  *
  * Sessions are not reconciled: traffic is Amazon-first by design and
  * Sellerboard's sessions lag and count differently (~10% low, verified 2026-09-09).
@@ -55,8 +58,10 @@ function tolerance(metric, a, b) {
   return Math.max(MONEY_METRICS.has(metric) ? TOL.moneyAbs : TOL.countAbs, base);
 }
 
-// Amazon fee row → charges excluding the Storage bucket (see header).
-const feesExStorage = r => num(r.fees) - num(r.breakdown?.Storage);
+// Amazon fee row → per-order fees. `fees` already excludes storage / inbound /
+// removal (those are service_fees); subtracting the Storage bucket again made
+// 2026-09-07 US read -150.80 on the first live run.
+const orderFees = r => num(r.fees);
 
 // One comparison → row fields (or null when both sides are absent/zero).
 function compare(metric, amazon, sellerboard) {
@@ -116,14 +121,14 @@ function reconcileRows({ sbRows, mpRows, feeAsinRows, feeMpRows, asinBrand, yest
   for (const r of feeAsinRows) {
     if (r.date < from || r.date > yesterday || String(r.asin).startsWith('sku:')) continue;
     const b = brandOf(r.asin);
-    for (const [metric, v] of [['amazon_fees', feesExStorage(r)], ['refunds', r.refund_count], ['refund_amount', r.refund_amount]]) {
+    for (const [metric, v] of [['amazon_fees', orderFees(r)], ['refunds', r.refund_count], ['refund_amount', r.refund_amount]]) {
       bump(A, r.date, r.mp_id, 'brand', b, metric, v);
       if (r.date >= asinFrom) bump(A, r.date, r.mp_id, 'asin', r.asin, metric, v);
     }
   }
   for (const r of feeMpRows) {
     if (r.date < from || r.date > yesterday) continue;
-    for (const [metric, v] of [['amazon_fees', feesExStorage(r)], ['refunds', r.refund_count], ['refund_amount', r.refund_amount]]) {
+    for (const [metric, v] of [['amazon_fees', orderFees(r)], ['refunds', r.refund_count], ['refund_amount', r.refund_amount]]) {
       bump(A, r.date, r.mp_id, 'account', '*', metric, v);
     }
   }
@@ -132,8 +137,7 @@ function reconcileRows({ sbRows, mpRows, feeAsinRows, feeMpRows, asinBrand, yest
   for (const r of sbRows) {
     if (r.date < from || r.date > yesterday) continue;
     const b = brandOf(r.asin);
-    const fees = num(r.fee_charges) - num(r.storage_fees);
-    for (const [metric, v] of [['units', r.units], ['sales', r.sales], ['ad_spend', r.ad_spend_sp], ['refunds', r.refunds], ['refund_amount', r.refund_amount], ['amazon_fees', fees]]) {
+    for (const [metric, v] of [['units', r.units], ['sales', r.sales], ['ad_spend', r.ad_spend_sp], ['refunds', r.refunds], ['refund_amount', r.refund_amount], ['amazon_fees', r.order_fees]]) {
       bump(S, r.date, r.mp_id, 'account', '*', metric, v);
       bump(S, r.date, r.mp_id, 'brand', b, metric, v);
       if (r.date >= asinFrom) bump(S, r.date, r.mp_id, 'asin', r.asin, metric, v);
@@ -199,10 +203,10 @@ async function reconcileSellerboard({ supabase, loadBrands, days = 30, fetchAll 
   for (const b of brands || []) for (const a of (b.asins || [])) asinBrand[a] = b.id;
 
   const [sbRows, mpRows, feeAsinRows, feeMpRows] = await Promise.all([
-    fetchAll(supabase, 'sellerboard_daily', 'date,mp_id,asin,units,sales,ad_spend_sp,refunds,refund_amount,fee_charges,storage_fees', from, yesterday, ['date', 'mp_id', 'sku']),
+    fetchAll(supabase, 'sellerboard_daily', 'date,mp_id,asin,units,sales,ad_spend_sp,refunds,refund_amount,order_fees', from, yesterday, ['date', 'mp_id', 'sku']),
     fetchAll(supabase, 'daily_metrics_mp', 'date,mp_id,asin,units,revenue,ad_spend', from, yesterday, ['date', 'asin', 'mp_id']),
-    fetchAll(supabase, 'daily_fees_asin', 'date,mp_id,asin,fees,refund_amount,refund_count,breakdown', from, yesterday, ['date', 'asin', 'mp_id']),
-    fetchAll(supabase, 'daily_fees_mp', 'date,mp_id,fees,refund_amount,refund_count,breakdown', from, yesterday, ['date', 'mp_id']),
+    fetchAll(supabase, 'daily_fees_asin', 'date,mp_id,asin,fees,refund_amount,refund_count', from, yesterday, ['date', 'asin', 'mp_id']),
+    fetchAll(supabase, 'daily_fees_mp', 'date,mp_id,fees,refund_amount,refund_count', from, yesterday, ['date', 'mp_id']),
   ]);
 
   if (!sbRows.length) {

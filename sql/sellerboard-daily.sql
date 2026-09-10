@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS sellerboard_daily (
   fee_charges       numeric     NOT NULL DEFAULT 0,   -- charges only (positive) — comparable to daily_fees_*.fees
   reimbursements    numeric     NOT NULL DEFAULT 0,   -- Amazon reimbursements (positive = money in); amazon_fees = fee_charges - reimbursements
   storage_fees      numeric     NOT NULL DEFAULT 0,   -- FBA storage + long-term storage (subset of fee_charges; Sellerboard amortizes these)
+  order_fees        numeric     NOT NULL DEFAULT 0,   -- commission + FBA per-unit + sales-tax collection: same basis as daily_fees_*.fees
   product_costs     numeric     NOT NULL DEFAULT 0,   -- COGS incl. non-Amazon / multichannel / missing-inbound (positive)
   est_payout        numeric     NOT NULL DEFAULT 0,
   gross_profit      numeric     NOT NULL DEFAULT 0,
@@ -76,7 +77,8 @@ ALTER TABLE sellerboard_daily
   ADD COLUMN IF NOT EXISTS fx_source      text,
   ADD COLUMN IF NOT EXISTS fee_charges    numeric NOT NULL DEFAULT 0,
   ADD COLUMN IF NOT EXISTS reimbursements numeric NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS storage_fees   numeric NOT NULL DEFAULT 0;
+  ADD COLUMN IF NOT EXISTS storage_fees   numeric NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS order_fees     numeric NOT NULL DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS sellerboard_daily_asin_date_idx  ON sellerboard_daily (asin, date);
 CREATE INDEX IF NOT EXISTS sellerboard_daily_brand_date_idx ON sellerboard_daily (brand_id, date);

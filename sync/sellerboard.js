@@ -53,7 +53,7 @@ const FEEDS = [
 const MONEY_COLS = [
   'sales', 'sales_ppc', 'sales_sd', 'refund_amount', 'refund_costs', 'promo_value',
   'ad_spend', 'ad_spend_sp', 'ad_spend_sb', 'ad_spend_sbv', 'ad_spend_sd',
-  'amazon_fees', 'fee_charges', 'reimbursements', 'storage_fees', 'product_costs',
+  'amazon_fees', 'fee_charges', 'reimbursements', 'storage_fees', 'order_fees', 'product_costs',
   'est_payout', 'gross_profit', 'net_profit',
 ];
 // Implied-rate guard: accept Amazon÷Sellerboard sales as the day's rate only
@@ -204,6 +204,10 @@ function parseFeed(text, { account = null, asinBrand = {}, feedCurrency = null }
       fee_charges:   money(-FEE_COLS.reduce((s, c) => s + Math.min(0, num(get(r, c))), 0)),
       reimbursements: money(FEE_COLS.reduce((s, c) => s + Math.max(0, num(get(r, c))), 0)),
       storage_fees:  money(-(num(get(r, 'fbastoragefee')) + num(get(r, 'fbalongtermstoragefee')))),
+      // Per-order fees only (referral + FBA per-unit + sales-tax collection):
+      // the basis of daily_fees_*.fees, whose storage / inbound / removal sit
+      // in service_fees instead. This is what the reconciliation compares.
+      order_fees:    money(-(num(get(r, 'commission')) + num(get(r, 'fbaperunitfulfillmentfee')) + num(get(r, 'salestaxcollectionfee')))),
       product_costs: money(-sum(r, PRODUCT_COST_COLS)),
       est_payout:    money(num(get(r, 'estimatedpayout'))),
       gross_profit:  money(num(get(r, 'grossprofit'))),

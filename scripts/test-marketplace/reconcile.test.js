@@ -33,16 +33,16 @@ const d = n => pstSubtractDays(y, n);
 const asinBrand = { A1: 'acure', A2: 'acure', Z1: 'zellies' };
 const sbRows = [
   // yesterday CA: acure A1 (two SKUs) + zellies Z1. ad_spend_sp is what the
-  // Amazon side (SP-only) is compared against; fee_charges - storage_fees is the fee basis.
-  { date: y, mp_id: CA, asin: 'A1', units: 10, sales: 200, ad_spend_sp: 10, refunds: 1, refund_amount: 20, fee_charges: 62, storage_fees: 2 },
-  { date: y, mp_id: CA, asin: 'A1', units: 5,  sales: 100, ad_spend_sp: 0,  refunds: 0, refund_amount: 0,  fee_charges: 30, storage_fees: 0 },
-  { date: y, mp_id: CA, asin: 'Z1', units: 20, sales: 600, ad_spend_sp: 40, refunds: 0, refund_amount: 0,  fee_charges: 180, storage_fees: 0 },
+  // Amazon side (SP-only) is compared against; order_fees is the fee basis.
+  { date: y, mp_id: CA, asin: 'A1', units: 10, sales: 200, ad_spend_sp: 10, refunds: 1, refund_amount: 20, order_fees: 60 },
+  { date: y, mp_id: CA, asin: 'A1', units: 5,  sales: 100, ad_spend_sp: 0,  refunds: 0, refund_amount: 0,  order_fees: 30 },
+  { date: y, mp_id: CA, asin: 'Z1', units: 20, sales: 600, ad_spend_sp: 40, refunds: 0, refund_amount: 0,  order_fees: 180 },
   // yesterday US: only Sellerboard has it
-  { date: y, mp_id: US, asin: 'A2', units: 3, sales: 90, ad_spend_sp: 0, refunds: 0, refund_amount: 0, fee_charges: 27, storage_fees: 0 },
+  { date: y, mp_id: US, asin: 'A2', units: 3, sales: 90, ad_spend_sp: 0, refunds: 0, refund_amount: 0, order_fees: 27 },
   // 8 days ago: outside the ASIN window, inside the 30d window
-  { date: d(8), mp_id: CA, asin: 'A1', units: 10, sales: 200, ad_spend_sp: 0, refunds: 0, refund_amount: 0, fee_charges: 60, storage_fees: 0 },
+  { date: d(8), mp_id: CA, asin: 'A1', units: 10, sales: 200, ad_spend_sp: 0, refunds: 0, refund_amount: 0, order_fees: 60 },
   // 40 days ago: outside everything
-  { date: d(40), mp_id: CA, asin: 'A1', units: 999, sales: 99999, ad_spend_sp: 0, refunds: 0, refund_amount: 0, fee_charges: 0, storage_fees: 0 },
+  { date: d(40), mp_id: CA, asin: 'A1', units: 999, sales: 99999, ad_spend_sp: 0, refunds: 0, refund_amount: 0, order_fees: 0 },
 ];
 const mpRows = [
   { date: y, mp_id: CA, asin: 'A1', units: 15, revenue: 300, ad_spend: 10 },   // exact match
@@ -50,11 +50,11 @@ const mpRows = [
   { date: d(8), mp_id: CA, asin: 'A1', units: 10, revenue: 210, ad_spend: 0 }, // sales +10 within $25
 ];
 const feeAsinRows = [
-  { date: y, mp_id: CA, asin: 'A1', fees: 95, refund_amount: 20, refund_count: 1, breakdown: { Storage: 5, 'Referral Fee': 90 } }, // 90 vs SB 90
-  { date: y, mp_id: CA, asin: 'Z1', fees: 150, refund_amount: 0, refund_count: 0, breakdown: {} },   // 150 vs 180 → -30 → flag (tol max(25, 18))
-  { date: y, mp_id: CA, asin: 'sku:ORPHAN', fees: 5, refund_amount: 0, refund_count: 0 },             // ignored
+  { date: y, mp_id: CA, asin: 'A1', fees: 90, refund_amount: 20, refund_count: 1 },   // 90 vs SB 90 (fees = referral + FBA; storage is service_fees, never here)
+  { date: y, mp_id: CA, asin: 'Z1', fees: 150, refund_amount: 0, refund_count: 0 },  // 150 vs 180 → -30 → flag (tol max(25, 18))
+  { date: y, mp_id: CA, asin: 'sku:ORPHAN', fees: 5, refund_amount: 0, refund_count: 0 }, // ignored
 ];
-const feeMpRows = [{ date: y, mp_id: CA, fees: 250, refund_amount: 20, refund_count: 1, breakdown: { Storage: 5 } }]; // 245 vs SB 270 → -25 → match at boundary (tol 27)
+const feeMpRows = [{ date: y, mp_id: CA, fees: 245, refund_amount: 20, refund_count: 1 }]; // 245 vs SB 270 → -25 → match at boundary (tol 27)
 
 const { rows } = R.reconcileRows({ sbRows, mpRows, feeAsinRows, feeMpRows, asinBrand, yesterday: y, days: 30 });
 const find = (scope, scopeId, mp, metric, date = y) => rows.find(r => r.scope === scope && r.scope_id === scopeId && r.mp_id === mp && r.metric === metric && r.date === date);
@@ -78,8 +78,8 @@ assert.strictEqual(find('account', '*', US, 'units').status, 'sb_only');
 assert.strictEqual(rows.find(r => r.metric === 'sessions'), undefined);
 // brand rows
 assert.strictEqual(find('brand', 'acure', CA, 'sales').status, 'match');
-assert.strictEqual(find('brand', 'acure', CA, 'amazon_fees').amazon_value, 90);   // 95 - Storage 5
-assert.strictEqual(find('brand', 'acure', CA, 'amazon_fees').sellerboard_value, 90); // 62 - 2 + 30
+assert.strictEqual(find('brand', 'acure', CA, 'amazon_fees').amazon_value, 90);
+assert.strictEqual(find('brand', 'acure', CA, 'amazon_fees').sellerboard_value, 90); // 60 + 30
 assert.strictEqual(find('brand', 'acure', CA, 'amazon_fees').status, 'match');
 assert.strictEqual(find('brand', 'acure', CA, 'refund_amount').status, 'match');  // 20 vs 20 from daily_fees_asin
 assert.strictEqual(find('brand', 'zellies', CA, 'units').status, 'flag');
