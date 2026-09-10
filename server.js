@@ -304,7 +304,7 @@ async function writeDailyMetrics(yesterdayBrands, date) {
 // FX: USD-base quote → every currency the registry knows, expressed as
 // "1 unit of X in CAD" (`toCad`) so the frontend blends any marketplace mix
 // into the display currency. usdToCad/cadToUsd kept for existing callers.
-const FX_FALLBACK = { usdToCad: 1.38, cadToUsd: 0.724, toCad: { CAD: 1, USD: 1.38, GBP: 1.75 } };
+const FX_FALLBACK = { usdToCad: 1.38, cadToUsd: 0.724, toCad: { CAD: 1, USD: 1.38, GBP: 1.75, EUR: 1.62, SEK: 0.147, PLN: 0.38, AED: 0.376 } };
 let fxRecordedFor = null; // PST day whose rate is already in fx_rates (one write per day)
 async function fetchFxRate() {
   const cached = loadFx();

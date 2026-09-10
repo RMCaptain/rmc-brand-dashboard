@@ -38,6 +38,27 @@ assert.strictEqual(MP.codeForAsin({}, 'A1'), 'CA');
 assert.strictEqual(MP.storefrontHost('CA'), 'www.amazon.ca');
 assert.strictEqual(MP.storefrontHost('US'), 'www.amazon.com');
 assert.strictEqual(MP.storefrontHost('UK'), 'www.amazon.co.uk');
+
+// RMCo Intl marketplaces (Sellerboard-only): every name the Intl account
+// carries must resolve, in the account's exact spelling — a miss means the
+// ingest silently drops that marketplace's money.
+for (const [name, code, cur] of [
+  ['Amazon.fr', 'FR', 'EUR'], ['Amazon.nl', 'NL', 'EUR'], ['Amazon.pl', 'PL', 'PLN'],
+  ['Amazon.co.uk', 'UK', 'GBP'], ['Amazon.de', 'DE', 'EUR'], ['Amazon.es', 'ES', 'EUR'],
+  ['Amazon.ie', 'IE', 'EUR'], ['Amazon.se', 'SE', 'SEK'], ['Amazon.ae', 'AE', 'AED'],
+  ['Amazon.com.be', 'BE', 'EUR'], ['Amazon.it', 'IT', 'EUR'],
+]) {
+  const m = MP.bySellerboardName(name);
+  assert.ok(m, `bySellerboardName miss: ${name}`);
+  assert.strictEqual(m.code, code);
+  assert.strictEqual(m.currency, cur);
+  assert.strictEqual(MP.isWideTableMp(m.id), false, `${code} must never hit the CAD/USD wide table`);
+}
+// Walmart label tolerance — exact Sellerboard spelling unknown until first rows.
+for (const name of ['Walmart.ca', 'Walmart Canada', 'walmart']) {
+  assert.strictEqual(MP.bySellerboardName(name)?.code, 'WMCA', name);
+}
+assert.strictEqual(MP.bySellerboardName('Amazon.com.mx'), null); // MX not carried — must stay a loud skip
 assert.strictEqual(MP.storefrontHost('nope'), null);
 
 // Health grouping — replicate enrichListingHealth's grouping block exactly.
