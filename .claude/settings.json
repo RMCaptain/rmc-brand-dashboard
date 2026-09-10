@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "defaultMode": "bypassPermissions",
+    "allow": [
+      "Bash",
+      "Read",
+      "Edit",
+      "Write",
+      "Glob",
+      "Grep",
+      "WebFetch",
+      "WebSearch",
+      "mcp__Notion",
+      "mcp__Slack",
+      "mcp__Gmail",
+      "mcp__Google_Drive",
+      "mcp__Google_Calendar",
+      "mcp__Sellerboard",
+      "mcp__RMC_App",
+      "mcp__github",
+      "mcp__Claude_Code_Remote"
+    ]
+  },
+  "skipDangerousModePermissionPrompt": true
+}
