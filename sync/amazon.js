@@ -1422,7 +1422,16 @@ async function syncBrandMetrics(brands) {
   }
 
   console.log('[Sync] Complete.');
-  return { presets: result, updatedBrands: brands };
+  // Per-marketplace S&T for yesterday, un-blended — the traffic mp writer's
+  // input (server.js writes it to daily_metrics_mp next to the wide traffic
+  // write). Sibling of presets so it never lands in preset_metrics.
+  const stTrafficByMp = {};
+  for (const mpId of marketplaceIds) {
+    const d = stParsedMap[`yesterday_${mpId}`];
+    if (d) stTrafficByMp[mpId] = d;
+  }
+
+  return { presets: result, updatedBrands: brands, stTrafficByMp };
 }
 
 // ─── UPC Scraper ─────────────────────────────────────────────────────────────

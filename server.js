@@ -6493,7 +6493,7 @@ async function runFullSync(tag = 'Sync') {
     }
 
     // Phase 2: SP-API sync
-    const { presets, updatedBrands } = await syncBrandMetrics(data.brands);
+    const { presets, updatedBrands, stTrafficByMp } = await syncBrandMetrics(data.brands);
     await saveSyncResults(updatedBrands);
 
     // Phase 3: collect ads results and merge
@@ -6652,6 +6652,26 @@ async function runFullSync(tag = 'Sync') {
       if (yesterdayPreset?.brands) {
         const dateStr = pstSubtractDays(pstDateStr(), 1);
         await writeDailyMetrics(yesterdayPreset.brands, dateStr);
+
+        // Phase 2b step 1 — mirror yesterday's traffic per marketplace into
+        // daily_metrics_mp (forward-only; wide history is blended CA+US and
+        // cannot be split). Zero pass covers exactly the marketplaces whose
+        // S&T reports came back, so a failed report never wipes a good day.
+        try {
+          const { trafficRows, replaceDay } = require('./sync/metricsMp');
+          const asinBrand = {};
+          for (const [brandId, bm] of Object.entries(yesterdayPreset.brands)) {
+            for (const sku of (bm.skus || [])) asinBrand[sku.asin] = brandId;
+          }
+          const mpIds = Object.keys(stTrafficByMp || {});
+          if (mpIds.length) {
+            const rows = trafficRows(dateStr, stTrafficByMp, asinBrand);
+            const n = await replaceDay(supabase, dateStr, 'traffic', rows, `${tag}-TrafficMp`, mpIds);
+            console.log(`[${tag}] daily_metrics_mp traffic: ${n} rows across ${mpIds.length} marketplaces for ${dateStr}`);
+          }
+        } catch (mpErr) {
+          console.warn(`[${tag}] daily_metrics_mp traffic write failed (non-fatal):`, mpErr.message);
+        }
       }
     } catch (dmErr) {
       console.warn(`[${tag}] daily_metrics write failed (non-fatal):`, dmErr.message);

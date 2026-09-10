@@ -56,7 +56,7 @@ async function runIntegrityChecks({ supabase, loadBrands }) {
   const from30 = pstSubtractDays(yesterday, 29);
 
   const wide = await fetchAll(supabase, 'daily_metrics',
-    'date,asin,brand_id,units,units_ca,units_us,revenue_cad,revenue_usd,spend_cad,spend_usd,refund_amount_cad,refund_amount_usd,attributed_sales_cad,attributed_sales_usd',
+    'date,asin,brand_id,units,units_ca,units_us,revenue_cad,revenue_usd,spend_cad,spend_usd,refund_amount_cad,refund_amount_usd,attributed_sales_cad,attributed_sales_usd,sessions',
     from30, yesterday);
 
   // freshness — yesterday must have real revenue
@@ -80,7 +80,7 @@ async function runIntegrityChecks({ supabase, loadBrands }) {
 
   // mp_mirror — wide vs long sums by currency over the 30-day window
   const mp = await fetchAll(supabase, 'daily_metrics_mp',
-    'date,currency,units,revenue,ad_spend,ad_attributed_sales,refund_amount', from30, yesterday, ['asin', 'mp_id']);
+    'date,mp_id,currency,units,revenue,ad_spend,ad_attributed_sales,refund_amount,sessions', from30, yesterday, ['asin', 'mp_id']);
   const wideSum = { CAD: { units: 0, revenue: 0, ad_spend: 0, ad_attributed_sales: 0, refund_amount: 0 },
                     USD: { units: 0, revenue: 0, ad_spend: 0, ad_attributed_sales: 0, refund_amount: 0 } };
   for (const r of wide) {
@@ -107,6 +107,28 @@ async function runIntegrityChecks({ supabase, loadBrands }) {
         findings.push({ check: 'mp_mirror', level: 'fail',
           detail: `${cur} ${metric} mismatch over last 30d: wide ${r2(w)} vs per-marketplace ${r2(m)} — a sync path isn't double-writing.` });
       }
+    }
+  }
+
+  // mp_traffic — per-day session sums agree between the wide table and the
+  // mp mirror, on days the mirror has traffic (forward-only from 2026-09-10;
+  // untracked history is silent, not a finding). Wide sessions only ever
+  // cover the wide-table marketplaces (CA/US), so UK/Walmart mp sessions are
+  // excluded from the comparison — they have no wide counterpart by design.
+  // Warn, not fail, while the writer is new; promote after a clean week.
+  {
+    const { isWideTableMp } = require('./marketplaces');
+    const wideSess = {}, mpSess = {};
+    for (const r of wide) wideSess[r.date] = (wideSess[r.date] || 0) + num(r.sessions);
+    for (const r of mp) {
+      if (r.sessions == null || !isWideTableMp(r.mp_id)) continue;
+      mpSess[r.date] = (mpSess[r.date] || 0) + num(r.sessions);
+    }
+    const bad = Object.entries(mpSess).filter(([d, v]) => Math.abs(v - (wideSess[d] || 0)) > 0);
+    if (bad.length) {
+      const [d, v] = bad[0];
+      findings.push({ check: 'mp_traffic', level: 'warn',
+        detail: `${bad.length} day(s) where mp-mirror sessions disagree with the wide table (first: ${d} — mp ${v} vs wide ${wideSess[d] || 0}). Traffic writer drift.` });
     }
   }
 
