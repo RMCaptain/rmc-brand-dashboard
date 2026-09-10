@@ -141,13 +141,28 @@ async function runIntegrityChecks({ supabase, loadBrands }) {
       detail: `${negs.length} row(s) with negative units/revenue/spend in last 30d (first: ${negs[0].asin} on ${negs[0].date}).` });
   }
 
-  // unknown — sales on ASINs no brand claims (attribution stamped at sync time)
+  // unknown — sales on ASINs no brand claims (attribution stamped at sync
+  // time). Covers BOTH sides: the wide Amazon table and sellerboard_daily —
+  // an ASIN Sellerboard sells that no app brand claims is exactly how
+  // Zellies under-read its August by 23 units / ~$2k (B0GLZ1448F,
+  // found 2026-09-10). Same self-clearing remap workflow.
+  const sbUnknown = await fetchAll(supabase, 'sellerboard_daily',
+    'date,asin,brand_id,units,sales', from30, yesterday, ['asin', 'mp_id']);
   const unknownByAsin = {};
+  for (const r of sbUnknown) {
+    if (r.brand_id !== 'unknown-brand') continue;
+    const rev = num(r.sales), u = num(r.units);
+    if (rev <= 0 && u <= 0) continue;
+    const acc = unknownByAsin[r.asin] || (unknownByAsin[r.asin] = { rev: 0, units: 0 });
+    acc.rev += rev; acc.units += u;
+  }
   for (const r of wide) {
     if (r.brand_id !== 'unknown-brand') continue;
     const rev = num(r.revenue_cad) + num(r.revenue_usd);
     const u = num(r.units);
     if (rev <= 0 && u <= 0) continue;
+    // Skip double-count where the SB side already booked this ASIN's day.
+    if (unknownByAsin[r.asin]) continue;
     const acc = unknownByAsin[r.asin] || (unknownByAsin[r.asin] = { rev: 0, units: 0 });
     acc.rev += rev; acc.units += u;
   }
