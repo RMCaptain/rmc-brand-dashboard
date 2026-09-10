@@ -81,7 +81,7 @@ const near = (a, b, what) => assert.ok(Math.abs(a - b) <= 0.01, `${what}: ${a} v
     assert.deepStrictEqual(z1.marketplaces.sort(), ['CA', 'UK', 'US']);
     const uk = rowsUnder('UK');
     const z1uk = uk.find(r => r.asin === 'Z1');
-    near(z1uk.revenue, 40 * gbp, 'products UK Z1 in CAD'); assert.strictEqual(z1uk.units, 4); near(z1uk.fees, 12 * gbp, 'UK fees'); near(z1uk.netProfit, (40 - 8 - 12 - 1) * gbp, 'UK net');
+    near(z1uk.revenue, 40 * gbp, 'products UK Z1 in CAD'); assert.strictEqual(z1uk.units, 4); near(z1uk.fees, 12 * gbp, 'UK fees'); near(z1uk.netProfit, (40 - 10 - 12 - 1) * gbp, 'UK net (SB actual COGS 10 beats manual 4u x 2)');
     assert.strictEqual(uk.find(r => r.asin === 'A1').revenue, 0);
     const us = rowsUnder('US');
     near(us.find(r => r.asin === 'Z1').revenue, 120 * usd, 'products US Z1 in CAD'); assert.strictEqual(us.find(r => r.asin === 'Z1').source, 'amazon');

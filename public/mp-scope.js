@@ -118,13 +118,25 @@
   const sellerCentralFor = code => byCode(code)?.sellerCentral || (code === 'US' ? 'https://sellercentral.amazon.com' : code === 'UK' ? 'https://sellercentral.amazon.co.uk' : 'https://sellercentral.amazon.ca');
   const labelFor = code => byCode(code)?.label || ({ CA: 'Amazon.ca', US: 'Amazon.com', UK: 'Amazon.co.uk', WMCA: 'Walmart.ca' })[code] || code;
 
-  // COGS per unit for an ASIN on a marketplace code: per-marketplace buy cost
-  // wins; the legacy single cost applies to the brand's home marketplace.
+  // COGS per unit for an ASIN on a marketplace code. Sellerboard-derived
+  // cost (brand.cogsSb, refreshed after every feed ingest, native currency)
+  // is the source of truth; manual cogsPerMarketplace is the fallback where
+  // Sellerboard has no data; the legacy single cost applies to the brand's
+  // home marketplace last.
   function cogsFor(brand, asin, code) {
+    const sb = brand?.cogsSb?.[asin]?.[code]?.unit;
+    if (sb != null) return sb;
     const per = brand?.cogsPerMarketplace?.[asin]?.[code];
     if (per != null) return per;
     const home = (brand?.marketplace || 'CA').split(',')[0].trim();
     return code === home ? (brand?.cogs?.[asin] ?? 0) : 0;
+  }
+  // 'sellerboard' | 'manual' | 'legacy' | null — where cogsFor's value came from.
+  function cogsSourceFor(brand, asin, code) {
+    if (brand?.cogsSb?.[asin]?.[code]?.unit != null) return 'sellerboard';
+    if (brand?.cogsPerMarketplace?.[asin]?.[code] != null) return 'manual';
+    const home = (brand?.marketplace || 'CA').split(',')[0].trim();
+    return code === home && brand?.cogs?.[asin] != null ? 'legacy' : null;
   }
   // Marketplaces with activity on a sku's byMp, as codes.
   function activeCodes(byMp) {
@@ -203,7 +215,7 @@
     filter: () => state.filter, scoped, byCode, displayCurrency, nativeCurrencyOf, curSym, locale,
     toCadRate, toDisplay, legacyNum, fmt, fmtIn,
     scopedMps, sumMp, scopedFlags, sourceOf, flagBadge, sourceBadge, mpBadge,
-    storefrontFor, sellerCentralFor, labelFor, cogsFor, activeCodes,
+    storefrontFor, sellerCentralFor, labelFor, cogsFor, cogsSourceFor, activeCodes,
     CUR_SYM, CUR_LOCALE, MP_BADGE,
   };
 })();
