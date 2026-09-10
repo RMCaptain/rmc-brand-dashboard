@@ -82,5 +82,24 @@ const D1 = d(2), D2 = d(1), D3 = d(0);
   const fx = await fetch(`${BASE}/api/fx`).then(r => r.json());
   assert.ok(fx.toCad && fx.toCad.CAD === 1 && fx.toCad.USD > 0 && fx.toCad.GBP > 0, JSON.stringify(fx));
 
+  // /api/brand-ads — SP (7d-first from daily_metrics) + SB/SD (daily_brand_ads)
+  // + combined TACOS per the master-sheet convention.
+  const ads = await fetch(`${BASE}/api/brand-ads/acure?from=${D1}&to=${D3}`).then(r => r.json());
+  assert.strictEqual(ads.adAttribution, '7d');
+  assert.strictEqual(ads.sp.spendCad, 12);
+  assert.strictEqual(ads.sp.salesCad, 32);            // d1 7d=18, d2 14d fallback=14
+  assert.strictEqual(ads.sb.spendCad, 6);
+  assert.strictEqual(ads.sb.salesCad, 24);
+  assert.strictEqual(ads.sb.daysWithData, 1);
+  assert.strictEqual(ads.sd.spendCad, 2);
+  assert.strictEqual(ads.total.spendCad, 20);         // 12 SP + 6 SB + 2 SD
+  assert.strictEqual(ads.total.salesCad, 64);         // 32 + 24 + 8
+  assert.strictEqual(ads.total.acos, 31.25);          // 20 / 64
+  assert.strictEqual(ads.revenue.revCad, 260);        // wide daily_metrics revenue (Amazon side)
+  assert.strictEqual(ads.tacos.ca, 7.69);             // 20 / 260
+  assert.strictEqual(ads.tacos.us, null);             // no USD revenue for acure
+  const notFound = await fetch(`${BASE}/api/brand-ads/nope`);
+  assert.strictEqual(notFound.status, 404);
+
   console.log('all /api/metrics checks passed');
 })().catch(e => { console.error(e); process.exit(1); });

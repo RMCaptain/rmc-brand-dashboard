@@ -26,6 +26,10 @@ const T = {
     { date: D3, mp_id: CA, asin: 'Z1', sku: 'Z1-SKU', units: 3,  sales: 30,  ad_spend: 0, refunds: 0, refund_amount: 0, amazon_fees: 9,  net_profit: 12, promo_value: 0, product_costs: 6, sessions: null },
     { date: D3, mp_id: UK, asin: 'Z1', sku: 'Z1-UK',  units: 4,  sales: 40,  ad_spend: 1, refunds: 0, refund_amount: 0, amazon_fees: 12, net_profit: 15, promo_value: 0, product_costs: 10, sessions: null },
   ],
+  daily_brand_ads: [
+    { date: D2, brand_id: 'acure', ad_product: 'SB', spend_cad: 6, spend_usd: 0, sales_cad: 24, sales_usd: 0, clicks: 10, impressions: 500, orders: 2 },
+    { date: D3, brand_id: 'acure', ad_product: 'SD', spend_cad: 2, spend_usd: 0, sales_cad: 8,  sales_usd: 0, clicks: 4,  impressions: 300, orders: 1 },
+  ],
   daily_fees_asin: [
     { date: D1, asin: 'A1', mp_id: CA, currency: 'CAD', fees: 25, refund_amount: 10, refund_fees: 1 },
     { date: D2, asin: 'A1', mp_id: CA, currency: 'CAD', fees: 21, refund_amount: 0,  refund_fees: 0 },

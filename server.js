@@ -5442,6 +5442,115 @@ async function buildBrandReportDataset(brandId, query = {}) {
 // Live dataset — always fresh from daily_metrics. Deliberately NOT cached:
 // re-querying is cheap and it means data corrections propagate to every
 // historical view. Saved reports are the frozen counterpart (see below).
+// All-ad-types rollup for one brand and period: SP (ASIN-level, from
+// daily_metrics, 7d attribution) + SB/SD (campaign-level, from
+// daily_brand_ads — can't be ASIN-keyed, see the migration comment) +
+// combined totals and TACOS per marketplace, mirroring the master sheet's
+// "ALL AD TYPES + TACOS" block (total ad spend ÷ total sales revenue).
+// Built for the PPC skills via the MCP get_brand_ads tool.
+app.get('/api/brand-ads/:brandId', async (req, res) => {
+  try {
+    const { brandId } = req.params;
+    const { brands } = await loadBrands();
+    if (!brands.find(b => b.id === brandId)) {
+      return res.status(404).json({ error: `Brand '${brandId}' not found` });
+    }
+    const to   = req.query.to   || pstDateStr();
+    const from = req.query.from || pstSubtractDays(to, 29);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) {
+      return res.status(400).json({ error: 'from/to must be YYYY-MM-DD with from <= to' });
+    }
+
+    const zero = () => ({ spendCad: 0, spendUsd: 0, salesCad: 0, salesUsd: 0, clicks: 0, impressions: 0, orders: 0 });
+    const r2 = v => Math.round(v * 100) / 100;
+
+    // SP + revenue from daily_metrics (paginated — same shred guard rationale
+    // as masterSheets: a 30d window on a big brand can exceed one page).
+    const sp = zero();
+    let revCad = 0, revUsd = 0;
+    for (let off = 0; ; off += 1000) {
+      const { data, error } = await supabase.from('daily_metrics')
+        .select('spend_cad,spend_usd,attributed_sales_cad,attributed_sales_usd,attributed_sales_7d_cad,attributed_sales_7d_usd,ad_clicks,ad_impressions,ad_orders,ad_orders_7d,revenue_cad,revenue_usd')
+        .eq('brand_id', brandId).gte('date', from).lte('date', to)
+        .order('date').order('asin').range(off, off + 999);
+      if (error) throw new Error(error.message);
+      for (const r of (data || [])) {
+        sp.spendCad    += Number(r.spend_cad || 0);
+        sp.spendUsd    += Number(r.spend_usd || 0);
+        sp.salesCad    += Number(r.attributed_sales_7d_cad ?? r.attributed_sales_cad ?? 0);
+        sp.salesUsd    += Number(r.attributed_sales_7d_usd ?? r.attributed_sales_usd ?? 0);
+        sp.clicks      += Number(r.ad_clicks || 0);
+        sp.impressions += Number(r.ad_impressions || 0);
+        sp.orders      += Number(r.ad_orders_7d ?? r.ad_orders ?? 0);
+        revCad         += Number(r.revenue_cad || 0);
+        revUsd         += Number(r.revenue_usd || 0);
+      }
+      if (!data || data.length < 1000) break;
+    }
+
+    // SB/SD from daily_brand_ads (small table — brand+range fits one page).
+    const byProduct = { SB: zero(), SD: zero() };
+    const coverage = { SB: 0, SD: 0 };
+    {
+      const { data, error } = await supabase.from('daily_brand_ads')
+        .select('date,ad_product,spend_cad,spend_usd,sales_cad,sales_usd,clicks,impressions,orders')
+        .eq('brand_id', brandId).gte('date', from).lte('date', to);
+      if (error) throw new Error(error.message);
+      for (const r of (data || [])) {
+        const e = byProduct[r.ad_product];
+        if (!e) continue;
+        e.spendCad += Number(r.spend_cad || 0); e.spendUsd += Number(r.spend_usd || 0);
+        e.salesCad += Number(r.sales_cad || 0); e.salesUsd += Number(r.sales_usd || 0);
+        e.clicks += Number(r.clicks || 0); e.impressions += Number(r.impressions || 0);
+        e.orders += Number(r.orders || 0);
+        coverage[r.ad_product]++;
+      }
+    }
+
+    const finish = t => {
+      const spend = t.spendCad + t.spendUsd, sales = t.salesCad + t.salesUsd;
+      return {
+        spendCad: r2(t.spendCad), spendUsd: r2(t.spendUsd),
+        salesCad: r2(t.salesCad), salesUsd: r2(t.salesUsd),
+        clicks: t.clicks, impressions: t.impressions, orders: t.orders,
+        acos: sales > 0 ? Math.round(spend / sales * 10000) / 100 : null,
+      };
+    };
+    const totalSpendCad = sp.spendCad + byProduct.SB.spendCad + byProduct.SD.spendCad;
+    const totalSpendUsd = sp.spendUsd + byProduct.SB.spendUsd + byProduct.SD.spendUsd;
+    const totalSalesCad = sp.salesCad + byProduct.SB.salesCad + byProduct.SD.salesCad;
+    const totalSalesUsd = sp.salesUsd + byProduct.SB.salesUsd + byProduct.SD.salesUsd;
+
+    res.json({
+      brandId, from, to,
+      // SP columns are 7d-first with pre-2026-05-08 rows falling back to 14d;
+      // SB/SD are console-native attribution from campaign reports.
+      adAttribution: to < AD_ATTR_7D_SINCE ? '14d' : (from < AD_ATTR_7D_SINCE ? 'mixed' : '7d'),
+      sp: finish(sp),
+      sb: { ...finish(byProduct.SB), daysWithData: coverage.SB },
+      sd: { ...finish(byProduct.SD), daysWithData: coverage.SD },
+      total: {
+        spendCad: r2(totalSpendCad), spendUsd: r2(totalSpendUsd),
+        salesCad: r2(totalSalesCad), salesUsd: r2(totalSalesUsd),
+        acos: (totalSalesCad + totalSalesUsd) > 0
+          ? Math.round((totalSpendCad + totalSpendUsd) / (totalSalesCad + totalSalesUsd) * 10000) / 100 : null,
+      },
+      revenue: { revCad: r2(revCad), revUsd: r2(revUsd) },
+      // Master-sheet convention: TACOS = total ad spend / total sales revenue,
+      // per marketplace; blended sums both sides without FX (same as the sheet).
+      tacos: {
+        ca:      revCad > 0 ? Math.round(totalSpendCad / revCad * 10000) / 100 : null,
+        us:      revUsd > 0 ? Math.round(totalSpendUsd / revUsd * 10000) / 100 : null,
+        blended: (revCad + revUsd) > 0 ? Math.round((totalSpendCad + totalSpendUsd) / (revCad + revUsd) * 10000) / 100 : null,
+      },
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('[BrandAds] error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/brand-report-dataset/:brandId', async (req, res) => {
   try {
     const dataset = await buildBrandReportDataset(req.params.brandId, req.query);
