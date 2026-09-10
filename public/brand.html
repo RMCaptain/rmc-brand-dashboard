@@ -507,6 +507,19 @@
       }
     }
 
+    // Ad-sales attribution window for the active dataset. 7d everywhere
+    // (2026-08-13 decision); server marks payloads touching pre-2026-05-08
+    // rows as 14d/mixed. Older cached preset payloads lack the field → 7d.
+    function adAttrLabel() {
+      const d = activePreset === 'custom' ? customData
+              : activePreset === 'today'  ? todayData
+              : presetMetrics?.presets?.[activePreset];
+      const w = d?.adAttribution || '7d';
+      return w === '7d' ? '7d attribution'
+           : w === '14d' ? '14d attribution (pre-May 2026 data)'
+           : '7d attribution (14d before May 2026)';
+    }
+
     function renderBrand(brand) {
       try { _renderBrand(brand); } catch(e) {
         document.getElementById('brandName').textContent = 'Render error: ' + e.message;
@@ -575,7 +588,7 @@
         adCard.innerHTML = `
           <div class="flex items-center justify-between mb-3">
             <h3 class="text-xs font-semibold" style="color:var(--text-2)">Advertising Performance</h3>
-            <span class="text-xs" style="color:var(--text-3)">Sponsored Products · 14d attribution</span>
+            <span class="text-xs" style="color:var(--text-3)">Sponsored Products · ${adAttrLabel()}</span>
           </div>
           <div class="grid grid-cols-3 md:grid-cols-6 gap-4">
             ${stat('Ad Spend',    adSpendDisp)}

@@ -176,12 +176,19 @@ stay wide until contract. Frontend carries ~45 wide-shaped field references
 Order of work (each step verified against `sync/integrityCheck.js`
 mp_mirror + Sellerboard before the next — none of this can be validated
 without DB access):
-1. **Traffic mp writer.** Add a `traffic` group (`sessions`, `page_views`,
-   `buy_box_pct`) to `sync/metricsMp.js` and emit per-marketplace rows from
-   the S&T persist path (S&T datasets are already per marketplace —
-   `buildPresetMetrics` / `backfill.js`). Forward-only: wide `sessions` is
-   blended CA+US, so history cannot be split. Same for ad engagement once
-   `sync/ads.js` keeps per-profile clicks/impressions/orders.
+1. **Traffic mp writer. — SHIPPED 2026-09-10 (code; DB validation pending
+   first synced day).** `traffic` group in `sync/metricsMp.js`
+   (`sessions`/`page_views` zero to 0, `buy_box_pct` zeroes to NULL — 0%
+   would be a lie), `trafficRows()` registry-generic (UK lands as GBP with
+   no code change). Wired at both S&T persist paths: sync completion
+   (un-blended per-mp yesterday S&T returned by `syncBrandMetrics` as
+   `stTrafficByMp`, written next to `writeDailyMetrics`) and
+   `sync/backfill.js` day repair. `replaceDay` now takes the exact mp ids a
+   run covered, so a failed report never wipes another marketplace's day.
+   New `mp_traffic` integrity check (warn) compares per-day session sums,
+   wide vs mirror, CA/US only — promote to fail after a clean week.
+   Forward-only as scoped: wide `sessions` history is blended CA+US and
+   cannot be split. Ad engagement still pending per-profile `sync/ads.js`.
 2. **`buildBrandMetricsForRange` hybrid read.** Money/units/refunds from
    `daily_metrics_mp` grouped by `mp_id` (new `byMp: { [mp_id]: {...} }` on
    every sku + summary); traffic/inventory/engagement from the wide table

@@ -2471,14 +2471,14 @@ app.get('/api/metrics/yesterday', async (req, res) => {
       const sess = dm?.sessions     || 0;
       const sCad = dm?.spend_cad    || 0;
       const sUsd = dm?.spend_usd    || 0;
-      const aCad = dm?.attributed_sales_cad || 0;
-      const aUsd = dm?.attributed_sales_usd || 0;
+      const aCad = (dm?.attributed_sales_7d_cad ?? dm?.attributed_sales_cad) || 0;
+      const aUsd = (dm?.attributed_sales_7d_usd ?? dm?.attributed_sales_usd) || 0;
       const bb   = dm?.buy_box_pct;
 
       units += u; unitsCa += ca; unitsUs += us; revCad += rc; revUsd += ru;
       sessions += sess; spendCad += sCad; spendUsd += sUsd;
       attrSalesCad += aCad; attrSalesUsd += aUsd;
-      adClicks += dm?.ad_clicks || 0; adImpressions += dm?.ad_impressions || 0; adOrders += dm?.ad_orders || 0;
+      adClicks += dm?.ad_clicks || 0; adImpressions += dm?.ad_impressions || 0; adOrders += (dm?.ad_orders_7d ?? dm?.ad_orders) || 0;
       if (bb != null && bb > 0) buyBoxSamples.push(bb);
 
       const spendTotal = sCad + sUsd * fx.usdToCad;
@@ -3731,6 +3731,10 @@ app.post('/api/backfill', async (req, res) => {
 // (which corrects the cached preset_metrics summaries that were drifting from
 // daily_metrics). The aggregation is the canonical "what does daily_metrics say"
 // computation — anything else that needs per-brand totals should call this.
+// First date with 7d attribution data (Amazon retention limit at the
+// 2026-05 backfill). Before this, 7d columns are NULL and reads fall back 14d.
+const AD_ATTR_7D_SINCE = '2026-05-08';
+
 async function buildBrandMetricsForRange(from, to, presetKey = null) {
   const { brands } = await loadBrands();
   const pm = await loadPresetMetrics();
@@ -3800,11 +3804,11 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
       a.revenue_usd += row.revenue_usd || 0;
       a.spend_cad      += row.spend_cad             || 0;
       a.spend_usd      += row.spend_usd             || 0;
-      a.attr_sales_cad += row.attributed_sales_cad  || 0;
-      a.attr_sales_usd += row.attributed_sales_usd  || 0;
+      a.attr_sales_cad += (row.attributed_sales_7d_cad ?? row.attributed_sales_cad) || 0;
+      a.attr_sales_usd += (row.attributed_sales_7d_usd ?? row.attributed_sales_usd) || 0;
       a.ad_clicks      += row.ad_clicks             || 0;
       a.ad_impressions += row.ad_impressions        || 0;
-      a.ad_orders      += row.ad_orders             || 0;
+      a.ad_orders      += (row.ad_orders_7d ?? row.ad_orders) || 0;
       a.refunded_units     = (a.refunded_units     || 0) + (row.refunded_units    || 0);
       a.refund_amount_cad  = (a.refund_amount_cad  || 0) + (row.refund_amount_cad || 0);
       a.refund_amount_usd  = (a.refund_amount_usd  || 0) + (row.refund_amount_usd || 0);
@@ -4196,6 +4200,10 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
       marketplaces: resolved.marketplaces.map(mp => ({ id: mp, code: MPreg.codeOf(mp) || mp, currency: MPreg.currencyOf(mp), label: MPreg.byId(mp)?.label || mp })),
       sources: { sellerboard: resolved.coverage },
       flags: accountFlags,
+      // Ad-sales attribution window. 7d everywhere (decision 2026-08-13);
+      // rows before 2026-05-08 predate the 7d backfill and fall back to 14d
+      // per row, so ranges touching that boundary are 'mixed'.
+      adAttribution: to < AD_ATTR_7D_SINCE ? '14d' : (from < AD_ATTR_7D_SINCE ? 'mixed' : '7d'),
     };
 }
 
@@ -5312,7 +5320,7 @@ async function buildBrandReportDataset(brandId, query = {}) {
       const out = [];
       for (let off = 0; ; off += 1000) {
         const { data, error } = await supabase.from('daily_metrics')
-          .select('asin,date,revenue_cad,revenue_usd,units,spend_cad,spend_usd,attributed_sales_cad,attributed_sales_usd')
+          .select('asin,date,revenue_cad,revenue_usd,units,spend_cad,spend_usd,attributed_sales_cad,attributed_sales_usd,attributed_sales_7d_cad,attributed_sales_7d_usd')
           .in('asin', [...brandAsinSet]).gte('date', fromS).lte('date', toS)
           .order('date').range(off, off + 999);
         if (error) throw new Error(error.message);
@@ -5330,8 +5338,8 @@ async function buildBrandReportDataset(brandId, query = {}) {
         byDate[r.date].units      += r.units                || 0;
         byDate[r.date].spendCad   += r.spend_cad            || 0;
         byDate[r.date].spendUsd   += r.spend_usd            || 0;
-        byDate[r.date].adSalesCad += r.attributed_sales_cad || 0;
-        byDate[r.date].adSalesUsd += r.attributed_sales_usd || 0;
+        byDate[r.date].adSalesCad += (r.attributed_sales_7d_cad ?? r.attributed_sales_cad) || 0;
+        byDate[r.date].adSalesUsd += (r.attributed_sales_7d_usd ?? r.attributed_sales_usd) || 0;
       }
       // Round monetary values so the client doesn't show .000001 artifacts.
       return Object.values(byDate)
@@ -5424,6 +5432,8 @@ async function buildBrandReportDataset(brandId, query = {}) {
       } : null,
       // Lets the renderer tell "no data" apart from "zero" — see getDataCoverage.
       coverage: await getDataCoverage(),
+      // Ad-sales attribution window for this period (7d | mixed | 14d).
+      adAttribution: currAll.adAttribution,
       generatedAt: new Date().toISOString(),
     };
   }
@@ -5432,6 +5442,115 @@ async function buildBrandReportDataset(brandId, query = {}) {
 // Live dataset — always fresh from daily_metrics. Deliberately NOT cached:
 // re-querying is cheap and it means data corrections propagate to every
 // historical view. Saved reports are the frozen counterpart (see below).
+// All-ad-types rollup for one brand and period: SP (ASIN-level, from
+// daily_metrics, 7d attribution) + SB/SD (campaign-level, from
+// daily_brand_ads — can't be ASIN-keyed, see the migration comment) +
+// combined totals and TACOS per marketplace, mirroring the master sheet's
+// "ALL AD TYPES + TACOS" block (total ad spend ÷ total sales revenue).
+// Built for the PPC skills via the MCP get_brand_ads tool.
+app.get('/api/brand-ads/:brandId', async (req, res) => {
+  try {
+    const { brandId } = req.params;
+    const { brands } = await loadBrands();
+    if (!brands.find(b => b.id === brandId)) {
+      return res.status(404).json({ error: `Brand '${brandId}' not found` });
+    }
+    const to   = req.query.to   || pstDateStr();
+    const from = req.query.from || pstSubtractDays(to, 29);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) {
+      return res.status(400).json({ error: 'from/to must be YYYY-MM-DD with from <= to' });
+    }
+
+    const zero = () => ({ spendCad: 0, spendUsd: 0, salesCad: 0, salesUsd: 0, clicks: 0, impressions: 0, orders: 0 });
+    const r2 = v => Math.round(v * 100) / 100;
+
+    // SP + revenue from daily_metrics (paginated — same shred guard rationale
+    // as masterSheets: a 30d window on a big brand can exceed one page).
+    const sp = zero();
+    let revCad = 0, revUsd = 0;
+    for (let off = 0; ; off += 1000) {
+      const { data, error } = await supabase.from('daily_metrics')
+        .select('spend_cad,spend_usd,attributed_sales_cad,attributed_sales_usd,attributed_sales_7d_cad,attributed_sales_7d_usd,ad_clicks,ad_impressions,ad_orders,ad_orders_7d,revenue_cad,revenue_usd')
+        .eq('brand_id', brandId).gte('date', from).lte('date', to)
+        .order('date').order('asin').range(off, off + 999);
+      if (error) throw new Error(error.message);
+      for (const r of (data || [])) {
+        sp.spendCad    += Number(r.spend_cad || 0);
+        sp.spendUsd    += Number(r.spend_usd || 0);
+        sp.salesCad    += Number(r.attributed_sales_7d_cad ?? r.attributed_sales_cad ?? 0);
+        sp.salesUsd    += Number(r.attributed_sales_7d_usd ?? r.attributed_sales_usd ?? 0);
+        sp.clicks      += Number(r.ad_clicks || 0);
+        sp.impressions += Number(r.ad_impressions || 0);
+        sp.orders      += Number(r.ad_orders_7d ?? r.ad_orders ?? 0);
+        revCad         += Number(r.revenue_cad || 0);
+        revUsd         += Number(r.revenue_usd || 0);
+      }
+      if (!data || data.length < 1000) break;
+    }
+
+    // SB/SD from daily_brand_ads (small table — brand+range fits one page).
+    const byProduct = { SB: zero(), SD: zero() };
+    const coverage = { SB: 0, SD: 0 };
+    {
+      const { data, error } = await supabase.from('daily_brand_ads')
+        .select('date,ad_product,spend_cad,spend_usd,sales_cad,sales_usd,clicks,impressions,orders')
+        .eq('brand_id', brandId).gte('date', from).lte('date', to);
+      if (error) throw new Error(error.message);
+      for (const r of (data || [])) {
+        const e = byProduct[r.ad_product];
+        if (!e) continue;
+        e.spendCad += Number(r.spend_cad || 0); e.spendUsd += Number(r.spend_usd || 0);
+        e.salesCad += Number(r.sales_cad || 0); e.salesUsd += Number(r.sales_usd || 0);
+        e.clicks += Number(r.clicks || 0); e.impressions += Number(r.impressions || 0);
+        e.orders += Number(r.orders || 0);
+        coverage[r.ad_product]++;
+      }
+    }
+
+    const finish = t => {
+      const spend = t.spendCad + t.spendUsd, sales = t.salesCad + t.salesUsd;
+      return {
+        spendCad: r2(t.spendCad), spendUsd: r2(t.spendUsd),
+        salesCad: r2(t.salesCad), salesUsd: r2(t.salesUsd),
+        clicks: t.clicks, impressions: t.impressions, orders: t.orders,
+        acos: sales > 0 ? Math.round(spend / sales * 10000) / 100 : null,
+      };
+    };
+    const totalSpendCad = sp.spendCad + byProduct.SB.spendCad + byProduct.SD.spendCad;
+    const totalSpendUsd = sp.spendUsd + byProduct.SB.spendUsd + byProduct.SD.spendUsd;
+    const totalSalesCad = sp.salesCad + byProduct.SB.salesCad + byProduct.SD.salesCad;
+    const totalSalesUsd = sp.salesUsd + byProduct.SB.salesUsd + byProduct.SD.salesUsd;
+
+    res.json({
+      brandId, from, to,
+      // SP columns are 7d-first with pre-2026-05-08 rows falling back to 14d;
+      // SB/SD are console-native attribution from campaign reports.
+      adAttribution: to < AD_ATTR_7D_SINCE ? '14d' : (from < AD_ATTR_7D_SINCE ? 'mixed' : '7d'),
+      sp: finish(sp),
+      sb: { ...finish(byProduct.SB), daysWithData: coverage.SB },
+      sd: { ...finish(byProduct.SD), daysWithData: coverage.SD },
+      total: {
+        spendCad: r2(totalSpendCad), spendUsd: r2(totalSpendUsd),
+        salesCad: r2(totalSalesCad), salesUsd: r2(totalSalesUsd),
+        acos: (totalSalesCad + totalSalesUsd) > 0
+          ? Math.round((totalSpendCad + totalSpendUsd) / (totalSalesCad + totalSalesUsd) * 10000) / 100 : null,
+      },
+      revenue: { revCad: r2(revCad), revUsd: r2(revUsd) },
+      // Master-sheet convention: TACOS = total ad spend / total sales revenue,
+      // per marketplace; blended sums both sides without FX (same as the sheet).
+      tacos: {
+        ca:      revCad > 0 ? Math.round(totalSpendCad / revCad * 10000) / 100 : null,
+        us:      revUsd > 0 ? Math.round(totalSpendUsd / revUsd * 10000) / 100 : null,
+        blended: (revCad + revUsd) > 0 ? Math.round((totalSpendCad + totalSpendUsd) / (revCad + revUsd) * 10000) / 100 : null,
+      },
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('[BrandAds] error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/brand-report-dataset/:brandId', async (req, res) => {
   try {
     const dataset = await buildBrandReportDataset(req.params.brandId, req.query);
@@ -6374,7 +6493,7 @@ async function runFullSync(tag = 'Sync') {
     }
 
     // Phase 2: SP-API sync
-    const { presets, updatedBrands } = await syncBrandMetrics(data.brands);
+    const { presets, updatedBrands, stTrafficByMp } = await syncBrandMetrics(data.brands);
     await saveSyncResults(updatedBrands);
 
     // Phase 3: collect ads results and merge
@@ -6533,6 +6652,26 @@ async function runFullSync(tag = 'Sync') {
       if (yesterdayPreset?.brands) {
         const dateStr = pstSubtractDays(pstDateStr(), 1);
         await writeDailyMetrics(yesterdayPreset.brands, dateStr);
+
+        // Phase 2b step 1 — mirror yesterday's traffic per marketplace into
+        // daily_metrics_mp (forward-only; wide history is blended CA+US and
+        // cannot be split). Zero pass covers exactly the marketplaces whose
+        // S&T reports came back, so a failed report never wipes a good day.
+        try {
+          const { trafficRows, replaceDay } = require('./sync/metricsMp');
+          const asinBrand = {};
+          for (const [brandId, bm] of Object.entries(yesterdayPreset.brands)) {
+            for (const sku of (bm.skus || [])) asinBrand[sku.asin] = brandId;
+          }
+          const mpIds = Object.keys(stTrafficByMp || {});
+          if (mpIds.length) {
+            const rows = trafficRows(dateStr, stTrafficByMp, asinBrand);
+            const n = await replaceDay(supabase, dateStr, 'traffic', rows, `${tag}-TrafficMp`, mpIds);
+            console.log(`[${tag}] daily_metrics_mp traffic: ${n} rows across ${mpIds.length} marketplaces for ${dateStr}`);
+          }
+        } catch (mpErr) {
+          console.warn(`[${tag}] daily_metrics_mp traffic write failed (non-fatal):`, mpErr.message);
+        }
       }
     } catch (dmErr) {
       console.warn(`[${tag}] daily_metrics write failed (non-fatal):`, dmErr.message);

@@ -42,6 +42,14 @@
 - Pulls ASIN-level: spend, attributed sales, ACOS, clicks, impressions
 - Results stored in `brand.adSummary` per preset
 
+### Ad attribution window
+All ad-sales / ACOS / ROAS surfaces read **7-day attribution** (decision
+2026-08-13 — matches the Ads console and the master sheet). DB stores both
+windows; reads coalesce `attributed_sales_7d_* ?? attributed_sales_*` and
+`ad_orders_7d ?? ad_orders` per row, so pre-2026-05-08 rows (no 7d data,
+beyond Amazon retention) fall back to 14d. Range payloads carry
+`adAttribution: 7d | mixed | 14d`; brand page + reports label non-7d ranges.
+
 ### Listing health (`GET /api/health`)
 - `computeHealthReport()` in `server.js`
 - Reads: `brand.buyBoxOwnerHistory`, `brand.listingSnapshots`, `brand.recentAlerts`, `brand.strandedInventory`

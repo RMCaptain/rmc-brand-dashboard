@@ -69,7 +69,7 @@ const TOOLS = [
   },
   {
     name: 'get_brand_report',
-    description: 'Full report dataset for one brand and period: summary (units, revenue CAD/USD, sessions, CVR, Buy Box, refunds, ad summary with spend/sales/clicks/impressions/ACOS/TACOS), per-ASIN products, true order counts, inventory, and a prior comparison period. Defaults to last calendar month vs the month before. Pass from/to (YYYY-MM-DD) for a custom window; compFrom/compTo for a custom comparison. Set includeDaily=true only when you need day-by-day series (large). Ads data is Sponsored Products only, CA+US.',
+    description: 'Full report dataset for one brand and period: summary (units, revenue CAD/USD, sessions, CVR, Buy Box, refunds, ad summary with spend/sales/clicks/impressions/ACOS/TACOS), per-ASIN products, true order counts, inventory, and a prior comparison period. Defaults to last calendar month vs the month before. Pass from/to (YYYY-MM-DD) for a custom window; compFrom/compTo for a custom comparison. Set includeDaily=true only when you need day-by-day series (large). Ads data is Sponsored Products only, CA+US, 7-day attribution (14-day fallback for pre-May-2026 rows; dataset.adAttribution says which).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -92,6 +92,22 @@ const TOOLS = [
       }
       return data;
     },
+  },
+  {
+    name: 'get_brand_ads',
+    description: 'All-ad-types rollup for a brand and period: Sponsored Products (ASIN-level, 7-day attribution), Sponsored Brands and Sponsored Display (campaign-level from daily_brand_ads, tracked since Jun 2026), combined totals, and TACOS (total ad spend \u00f7 total sales revenue) per marketplace — the master-sheet "ALL AD TYPES" numbers without the sheet. Defaults to the last 30 days. Use this for true TACOS; get_brand_report ad summary is SP only.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        brandId: { type: 'string', description: 'Brand id from list_brands' },
+        from: { type: 'string', description: 'Period start YYYY-MM-DD (default: 30 days ago)' },
+        to: { type: 'string', description: 'Period end YYYY-MM-DD (default: today PST)' },
+      },
+      required: ['brandId'],
+      additionalProperties: false,
+    },
+    handler: args => localApi(`/api/brand-ads/${encodeURIComponent(args.brandId)}` +
+      qs({ from: args.from, to: args.to })),
   },
   {
     name: 'get_ads_campaigns',
@@ -194,7 +210,7 @@ async function handleMessage(msg) {
         protocolVersion,
         capabilities: { tools: {} },
         serverInfo: { name: 'RMC Brand Dashboard', version: '1.0.0' },
-        instructions: 'Read-only tools over the RMC brand dashboard (Amazon CA/US sales, sessions, ads, search terms, Data Dive keywords). Start with list_brands to get brand ids. Ads data is Sponsored Products only. Always state the period and pull time next to any number you quote.',
+        instructions: 'Read-only tools over the RMC brand dashboard (Amazon CA/US sales, sessions, ads, search terms, Data Dive keywords). Start with list_brands to get brand ids. Ad data: get_brand_report is Sponsored Products only (7-day attribution); get_brand_ads adds SB/SD + true TACOS. Always state the period and pull time next to any number you quote.',
       });
     }
     case 'ping':

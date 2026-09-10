@@ -37,6 +37,7 @@ function run(label, file, args = []) {
     ['sellerboard csv parser',  'sellerboard-parse.test.js'],
     ['metrics resolver',        'resolver.test.js'],
     ['reconciliation core',     'reconcile.test.js'],
+    ['traffic mp writer',       'traffic-mp.test.js'],
   ]) if (!run(label, path.join(DIR, file))) failures++;
 
   // Stub server for the API + page checks

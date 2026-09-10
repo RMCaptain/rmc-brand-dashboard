@@ -14,7 +14,7 @@ const T = {
   ] } }],
   preset_metrics: [{ id: 'main', data: { presets: {}, lastSync: null } }],
   daily_metrics: [
-    { date: D1, asin: 'A1', brand_id: 'acure', units: 10, units_ca: 10, units_us: 0, revenue_cad: 100, revenue_usd: 0, spend_cad: 5, spend_usd: 0, attributed_sales_cad: 20, attributed_sales_usd: 0, refunded_units: 1, refund_amount_cad: 10, refund_amount_usd: 0, refund_count: 1, sessions: 50, page_views: 60, buy_box_pct: 90, inventory_on_hand: 100 },
+    { date: D1, asin: 'A1', brand_id: 'acure', units: 10, units_ca: 10, units_us: 0, revenue_cad: 100, revenue_usd: 0, spend_cad: 5, spend_usd: 0, attributed_sales_cad: 20, attributed_sales_usd: 0, attributed_sales_7d_cad: 18, attributed_sales_7d_usd: 0, refunded_units: 1, refund_amount_cad: 10, refund_amount_usd: 0, refund_count: 1, sessions: 50, page_views: 60, buy_box_pct: 90, inventory_on_hand: 100 },
     { date: D2, asin: 'A1', brand_id: 'acure', units: 7,  units_ca: 7,  units_us: 0, revenue_cad: 70,  revenue_usd: 0, spend_cad: 3, spend_usd: 0, attributed_sales_cad: 14, attributed_sales_usd: 0, refunded_units: 0, refund_amount_cad: 0, refund_amount_usd: 0, refund_count: 0, sessions: 40, page_views: 45, buy_box_pct: 95, inventory_on_hand: 93 },
     { date: D3, asin: 'A1', brand_id: 'acure', units: 8,  units_ca: 8,  units_us: 0, revenue_cad: 90,  revenue_usd: 0, spend_cad: 4, spend_usd: 0, attributed_sales_cad: 0,  attributed_sales_usd: 0, refunded_units: 2, refund_amount_cad: 0, refund_amount_usd: 0, refund_count: 1, sessions: 45, page_views: 50, buy_box_pct: 92, inventory_on_hand: 85 },
     { date: D3, asin: 'Z1', brand_id: 'zellies', units: 9, units_ca: 3, units_us: 6, revenue_cad: 30, revenue_usd: 120, spend_cad: 0, spend_usd: 10, attributed_sales_cad: 0, attributed_sales_usd: 40, refunded_units: 0, refund_amount_cad: 0, refund_amount_usd: 0, refund_count: 0, sessions: 30, page_views: 33, buy_box_pct: 80, inventory_on_hand: 40 },
@@ -25,6 +25,10 @@ const T = {
     { date: D3, mp_id: CA, asin: 'A1', sku: 'A1-SKU2', units: 1, sales: 10,  ad_spend: 0, refunds: 0, refund_amount: 0, amazon_fees: 3,  net_profit: 4,  promo_value: 0, product_costs: 3, sessions: null },
     { date: D3, mp_id: CA, asin: 'Z1', sku: 'Z1-SKU', units: 3,  sales: 30,  ad_spend: 0, refunds: 0, refund_amount: 0, amazon_fees: 9,  net_profit: 12, promo_value: 0, product_costs: 6, sessions: null },
     { date: D3, mp_id: UK, asin: 'Z1', sku: 'Z1-UK',  units: 4,  sales: 40,  ad_spend: 1, refunds: 0, refund_amount: 0, amazon_fees: 12, net_profit: 15, promo_value: 0, product_costs: 10, sessions: null },
+  ],
+  daily_brand_ads: [
+    { date: D2, brand_id: 'acure', ad_product: 'SB', spend_cad: 6, spend_usd: 0, sales_cad: 24, sales_usd: 0, clicks: 10, impressions: 500, orders: 2 },
+    { date: D3, brand_id: 'acure', ad_product: 'SD', spend_cad: 2, spend_usd: 0, sales_cad: 8,  sales_usd: 0, clicks: 4,  impressions: 300, orders: 1 },
   ],
   daily_fees_asin: [
     { date: D1, asin: 'A1', mp_id: CA, currency: 'CAD', fees: 25, refund_amount: 10, refund_fees: 1 },

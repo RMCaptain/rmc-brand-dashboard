@@ -119,11 +119,13 @@ async function backfillDays(supabase, brands, limit = 15, lookbackDays = 365) {
 
   // Track which (date, mpId) reports succeeded so we can require BOTH marketplaces.
   const succeeded = new Set(); // 'date|mpId'
-  const byDate = {}; // date → { asin: { ... } }
+  const byDate = {}; // date → { asin: { ... } }  (blended CAD/USD, wide table)
+  const byDateMp = {}; // date → { mpId: parsed } — un-blended, for daily_metrics_mp traffic
   for (const r of settled) {
     if (r.status !== 'fulfilled') { console.warn('[Backfill] Report failed:', r.reason?.message); continue; }
     const { date, mpId, data } = r.value;
     succeeded.add(`${date}|${mpId}`);
+    (byDateMp[date] = byDateMp[date] || {})[mpId] = data;
     const currency = MARKETPLACE_CURRENCY[mpId];
     if (currency !== 'CAD' && currency !== 'USD') {
       // Never mis-bucket another marketplace as USD (see expansion plan) —
@@ -179,6 +181,21 @@ async function backfillDays(supabase, brands, limit = 15, lookbackDays = 365) {
     const { error } = await supabase.from('daily_metrics').upsert(rows, { onConflict: 'asin,date' });
     if (error) { console.warn(`[Backfill] Upsert error for ${date}:`, error.message); skippedDates.push(date); }
     else { totalRows += rows.length; filledDates.push(date); }
+
+    // Mirror the same day's traffic per marketplace into daily_metrics_mp
+    // (Phase 2b step 1). Non-fatal like every mp write: the wide row above is
+    // still authoritative. This runs before the CAD/USD blend, so a UK report
+    // (skipped by the wide path) still lands here per its own marketplace.
+    if (!error) {
+      try {
+        const { trafficRows, replaceDay } = require('./metricsMp');
+        const stByMp = byDateMp[date] || {};
+        const mpRows = trafficRows(date, stByMp, asinBrand);
+        await replaceDay(supabase, date, 'traffic', mpRows, 'Backfill-TrafficMp', Object.keys(stByMp));
+      } catch (mpErr) {
+        console.warn(`[Backfill] daily_metrics_mp traffic for ${date} failed (non-fatal):`, mpErr.message);
+      }
+    }
   }
   if (skippedDates.length) console.log(`[Backfill] Skipped ${skippedDates.length} dates: ${skippedDates.join(', ')}`);
 

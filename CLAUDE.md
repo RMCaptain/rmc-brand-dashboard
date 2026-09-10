@@ -37,6 +37,7 @@ GET  /api/brands?preset=last30d     brands + merged metrics
 GET  /api/preset-metrics            all preset data
 POST /api/sync                      full SP-API sync (~10 min, non-blocking)
 GET  /api/sync/status               poll sync progress
+GET  /api/brand-ads/:brandId        SP+SB+SD rollup + TACOS (?from&to, default 30d)
 GET  /api/health                    listing health (buybox, stranded, unfulfillable)
 POST /api/health/digest             fire Slack digest on-demand
 GET  /api/fx                        FX rate USD↔CAD (cached 24h)

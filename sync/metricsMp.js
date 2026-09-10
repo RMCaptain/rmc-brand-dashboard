@@ -56,18 +56,22 @@ const DAY_COLUMN_GROUPS = {
   orders:  { units: 0, revenue: 0 },
   ads:     { ad_spend: 0, ad_attributed_sales: 0 },
   refunds: { refunded_units: 0, refund_amount: 0, refund_count: 0 },
+  // Traffic: an ASIN absent from a day's S&T report genuinely had 0 sessions,
+  // but buy box % has no zero — absence means "no data", so it zeroes to NULL.
+  traffic: { sessions: 0, page_views: 0, buy_box_pct: null },
 };
 
-async function replaceDay(supabase, date, group, rows, tag) {
+async function replaceDay(supabase, date, group, rows, tag, mpIds = [MP_CA, MP_US]) {
   const zeros = DAY_COLUMN_GROUPS[group];
   if (!zeros) { console.warn(`[MetricsMp] ${tag}: unknown group '${group}'`); return 0; }
   try {
-    // MULTI-MARKETPLACE GUARD: zero only the marketplaces this writer covers
-    // (CA/US today). An unqualified date-wide zero would erase UK/Walmart rows
-    // — marketplaces that write ONLY to this table — every time a CA/US
-    // rewriter ran. Must widen the list when new marketplaces activate.
+    // MULTI-MARKETPLACE GUARD: zero only the marketplaces this writer's run
+    // actually covers (default CA/US for the legacy money writers). An
+    // unqualified date-wide zero would erase rows for marketplaces that write
+    // ONLY to this table every time another marketplace's rewriter ran.
+    // Traffic callers pass the exact mp ids their S&T reports came back for.
     const { error } = await supabase.from('daily_metrics_mp')
-      .update(zeros).eq('date', date).in('mp_id', [MP_CA, MP_US]);
+      .update(zeros).eq('date', date).in('mp_id', mpIds);
     if (error) { console.warn(`[MetricsMp] ${tag} zero pass failed:`, error.message); return 0; }
   } catch (e) {
     console.warn(`[MetricsMp] ${tag} zero pass exception:`, e.message);
@@ -135,4 +139,27 @@ function refundRows(date, byAsin, asinBrand) {
   return rows;
 }
 
-module.exports = { MP_CA, MP_US, upsertMpRows, replaceDay, ordersRows, adsRows, refundRows };
+// Traffic shape: stByMp = { [mp_id]: { [asin]: { sessions, pageViews, buyBox } } }
+// — the per-marketplace S&T parse (parseSalesTrafficReport /
+// parseSalesTrafficDay output) BEFORE buildPresetMetrics blends it. Generic
+// over marketplaces: currency comes from the registry, so a UK dataset lands
+// as a GBP-marketplace row with no code changes here.
+function trafficRows(date, stByMp, asinBrand) {
+  const { byId } = require('./marketplaces');
+  const rows = [];
+  for (const [mpId, byAsin] of Object.entries(stByMp || {})) {
+    const mp = byId(mpId);
+    if (!mp) { console.warn(`[MetricsMp] trafficRows: unknown mp_id ${mpId} — skipped`); continue; }
+    for (const [asin, d] of Object.entries(byAsin || {})) {
+      const sessions = num(d.sessions), pageViews = num(d.pageViews);
+      const buyBox = Number.isFinite(d.buyBox) ? d.buyBox : null;
+      if (sessions === 0 && pageViews === 0 && buyBox == null) continue;
+      rows.push({ date, asin, mp_id: mpId, currency: mp.currency,
+                  brand_id: asinBrand[asin] || 'unknown-brand',
+                  sessions, page_views: pageViews, buy_box_pct: buyBox });
+    }
+  }
+  return rows;
+}
+
+module.exports = { MP_CA, MP_US, upsertMpRows, replaceDay, ordersRows, adsRows, refundRows, trafficRows };
