@@ -47,6 +47,14 @@ const FEEDS = [
   { key: 'RMC',  env: 'SELLERBOARD_FEED_RMC',  currency: 'USD', label: 'Rocky Mountain Co (Amazon CA/US)' },
   { key: 'WMCA', env: 'SELLERBOARD_FEED_WMCA', currency: 'CAD', label: 'RMC WMCA (Walmart.ca)' },
   { key: 'INTL', env: 'SELLERBOARD_FEED_INTL', currency: 'USD', label: 'RMCo Intl (Amazon UK/EU)' },
+  // Optional HISTORY feeds — same accounts, Automation links configured with
+  // a longer period (e.g. "Last 3 months"). Set the env, let one or two
+  // crons ingest, then remove. Closes coverage boundaries (the app can only
+  // be Sellerboard-accurate on days sellerboard_daily covers; the standard
+  // feeds carry ~32 trailing days from first ingest, 2026-09-09).
+  { key: 'RMC_HIST',  env: 'SELLERBOARD_FEED_RMC_HIST',  currency: 'USD', label: 'Rocky Mountain Co (history)' },
+  { key: 'WMCA_HIST', env: 'SELLERBOARD_FEED_WMCA_HIST', currency: 'CAD', label: 'RMC WMCA (history)' },
+  { key: 'INTL_HIST', env: 'SELLERBOARD_FEED_INTL_HIST', currency: 'USD', label: 'RMCo Intl (history)' },
 ];
 
 // Money columns converted feed-currency → marketplace-native at ingest.
@@ -214,6 +222,10 @@ function parseFeed(text, { account = null, asinBrand = {}, feedCurrency = null }
       net_profit:    money(num(get(r, 'netprofit'))),
       margin:        get(r, 'margin') === '' ? null : num(get(r, 'margin')),
       sessions:      sessionsRaw === '' ? null : Math.round(num(sessionsRaw)),
+      // % of returned items graded sellable (back to stock) — Sellerboard's
+      // "Sellable Returns %" column. null = no data for the row, distinct
+      // from a real 0% (all returns unsellable).
+      sellable_returns_pct: get(r, 'sellable returns %') === '' ? null : num(get(r, 'sellable returns %')),
       unit_session_pct: uspRaw === '' ? null : num(uspRaw),
       raw,
       fetched_at: fetchedAt,

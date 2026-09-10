@@ -37,6 +37,9 @@ const D1 = d(2), D2 = d(1), D3 = d(0);
   assert.strictEqual(a1.byMp[CA].units, 38);
   assert.strictEqual(a1.byMp[CA].netProfit, 124);
   assert.strictEqual(a1.byMp[CA].cogsSb, 83); // SB product_costs on SB-resolved days: 20 + 60 + 3
+  assert.strictEqual(a1.byMp[CA].sellableReturns, 1);  // 2 refunds graded at 50%
+  assert.strictEqual(a1.byMp[CA].sellableBasis, 2);
+  assert.strictEqual(a1.byMp[CA].sellablePct, 50);
   assert.strictEqual(a1.byMp[CA].flags.units.amazon, 15);
   assert.strictEqual(a1.byMp[CA].flags.units.sellerboard, 28);
   assert.strictEqual(a1.byMp[CA].flags.adSpend, undefined);

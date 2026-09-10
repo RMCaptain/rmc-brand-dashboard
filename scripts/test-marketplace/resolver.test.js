@@ -12,7 +12,7 @@ const wideRows = [
 ];
 const sbRows = [
   { date: 'd2', mp_id: CA, asin: 'A', units: 7,  sales: 70,  ad_spend: 3, refunds: 0, refund_amount: 0, amazon_fees: 20, net_profit: 30, promo_value: 1, product_costs: 20 },
-  { date: 'd3', mp_id: CA, asin: 'A', units: 20, sales: 200, ad_spend: 4, refunds: 2, refund_amount: 0, amazon_fees: 50, net_profit: 90, promo_value: 0, product_costs: 60 }, // Amazon says 8 / 90 → flag
+  { date: 'd3', mp_id: CA, asin: 'A', units: 20, sales: 200, ad_spend: 4, refunds: 2, refund_amount: 0, amazon_fees: 50, net_profit: 90, promo_value: 0, product_costs: 60, sellable_returns_pct: 50 }, // Amazon says 8 / 90 → flag
   { date: 'd3', mp_id: CA, asin: 'A', units: 1,  sales: 10,  ad_spend: 0, refunds: 0, refund_amount: 0, amazon_fees: 3,  net_profit: 4,  promo_value: 0, product_costs: 3 },  // second SKU, same ASIN
   { date: 'd3', mp_id: UK, asin: 'A', units: 4,  sales: 40,  ad_spend: 1, refunds: 0, refund_amount: 0, amazon_fees: 12, net_profit: 15, promo_value: 0, product_costs: 10 },
 ];
@@ -33,6 +33,8 @@ assert.strictEqual(aCA.resolved.refunds, 3);
 assert.strictEqual(aCA.resolved.refundAmount, 10);
 assert.strictEqual(aCA.resolved.netProfit, 124);
 assert.strictEqual(aCA.resolved.attributedSales, 32);   // Amazon-only metric, 7d-first (d1: 7d=18 wins over 14d=20; d2: no 7d row, falls back to 14d=14)
+assert.strictEqual(aCA.resolved.sellableReturns, 1);    // d3: 2 refunds x 50% graded sellable
+assert.strictEqual(aCA.resolved.sellableBasis, 2);      // only graded refunds count toward the %
 assert.strictEqual(aCA.source, 'mixed');
 assert.strictEqual(aCA.sbDays, 2);
 assert.strictEqual(aCA.amzDays, 2);

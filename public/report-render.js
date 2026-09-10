@@ -637,11 +637,19 @@ const SHARED_RENDERERS = {
     const stat = (label, value, sub) => `<div class="ad-stat"><div class="ad-stat-label">${label}</div><div class="ad-stat-value">${value}</div>${sub ? `<div class="ad-stat-sub">${sub}</div>` : ''}</div>`;
     const rateSub = pRate != null && rate != null
       ? `${pRate.toFixed(1)}% prior period` : 'Refunded units ÷ units sold';
+    // Sellable-return grade (Sellerboard's "Sellable Returns %"): how many
+    // returned items came back sellable vs write-offs. From byMp sums so the
+    // % only covers graded refunds.
+    const mpsAll = Object.values(s.byMp || {});
+    const sellRet = mpsAll.reduce((t, m) => t + (m.sellableReturns || 0), 0);
+    const sellBasis = mpsAll.reduce((t, m) => t + (m.sellableBasis || 0), 0);
+    const sellPct = sellBasis > 0 ? sellRet / sellBasis * 100 : null;
     const tiles = `
       <div class="ad-grid">
         ${stat('Refunded Units', refU.toLocaleString(), `${pRefU.toLocaleString()} prior period`)}
         ${stat('Refund Amount', fmtC(refA), 'Order-day basis (Sellerboard)')}
         ${stat('Refund Rate', rate != null ? rate.toFixed(1) + '%' : '—', rateSub)}
+        ${stat('Sellable Returns', sellPct != null ? sellPct.toFixed(0) + '%' : '—', sellPct != null ? `~${Math.round(sellRet)} units back to stock` : 'No graded returns yet')}
         ${stat('% of Revenue', rev > 0 ? (refA / rev * 100).toFixed(1) + '%' : '—', 'Refund $ ÷ sales revenue')}
       </div>`;
     if (!refU && !refA) {
@@ -653,7 +661,9 @@ const SHARED_RENDERERS = {
       const u = mps.reduce((t, m) => t + (m.refunds || 0), 0);
       const a = mps.length ? mps.reduce((t, m) => t + (m.refundAmount || 0), 0)
                            : (p.refundPostedCad || 0) + (p.refundPostedUsd || 0);
-      return { title: p.title || p.asin, asin: p.asin, u, a, rate: p.units > 0 && u > 0 ? u / p.units * 100 : null };
+      const sellVals = mps.filter(m => m.sellablePct != null).map(m => m.sellablePct);
+      const sell = sellVals.length ? sellVals.reduce((t, v) => t + v, 0) / sellVals.length : null;
+      return { title: p.title || p.asin, asin: p.asin, u, a, sell, rate: p.units > 0 && u > 0 ? u / p.units * 100 : null };
     }).filter(r => r.u > 0 || r.a > 0).sort((x, y) => y.a - x.a).slice(0, 8);
     if (!rows.length) return tiles;
     const rowHtml = rows.map(r => `
@@ -662,11 +672,12 @@ const SHARED_RENDERERS = {
         <td class="num">${r.u}</td>
         <td class="num">${fmtC(r.a)}</td>
         <td class="num">${r.rate != null ? r.rate.toFixed(1) + '%' : '—'}</td>
+        <td class="num">${r.sell != null ? r.sell.toFixed(0) + '%' : '—'}</td>
       </tr>`).join('');
     return tiles + `
       <div class="ad-section-sub">Most refunded products</div>
       <table class="rpt-table">
-        <thead><tr><th>Product</th><th class="num">Units</th><th class="num">Refund $</th><th class="num">Rate</th></tr></thead>
+        <thead><tr><th>Product</th><th class="num">Units</th><th class="num">Refund $</th><th class="num">Rate</th><th class="num">Sellable</th></tr></thead>
         <tbody>${rowHtml}</tbody>
       </table>`;
   },

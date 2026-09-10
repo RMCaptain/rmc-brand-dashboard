@@ -73,7 +73,11 @@ table). Feed days are the marketplace's local (PST) day, not UTC. Traffic
 **Comparing app vs the Sellerboard website:** SB's site converts everything
 to display currency at ONE blended rate (e.g. USD x 1.4019); the app
 converts each day at that day's rate — so CAD-vs-CAD comparisons carry
-~0.5-1% pure FX-method noise. Compare in native currency. Sessions = browser
+~0.5-1% pure FX-method noise. Compare in native currency (verified account-wide for Aug 2026: identical
+USD both sides; SB's site applied TODAY'S rate to August). Sellable-return
+grades ride the feed's "Sellable Returns %" column. History feeds
+(`SELLERBOARD_FEED_*_HIST`, longer-period Automation links, temporary)
+backfill days before the standard feeds' first ingest. Sessions = browser
 + app SUMMED (SB's definition, adopted 2026-09-10); an app/SB CVR gap
 beyond rounding means an unmapped ASIN — check the unknown-brand alert.
 **COGS source of truth is Sellerboard** (entered there in account currency,

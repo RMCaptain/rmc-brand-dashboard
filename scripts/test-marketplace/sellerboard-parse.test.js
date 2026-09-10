@@ -37,6 +37,7 @@ assert.strictEqual(t1.ad_spend_sp, 10);
 assert.strictEqual(t1.ad_spend_sb, 1.5);     // read through the Cyrillic header
 assert.strictEqual(t1.amazon_fees, 47.9);    // 22.5 + 30 + 0.4 - 5 reimbursement
 assert.strictEqual(t1.product_costs, 48);
+assert.strictEqual(t1.sellable_returns_pct, 50); // "Sellable Returns %" column
 assert.strictEqual(t1.est_payout, 90);
 assert.strictEqual(t1.net_profit, 20.1);
 assert.strictEqual(t1.margin, 13.4);

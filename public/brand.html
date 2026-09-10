@@ -284,9 +284,12 @@
     function skuRefunds(sk) {
       if (!sk) return { units: null, amt: 0 };
       if (sk.byMp && Object.keys(sk.byMp).length) {
-        return { units: MpScope.sumMp(sk.byMp, 'refunds') ?? 0, amt: MpScope.sumMp(sk.byMp, 'refundAmount') ?? 0 };
+        const graded = MpScope.scopedMps(sk.byMp).filter(m => m.sellableBasis > 0);
+        const sellablePct = graded.length
+          ? graded.reduce((t, m) => t + m.sellableReturns, 0) / graded.reduce((t, m) => t + m.sellableBasis, 0) * 100 : null;
+        return { units: MpScope.sumMp(sk.byMp, 'refunds') ?? 0, amt: MpScope.sumMp(sk.byMp, 'refundAmount') ?? 0, sellablePct };
       }
-      return { units: null, amt: MpScope.legacyNum(sk.refundPostedCad || 0, sk.refundPostedUsd || 0) };
+      return { units: null, amt: MpScope.legacyNum(sk.refundPostedCad || 0, sk.refundPostedUsd || 0), sellablePct: null };
     }
 
     function sortAsinBy(col) {
@@ -748,7 +751,7 @@
           const rfHot = rfRate != null && rfRate >= 5;
           const refCell = (rf.units == null && !(rf.amt > 0))
             ? '<td class="px-4 py-3 text-right text-slate-600">—</td>'
-            : '<td class="px-4 py-3 text-right ' + (rfHot ? 'text-amber-400' : 'text-slate-400') + '" title="' + money(rf.amt) + ' refunded">' +
+            : '<td class="px-4 py-3 text-right ' + (rfHot ? 'text-amber-400' : 'text-slate-400') + '" title="' + money(rf.amt) + ' refunded' + (rf.sellablePct != null ? ' · ' + rf.sellablePct.toFixed(0) + '% sellable (back to stock)' : '') + '">' +
               (rf.units != null
                 ? rf.units + (rfRate != null ? ' <span class="text-xs text-slate-500">(' + rfRate.toFixed(1) + '%)</span>' : '')
                 : money(rf.amt)) + '</td>';

@@ -21,7 +21,7 @@ const T = {
   ],
   sellerboard_daily: [
     { date: D2, mp_id: CA, asin: 'A1', sku: 'A1-SKU', units: 7,  sales: 70,  ad_spend: 3, refunds: 0, refund_amount: 0, amazon_fees: 20, net_profit: 30, promo_value: 1, product_costs: 20, sessions: 39 },
-    { date: D3, mp_id: CA, asin: 'A1', sku: 'A1-SKU', units: 20, sales: 200, ad_spend: 4, refunds: 2, refund_amount: 0, amazon_fees: 50, net_profit: 90, promo_value: 0, product_costs: 60, sessions: null },
+    { date: D3, mp_id: CA, asin: 'A1', sku: 'A1-SKU', units: 20, sales: 200, ad_spend: 4, refunds: 2, refund_amount: 0, amazon_fees: 50, net_profit: 90, promo_value: 0, product_costs: 60, sessions: null, sellable_returns_pct: 50 },
     { date: D3, mp_id: CA, asin: 'A1', sku: 'A1-SKU2', units: 1, sales: 10,  ad_spend: 0, refunds: 0, refund_amount: 0, amazon_fees: 3,  net_profit: 4,  promo_value: 0, product_costs: 3, sessions: null },
     { date: D3, mp_id: CA, asin: 'Z1', sku: 'Z1-SKU', units: 3,  sales: 30,  ad_spend: 0, refunds: 0, refund_amount: 0, amazon_fees: 9,  net_profit: 12, promo_value: 0, product_costs: 6, sessions: null },
     { date: D3, mp_id: UK, asin: 'Z1', sku: 'Z1-UK',  units: 4,  sales: 40,  ad_spend: 1, refunds: 0, refund_amount: 0, amazon_fees: 12, net_profit: 15, promo_value: 0, product_costs: 10, sessions: null },
