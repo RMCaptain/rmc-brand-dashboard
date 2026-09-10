@@ -117,6 +117,7 @@
               <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('cvr')">CVR <span class="sort-asin-ind" data-col="cvr"></span></th>
               <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('adSpend')">Ad Spend <span class="sort-asin-ind" data-col="adSpend"></span></th>
               <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('acos')">ACOS <span class="sort-asin-ind" data-col="acos"></span></th>
+              <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('refunds')" title="Refunded units (rate = refunds ÷ units sold). Sellerboard order-day basis where covered">Refunds <span class="sort-asin-ind" data-col="refunds"></span></th>
               <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('fees')" title="Real Amazon fees posted in the period (referral + FBA + other item fees). ~ = estimated intraday">Fees <span class="sort-asin-ind" data-col="fees"></span></th>
               <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('netProfit')" title="Revenue − COGS − Amazon fees − ad spend − refunds">Net Profit <span class="sort-asin-ind" data-col="netProfit"></span></th>
               <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('margin')" title="Net profit ÷ revenue">Margin <span class="sort-asin-ind" data-col="margin"></span></th>
@@ -280,6 +281,14 @@
       return { fees, netProfit, margin, estimated: !!s.feesEstimated };
     }
 
+    function skuRefunds(sk) {
+      if (!sk) return { units: null, amt: 0 };
+      if (sk.byMp && Object.keys(sk.byMp).length) {
+        return { units: MpScope.sumMp(sk.byMp, 'refunds') ?? 0, amt: MpScope.sumMp(sk.byMp, 'refundAmount') ?? 0 };
+      }
+      return { units: null, amt: MpScope.legacyNum(sk.refundPostedCad || 0, sk.refundPostedUsd || 0) };
+    }
+
     function sortAsinBy(col) {
       if (asinSortCol === col) asinSortDir *= -1;
       else { asinSortCol = col; asinSortDir = -1; }
@@ -312,6 +321,7 @@
         else if (asinSortCol === 'pageViews') { av = sa?.pageViews ?? 0; bv = sb?.pageViews ?? 0; }
         else if (asinSortCol === 'buyBox') { av = sa?.buyBox ?? -1; bv = sb?.buyBox ?? -1; }
         else if (asinSortCol === 'cvr') { av = sa?.cvr ?? -1; bv = sb?.cvr ?? -1; }
+        else if (asinSortCol === 'refunds') { av = skuRefunds(sa).units ?? (skuRefunds(sa).amt > 0 ? 0.5 : -1); bv = skuRefunds(sb).units ?? (skuRefunds(sb).amt > 0 ? 0.5 : -1); }
         else if (asinSortCol === 'inventory') {
           av = sa ? ((sa.inventory?.onHand ?? 0) + (sa.inventory?.inbound ?? 0)) : 0;
           bv = sb ? ((sb.inventory?.onHand ?? 0) + (sb.inventory?.inbound ?? 0)) : 0;
@@ -733,6 +743,15 @@
           const n = calcSkuNet(brand, s);
           const money = v => MpScope.fmt(v, { abs: true });
           const tilde = n.estimated ? '~' : '';
+          const rf = skuRefunds(s);
+          const rfRate = rf.units != null && skuUnits(s) > 0 ? rf.units / skuUnits(s) * 100 : null;
+          const rfHot = rfRate != null && rfRate >= 5;
+          const refCell = (rf.units == null && !(rf.amt > 0))
+            ? '<td class="px-4 py-3 text-right text-slate-600">—</td>'
+            : '<td class="px-4 py-3 text-right ' + (rfHot ? 'text-amber-400' : 'text-slate-400') + '" title="' + money(rf.amt) + ' refunded">' +
+              (rf.units != null
+                ? rf.units + (rfRate != null ? ' <span class="text-xs text-slate-500">(' + rfRate.toFixed(1) + '%)</span>' : '')
+                : money(rf.amt)) + '</td>';
           const feesCell = n.fees != null
             ? '<td class="px-4 py-3 text-right text-slate-400">' + tilde + money(n.fees) + '</td>'
             : '<td class="px-4 py-3 text-right text-slate-600">—</td>';
@@ -742,7 +761,7 @@
           const mgColor = n.margin == null ? 'text-slate-600' : n.margin >= 0 ? 'text-emerald-400' : 'text-red-400';
           const mgCell = '<td class="px-4 py-3 text-right ' + mgColor + '">' +
             (n.margin != null ? tilde + n.margin.toFixed(1) + '%' : '—') + '</td>';
-          return feesCell + npCell + mgCell;
+          return refCell + feesCell + npCell + mgCell;
         })() +
         (function() {
           const promos = brand.asinPromos?.[s.asin] || [];
