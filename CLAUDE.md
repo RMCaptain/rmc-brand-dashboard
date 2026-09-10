@@ -70,6 +70,12 @@ The `account_7d` scope is the alert signal. Feeds arrive in the Sellerboard
 each marketplace's native currency at ingest (`sync/fxRates.js`, `fx_rates`
 table). Feed days are the marketplace's local (PST) day, not UTC. Traffic
 (sessions/buy box) stays Amazon-first and is not reconciled.
+**Comparing app vs the Sellerboard website:** SB's site converts everything
+to display currency at ONE blended rate (e.g. USD x 1.4019); the app
+converts each day at that day's rate — so CAD-vs-CAD comparisons carry
+~0.5-1% pure FX-method noise. Compare in native currency. Sessions = browser
++ app SUMMED (SB's definition, adopted 2026-09-10); an app/SB CVR gap
+beyond rounding means an unmapped ASIN — check the unknown-brand alert.
 **COGS source of truth is Sellerboard** (entered there in account currency,
 converted to native at ingest): `sync/cogsSb.js` refreshes per-ASIN unit
 costs into `brand.cogsSb` after every feed sync; manual entries are

@@ -29,7 +29,10 @@ function parseSalesTrafficDay(jsonStr) {
     result[asin] = {
       units:    sales.unitsOrdered || 0,
       revenue:  sales.orderedProductSales?.amount || 0,
-      sessions: traffic.sessions   || 0,
+      // browser + app summed — Sellerboard's definition (see parseSalesTrafficReport)
+      sessions: (traffic.browserSessions != null || traffic.mobileAppSessions != null)
+        ? (traffic.browserSessions || 0) + (traffic.mobileAppSessions || 0)
+        : (traffic.sessions || 0),
       pageViews: traffic.pageViews || 0,
       buyBox:   traffic.buyBoxPercentage ?? null,
     };

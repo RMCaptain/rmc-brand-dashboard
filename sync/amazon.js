@@ -223,7 +223,15 @@ function parseSalesTrafficReport(jsonStr) {
 
     byAsin[asin].revenue += sales.orderedProductSales?.amount || 0;
     byAsin[asin].units += sales.unitsOrdered || 0;
-    byAsin[asin].sessions += traffic.sessions || 0;
+    // Sessions = browserSessions + mobileAppSessions SUMMED — Sellerboard's
+    // definition (decision 2026-09-10: SB numbers are precedent). Amazon's
+    // own `sessions` field deduplicates a visitor who used both device types
+    // and reads ~15% lower; comparing it to SB made CVR look 3pts better
+    // than SB showed. Fall back to `sessions` on reports without the split.
+    const sess = (traffic.browserSessions != null || traffic.mobileAppSessions != null)
+      ? (traffic.browserSessions || 0) + (traffic.mobileAppSessions || 0)
+      : (traffic.sessions || 0);
+    byAsin[asin].sessions += sess;
     byAsin[asin].pageViews += traffic.pageViews || 0;
 
     // API returns these as percentages (0–100), not decimals
