@@ -4374,6 +4374,7 @@ const REPORT_SECTION_KEYS = [
   'revenue_share_pie',    // revenue share by ASIN — OPTIONAL, off by default
   'ad_trend',             // ad sales vs organic chart
   'ad_summary',           // TACOS / TROAS / ACOS / ROAS / CTR / CPC
+  'refunds',              // returns & refunds: units, $, rate, top-refunded ASINs
   'inventory_status',     // days of cover, stockouts, inbound
   'per_asin_detail',      // full paginated per-ASIN table
 ];
