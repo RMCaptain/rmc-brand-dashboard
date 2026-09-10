@@ -280,8 +280,8 @@
           const daysLeft = velocity > 0 ? Math.round((onHand + inbound) / velocity) : null;
           const cfg = brand.asinConfig?.[asin] || {};
           const invRaw = s?.inventory ?? {};
-          const cogsCa = brand.cogsPerMarketplace?.[asin]?.CA ?? (brand.marketplace !== 'US' ? brand.cogs?.[asin] : null) ?? null;
-          const cogsUs = brand.cogsPerMarketplace?.[asin]?.US ?? (brand.marketplace === 'US' ? brand.cogs?.[asin] : null) ?? null;
+          const cogsCa = brand.cogsSb?.[asin]?.CA?.unit ?? brand.cogsPerMarketplace?.[asin]?.CA ?? (brand.marketplace !== 'US' ? brand.cogs?.[asin] : null) ?? null;
+          const cogsUs = brand.cogsSb?.[asin]?.US?.unit ?? brand.cogsPerMarketplace?.[asin]?.US ?? (brand.marketplace === 'US' ? brand.cogs?.[asin] : null) ?? null;
           // Net economics in display currency: revenue − COGS − real Amazon
           // fees − ad spend − refunds. null net when fee data is absent for the
           // period or a marketplace with units lacks COGS (no fake margins).
@@ -299,9 +299,18 @@
               const legacyFees = m.code === 'CA' ? s.feesCad : m.code === 'US' ? s.feesUsd : null;
               const f = m.fees != null ? m.fees : legacyFees;
               if (f != null) { feesKnown = true; feesTot += MpScope.toDisplay(f, m.currency); }
-              const c = MpScope.cogsFor(brand, asin, m.code);
-              if (m.units > 0 && !(c > 0)) cogsOk = false;
-              cogsTot += MpScope.toDisplay(m.units * c, m.currency);
+              if (m.cogsSb != null && m.source === 'sellerboard') {
+                // Actual COGS Sellerboard charged this period (native
+                // currency) — beats units × unit-cost. Only when the whole
+                // slice resolved from Sellerboard: on mixed windows cogsSb
+                // covers just the SB days, so Amazon-resolved days would
+                // silently lose their COGS — those use unit-cost math below.
+                cogsTot += MpScope.toDisplay(m.cogsSb, m.currency);
+              } else {
+                const c = MpScope.cogsFor(brand, asin, m.code);
+                if (m.units > 0 && !(c > 0)) cogsOk = false;
+                cogsTot += MpScope.toDisplay(m.units * c, m.currency);
+              }
               refunds += MpScope.toDisplay(m.code === 'CA' ? (s.refundPostedCad || 0) : m.code === 'US' ? (s.refundPostedUsd || 0) : (m.refundAmount || 0), m.currency);
             }
             fees = feesKnown ? feesTot : null;

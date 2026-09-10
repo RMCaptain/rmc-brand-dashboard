@@ -245,9 +245,15 @@
           const legacyFees = m.code === 'CA' ? s.feesCad : m.code === 'US' ? s.feesUsd : null;
           const f = m.fees != null ? m.fees : legacyFees;
           if (f != null) { feesKnown = true; fees += MpScope.toDisplay(f, m.currency); }
-          const c = MpScope.cogsFor(brand, s.asin, m.code);
-          if (m.units > 0 && !(c > 0)) cogsOk = false;
-          cogsTot += MpScope.toDisplay(m.units * c, m.currency);
+          if (m.cogsSb != null && m.source === 'sellerboard') {
+            // Actual COGS Sellerboard charged (native currency). Pure-SB
+            // slices only: on mixed windows cogsSb covers just the SB days.
+            cogsTot += MpScope.toDisplay(m.cogsSb, m.currency);
+          } else {
+            const c = MpScope.cogsFor(brand, s.asin, m.code);
+            if (m.units > 0 && !(c > 0)) cogsOk = false;
+            cogsTot += MpScope.toDisplay(m.units * c, m.currency);
+          }
           refunds += MpScope.toDisplay(m.code === 'CA' ? (s.refundPostedCad || 0) : m.code === 'US' ? (s.refundPostedUsd || 0) : (m.refundAmount || 0), m.currency);
         }
         const rev = skuRev(s), spend = skuSpend(s);
@@ -258,10 +264,11 @@
       const conv = (cad, usd) => MpScope.legacyNum(cad, usd);
       const feesKnown = s.feesCad != null || s.feesUsd != null;
       const fees = feesKnown ? conv(s.feesCad, s.feesUsd) : null;
+      const sbC = brand.cogsSb?.[s.asin];
       const cmp = brand.cogsPerMarketplace?.[s.asin];
       const legacy = brand.cogs?.[s.asin];
-      const cogsCA = cmp?.CA ?? (brand.marketplace !== 'US' ? legacy : null);
-      const cogsUS = cmp?.US ?? (brand.marketplace === 'US' ? legacy : null);
+      const cogsCA = sbC?.CA?.unit ?? cmp?.CA ?? (brand.marketplace !== 'US' ? legacy : null);
+      const cogsUS = sbC?.US?.unit ?? cmp?.US ?? (brand.marketplace === 'US' ? legacy : null);
       const uCa = s.unitsCad ?? s.unitsCa ?? 0, uUs = s.unitsUsd ?? s.unitsUs ?? 0;
       const cogsOk = (!(uCa > 0) || cogsCA != null) && (!(uUs > 0) || cogsUS != null) && (cogsCA != null || cogsUS != null);
       const rev = conv(s.revenueCad, s.revenueUsd);

@@ -69,10 +69,25 @@ beyond Amazon retention) fall back to 14d. Range payloads carry
 
 ## Buy Cost vs COGS
 
-Two separate price fields per ASIN:
-- `brand.buyCost[asin]` — supplier invoice price; used in PO builder
-- `brand.cogsPerMarketplace[asin].CA/US` — all-in landed cost (buy cost + shipping + prep); used in performance metrics
+Price fields per ASIN, in read order:
+- `brand.cogsSb[asin][code]` — **Sellerboard-derived unit COGS (source of
+  truth since 2026-09-10)**: median of daily `product_costs / units` over the
+  trailing 30 days of `sellerboard_daily`, per marketplace, NATIVE currency
+  (COGS is entered in Sellerboard in the account currency — USD — and the
+  feed ingest converts at that day's rate). Refreshed by `sync/cogsSb.js`
+  after every feed ingest. Margin math prefers the period's ACTUAL charged
+  COGS (`byMp.cogsSb`) on pure-Sellerboard slices, unit × cost otherwise.
+- `brand.cogsPerMarketplace[asin].CA/US` — manual all-in landed cost; the
+  fallback where Sellerboard has no data. New entries go into Sellerboard,
+  not here.
+- `brand.buyCost[asin]` — supplier invoice price; used in PO builder (unchanged)
 - Multipacks: base ASIN buy cost · Bundles: sum of components (or manual override)
+
+Inbound transportation (Amazon-purchased shipping) is deliberately NOT in
+COGS: Sellerboard books it from Amazon Finances as
+fbainboundtransportationfee / fbainboundconveniencefee, which the feed
+ingest nets into `amazon_fees` — so it lands on the fee line of every
+margin, never double-counted against COGS.
 
 ## Authentication
 

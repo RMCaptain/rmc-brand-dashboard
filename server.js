@@ -3861,6 +3861,7 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
           units: g.units, sales: g.sales, adSpend: g.adSpend, attributedSales: g.attributedSales,
           refunds: g.refunds, refundAmount: g.refundAmount,
           fees: g.sbDays ? g.fees : null, netProfit: g.sbDays ? g.netProfit : null, promo: g.sbDays ? g.promo : null,
+          cogsSb: g.sbDays ? g.cogsSb : null,
           source: g.source, sbDays: g.sbDays, flags: g.flags,
         };
       }
@@ -3922,6 +3923,7 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
           attributedSales: m.resolved.attributedSales, refunds: m.resolved.refunds,
           refundAmount: m.resolved.refundAmount, fees: m.sbDays ? m.resolved.fees : null,
           netProfit: m.sbDays ? m.resolved.netProfit : null, promo: m.sbDays ? m.resolved.promo : null,
+          cogsSb: m.sbDays ? m.resolved.cogsSb : null,
           source: m.source, sbDays: m.sbDays, flags: m.flags,
         }])),
         source: sourceOf(asin),
@@ -6001,6 +6003,10 @@ app.post('/api/sellerboard/sync', async (req, res) => {
     const { reconcileSellerboard } = require('./sync/reconcileSellerboard');
     const liveToCad = (await fetchFxRate().catch(() => null))?.toCad || null;
     const ingest = await syncSellerboardFeeds({ supabase, loadBrands, label: 'Sellerboard-manual', liveToCad });
+    if (ingest.feeds.some(f => f.status === 'ok')) {
+      await require('./sync/cogsSb').syncCogsFromSellerboard({ supabase, loadBrands, saveBrands, label: 'Sellerboard-manual-Cogs' })
+        .catch(e => console.warn('[sellerboard/sync] SB COGS refresh failed (non-fatal):', e.message));
+    }
     const recon = ingest.feeds.some(f => f.status === 'ok') && req.query.reconcile !== '0'
       ? await reconcileSellerboard({ supabase, loadBrands, label: 'Reconcile-manual' })
       : null;
@@ -6982,8 +6988,15 @@ function scheduleDailySync() {
     const ingest = await syncSellerboardFeeds({ supabase, loadBrands, label: tag, liveToCad });
     const ok = ingest.feeds.some(f => f.status === 'ok');
     if (!ok) { console.warn(`[${tag}] no feed ingested (${ingest.feeds.map(f => `${f.key}=${f.status}`).join(' ')}) — reconciliation skipped`); return { ingest }; }
+    // Sellerboard is the COGS source of truth (2026-09-10): refresh the
+    // per-ASIN unit costs the dashboard reads. Non-fatal — margins fall
+    // back to the previous values if this pass fails.
+    let cogs = null;
+    try {
+      cogs = await require('./sync/cogsSb').syncCogsFromSellerboard({ supabase, loadBrands, saveBrands, label: `${tag}-Cogs` });
+    } catch (e) { console.warn(`[${tag}] SB COGS refresh failed (non-fatal):`, e.message); }
     const recon = await reconcileSellerboard({ supabase, loadBrands, label: tag });
-    return { ingest, recon };
+    return { ingest, cogs, recon };
   };
   cron.schedule('45 10 * * *', () => {
     runSellerboard('Sellerboard-10:45').catch(err => console.error('[Sellerboard] cron error:', err.message));

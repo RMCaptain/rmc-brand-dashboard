@@ -70,6 +70,10 @@ The `account_7d` scope is the alert signal. Feeds arrive in the Sellerboard
 each marketplace's native currency at ingest (`sync/fxRates.js`, `fx_rates`
 table). Feed days are the marketplace's local (PST) day, not UTC. Traffic
 (sessions/buy box) stays Amazon-first and is not reconciled.
+**COGS source of truth is Sellerboard** (entered there in account currency,
+converted to native at ingest): `sync/cogsSb.js` refreshes per-ASIN unit
+costs into `brand.cogsSb` after every feed sync; manual entries are
+fallback only. Inbound transportation rides `amazon_fees`, never COGS.
 
 ## Cron Schedule (VPS)
 - 6am, 9am, 12pm UTC — full SP-API sync
