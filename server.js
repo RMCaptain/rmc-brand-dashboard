@@ -6652,6 +6652,45 @@ async function runFullSync(tag = 'Sync') {
     syncState = { status: 'done', lastSync, error: null };
     console.log(`[${tag}] Done:`, lastSync);
 
+    // Prune dead ASINs from unknown-brand. Amazon's account-level S&T
+    // report emits rows for ASINs whose listings are gone (variation-merge
+    // ghosts, deleted duplicates, drafts that grabbed a few bot sessions),
+    // and the auto-map parks every one of them in unknown-brand — where
+    // they sit titleless in Admin forever. Anything with NO money activity
+    // and NO inventory in the trailing 90 days (both Amazon and Sellerboard
+    // sides) gets dropped. Fully self-healing: an ASIN that ever shows
+    // activity again is re-added by the very next sync's auto-map, so the
+    // prune can never lose real sales.
+    try {
+      const data90 = await loadBrands();
+      const ub = data90.brands.find(b => b.id === 'unknown-brand');
+      if (ub?.asins?.length) {
+        const from90 = pstSubtractDays(pstDateStr(), 90);
+        const keep = new Set();
+        for (const [table, cols, live] of [
+          ['daily_metrics', 'asin,units,revenue_cad,revenue_usd,inventory_on_hand,inventory_inbound',
+            r => r.units > 0 || r.revenue_cad > 0 || r.revenue_usd > 0 || r.inventory_on_hand > 0 || r.inventory_inbound > 0],
+          ['sellerboard_daily', 'asin,units,sales', r => r.units > 0 || r.sales > 0],
+        ]) {
+          for (let off = 0; ; off += 1000) {
+            const { data: rows, error } = await supabase.from(table).select(cols)
+              .in('asin', ub.asins).gte('date', from90).range(off, off + 999);
+            if (error) throw new Error(`${table}: ${error.message}`);
+            for (const r of (rows || [])) if (live(r)) keep.add(r.asin);
+            if (!rows || rows.length < 1000) break;
+          }
+        }
+        const dead = ub.asins.filter(a => !keep.has(a));
+        if (dead.length) {
+          ub.asins = ub.asins.filter(a => keep.has(a));
+          await saveBrands(data90);
+          console.log(`[${tag}] Pruned ${dead.length} dead ASINs from unknown-brand (no activity/inventory in 90d): ${dead.slice(0, 10).join(', ')}${dead.length > 10 ? '…' : ''}`);
+        }
+      }
+    } catch (pruneErr) {
+      console.warn(`[${tag}] unknown-brand prune failed (non-fatal):`, pruneErr.message);
+    }
+
     // Write yesterday's per-ASIN data to daily_metrics for rolling history
     try {
       const yesterdayPreset = presets.yesterday;
