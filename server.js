@@ -2370,7 +2370,7 @@ async function fetchSellerboardRows(fromDate, toDate) {
   try {
     for (let off = 0; ; off += 1000) {
       const { data, error } = await supabase.from('sellerboard_daily')
-        .select('date,mp_id,asin,sku,units,sales,ad_spend,refunds,refund_amount,amazon_fees,net_profit,promo_value,product_costs,sessions')
+        .select('date,mp_id,asin,sku,units,sales,ad_spend,refunds,refund_amount,amazon_fees,net_profit,promo_value,product_costs,sessions,sellable_returns_pct')
         .gte('date', fromDate).lte('date', toDate)
         .order('date', { ascending: true }).order('mp_id', { ascending: true }).order('sku', { ascending: true })
         .range(off, off + 999);
@@ -3862,6 +3862,9 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
           refunds: g.refunds, refundAmount: g.refundAmount,
           fees: g.sbDays ? g.fees : null, netProfit: g.sbDays ? g.netProfit : null, promo: g.sbDays ? g.promo : null,
           cogsSb: g.sbDays ? g.cogsSb : null,
+          sellableReturns: g.sellableBasis > 0 ? Math.round(g.sellableReturns * 100) / 100 : null,
+          sellableBasis: g.sellableBasis || null,
+          sellablePct: g.sellableBasis > 0 ? Math.round(g.sellableReturns / g.sellableBasis * 1000) / 10 : null,
           source: g.source, sbDays: g.sbDays, flags: g.flags,
         };
       }
@@ -3924,6 +3927,9 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
           refundAmount: m.resolved.refundAmount, fees: m.sbDays ? m.resolved.fees : null,
           netProfit: m.sbDays ? m.resolved.netProfit : null, promo: m.sbDays ? m.resolved.promo : null,
           cogsSb: m.sbDays ? m.resolved.cogsSb : null,
+          sellableReturns: m.resolved.sellableBasis > 0 ? Math.round(m.resolved.sellableReturns * 100) / 100 : null,
+          sellableBasis: m.resolved.sellableBasis || null,
+          sellablePct: m.resolved.sellableBasis > 0 ? Math.round(m.resolved.sellableReturns / m.resolved.sellableBasis * 1000) / 10 : null,
           source: m.source, sbDays: m.sbDays, flags: m.flags,
         }])),
         source: sourceOf(asin),

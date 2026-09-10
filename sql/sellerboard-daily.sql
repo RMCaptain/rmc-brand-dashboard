@@ -84,5 +84,7 @@ CREATE INDEX IF NOT EXISTS sellerboard_daily_asin_date_idx  ON sellerboard_daily
 CREATE INDEX IF NOT EXISTS sellerboard_daily_brand_date_idx ON sellerboard_daily (brand_id, date);
 CREATE INDEX IF NOT EXISTS sellerboard_daily_mp_date_idx    ON sellerboard_daily (mp_id, date);
 
+ALTER TABLE sellerboard_daily ADD COLUMN IF NOT EXISTS sellable_returns_pct numeric;  -- % of returned items graded sellable (2026-09-10)
+
 -- Verification
 SELECT COUNT(*) AS sellerboard_daily_rows, MIN(date) AS first_day, MAX(date) AS last_day FROM sellerboard_daily;

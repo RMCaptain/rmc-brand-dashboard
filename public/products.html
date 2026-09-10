@@ -343,8 +343,11 @@
             ? (MpScope.sumMp(s.byMp, 'refundAmount') ?? 0)
             : getNum(s?.refundPostedCad || 0, s?.refundPostedUsd || 0);
           const refRate = refUnits != null && unitsDisp > 0 ? refUnits / unitsDisp * 100 : null;
+          const sellMps = MpScope.scopedMps(s?.byMp).filter(m => m.sellableBasis > 0);
+          const sellablePct = sellMps.length
+            ? sellMps.reduce((t, m) => t + m.sellableReturns, 0) / sellMps.reduce((t, m) => t + m.sellableBasis, 0) * 100 : null;
           rows.push({
-            refUnits, refAmt, refRate,
+            refUnits, refAmt, refRate, sellablePct,
             fees, feesEstimated: !!s?.feesEstimated, netProfit, margin, flags, source,
             asin,
             brandId: brand.id,
@@ -608,7 +611,8 @@
             const label = r.refUnits != null
               ? `${r.refUnits}${r.refRate != null ? ` <span class="text-xs" style="color:var(--text-3)">(${r.refRate.toFixed(1)}%)</span>` : ''}`
               : money(r.refAmt);
-            return `<td class="px-4 py-3 text-right ${hot ? 'text-amber-400' : ''}" style="${hot ? '' : 'color:var(--text-2)'}" title="${money(r.refAmt)} refunded">${label}</td>`;
+            const sellTip = r.sellablePct != null ? ` · ${r.sellablePct.toFixed(0)}% sellable (back to stock)` : '';
+            return `<td class="px-4 py-3 text-right ${hot ? 'text-amber-400' : ''}" style="${hot ? '' : 'color:var(--text-2)'}" title="${money(r.refAmt)} refunded${sellTip}">${label}</td>`;
           })();
           const feesCell = r.fees != null
             ? `<td class="px-4 py-3 text-right" style="color:var(--text-2)">${tilde}${money(r.fees)}</td>`

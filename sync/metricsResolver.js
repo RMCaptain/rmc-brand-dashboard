@@ -29,14 +29,14 @@ const { compare } = require('./reconcileSellerboard');
 
 const CA = MP.idByCode('CA');
 const US = MP.idByCode('US');
-const RESOLVED_METRICS = ['units', 'sales', 'adSpend', 'attributedSales', 'refunds', 'refundAmount', 'fees', 'netProfit', 'promo', 'cogsSb'];
+const RESOLVED_METRICS = ['units', 'sales', 'adSpend', 'attributedSales', 'refunds', 'refundAmount', 'fees', 'netProfit', 'promo', 'cogsSb', 'sellableReturns', 'sellableBasis'];
 // Metrics compared for flags (both sides carry them). Fees compare only when
 // the Amazon side has per-ASIN fee rows for the day.
 const FLAG_METRICS = { units: 'units', sales: 'sales', adSpend: 'ad_spend', refunds: 'refunds', refundAmount: 'refund_amount', fees: 'amazon_fees' };
 
 const num = v => (Number.isFinite(v) ? v : (Number.isFinite(Number(v)) ? Number(v) : 0));
 const r2  = v => Math.round(v * 100) / 100;
-const empty = () => ({ units: 0, sales: 0, adSpend: 0, attributedSales: 0, refunds: 0, refundAmount: 0, fees: 0, netProfit: 0, promo: 0, cogsSb: 0 });
+const empty = () => ({ units: 0, sales: 0, adSpend: 0, attributedSales: 0, refunds: 0, refundAmount: 0, fees: 0, netProfit: 0, promo: 0, cogsSb: 0, sellableReturns: 0, sellableBasis: 0 });
 
 function slot(byAsin, asin, mp) {
   const a = byAsin[asin] || (byAsin[asin] = {});
@@ -84,7 +84,14 @@ function resolveByAsin({ wideRows = [], sbRows = [], feeByAsinMpDate = {}, from,
   for (const r of sbRows) {
     if (!inRange(r.date)) continue;
     const s = slot(byAsin, r.asin, r.mp_id);
-    const add = { units: num(r.units), sales: num(r.sales), adSpend: num(r.ad_spend), attributedSales: 0, refunds: num(r.refunds), refundAmount: num(r.refund_amount), fees: num(r.amazon_fees), netProfit: num(r.net_profit), promo: num(r.promo_value), cogsSb: num(r.product_costs) };
+    // Sellable returns: refunds × sellable% for rows that carry the grade;
+    // sellableBasis counts only those refunds, so the display % never mixes
+    // in ungraded rows. Both additive, Sellerboard-only (Amazon side has no
+    // disposition data in this pipeline).
+    const sret = (r.sellable_returns_pct != null && num(r.refunds) > 0)
+      ? { sellableReturns: num(r.refunds) * num(r.sellable_returns_pct) / 100, sellableBasis: num(r.refunds) }
+      : { sellableReturns: 0, sellableBasis: 0 };
+    const add = { units: num(r.units), sales: num(r.sales), adSpend: num(r.ad_spend), attributedSales: 0, refunds: num(r.refunds), refundAmount: num(r.refund_amount), fees: num(r.amazon_fees), netProfit: num(r.net_profit), promo: num(r.promo_value), cogsSb: num(r.product_costs), ...sret };
     for (const k of RESOLVED_METRICS) { s.resolved[k] += add[k]; s.sb[k] += add[k]; }
     s.sbDays.add(r.date);
   }
