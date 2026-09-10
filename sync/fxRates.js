@@ -11,7 +11,7 @@
  * row for each feed day and falls back to the nearest earlier day, then the
  * live rate, then the static fallback.
  */
-const FALLBACK_TO_CAD = { CAD: 1, USD: 1.38, GBP: 1.75 };
+const FALLBACK_TO_CAD = { CAD: 1, USD: 1.38, GBP: 1.75, EUR: 1.62, SEK: 0.147, PLN: 0.38, AED: 0.376 };
 const r4 = v => Math.round(v * 10000) / 10000;
 
 /** Live rate from the same public endpoint server.js uses. Never throws. */

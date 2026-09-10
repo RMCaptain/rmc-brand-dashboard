@@ -15,7 +15,7 @@ const { rows, skipped, headers } = sb.parseFeed(text, { account: 'RMC', asinBran
 assert.strictEqual(headers.length, 68);
 assert.ok(headers.includes('sponsoredbrands'), 'Cyrillic В folded to Latin B');
 assert.strictEqual(rows.length, 4, 'CA×2 + US + UK; DE + bad date skipped');
-assert.deepStrictEqual(skipped.unknownMarketplace, { 'Amazon.de': 1 });
+assert.deepStrictEqual(skipped.unknownMarketplace, { 'Amazon.com.mx': 1 }); // MX deliberately unmapped — Amazon.de became a real marketplace 2026-09-10
 assert.strictEqual(skipped.badDate, 1);
 
 const t1 = rows.find(r => r.sku === 'T1-CAD');

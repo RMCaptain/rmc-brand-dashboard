@@ -49,6 +49,73 @@ const MARKETPLACES = {
     adsProfileEnv: null,                              // Walmart Connect CA is partner-gated
     active: false,
   },
+  // ── RMCo Intl (Sellerboard) EU/MENA marketplaces ─────────────────────────
+  // The Intl Sellerboard account spans 11 marketplaces (confirmed against
+  // list_accounts 2026-09-10): fr, nl, pl, co.uk, de, es, ie, se, ae,
+  // com.be, it. All Sellerboard-only until EU SP-API creds land — money
+  // flows via the INTL feed, no Amazon-side sync, no reconciliation
+  // (decision: Mike, 2026-09-10). `sellerboard` strings match the account's
+  // marketplace names exactly so the feed join never silently drops a row.
+  A1PA6795UKMFR9: {
+    code: 'DE', platform: 'amazon', currency: 'EUR', region: 'eu',
+    label: 'Amazon.de', flag: '🇩🇪', sellerboard: 'Amazon.de',
+    storefront: 'https://www.amazon.de', sellerCentral: 'https://sellercentral.amazon.de',
+    adsProfileEnv: null, active: false,
+  },
+  A13V1IB3VIYZZH: {
+    code: 'FR', platform: 'amazon', currency: 'EUR', region: 'eu',
+    label: 'Amazon.fr', flag: '🇫🇷', sellerboard: 'Amazon.fr',
+    storefront: 'https://www.amazon.fr', sellerCentral: 'https://sellercentral.amazon.fr',
+    adsProfileEnv: null, active: false,
+  },
+  APJ6JRA9NG5V4: {
+    code: 'IT', platform: 'amazon', currency: 'EUR', region: 'eu',
+    label: 'Amazon.it', flag: '🇮🇹', sellerboard: 'Amazon.it',
+    storefront: 'https://www.amazon.it', sellerCentral: 'https://sellercentral.amazon.it',
+    adsProfileEnv: null, active: false,
+  },
+  A1RKKUPIHCS9HS: {
+    code: 'ES', platform: 'amazon', currency: 'EUR', region: 'eu',
+    label: 'Amazon.es', flag: '🇪🇸', sellerboard: 'Amazon.es',
+    storefront: 'https://www.amazon.es', sellerCentral: 'https://sellercentral.amazon.es',
+    adsProfileEnv: null, active: false,
+  },
+  A1805IZSGTT6HS: {
+    code: 'NL', platform: 'amazon', currency: 'EUR', region: 'eu',
+    label: 'Amazon.nl', flag: '🇳🇱', sellerboard: 'Amazon.nl',
+    storefront: 'https://www.amazon.nl', sellerCentral: 'https://sellercentral.amazon.nl',
+    adsProfileEnv: null, active: false,
+  },
+  AMEN7PMS3EDWL: {
+    code: 'BE', platform: 'amazon', currency: 'EUR', region: 'eu',
+    label: 'Amazon.com.be', flag: '🇧🇪', sellerboard: 'Amazon.com.be',
+    storefront: 'https://www.amazon.com.be', sellerCentral: 'https://sellercentral.amazon.com.be',
+    adsProfileEnv: null, active: false,
+  },
+  A28R8C7NBKEWEA: {
+    code: 'IE', platform: 'amazon', currency: 'EUR', region: 'eu',
+    label: 'Amazon.ie', flag: '🇮🇪', sellerboard: 'Amazon.ie',
+    storefront: 'https://www.amazon.ie', sellerCentral: 'https://sellercentral.amazon.ie',
+    adsProfileEnv: null, active: false,
+  },
+  A2NODRKZP88ZB9: {
+    code: 'SE', platform: 'amazon', currency: 'SEK', region: 'eu',
+    label: 'Amazon.se', flag: '🇸🇪', sellerboard: 'Amazon.se',
+    storefront: 'https://www.amazon.se', sellerCentral: 'https://sellercentral.amazon.se',
+    adsProfileEnv: null, active: false,
+  },
+  A1C3SOZRARQ6R3: {
+    code: 'PL', platform: 'amazon', currency: 'PLN', region: 'eu',
+    label: 'Amazon.pl', flag: '🇵🇱', sellerboard: 'Amazon.pl',
+    storefront: 'https://www.amazon.pl', sellerCentral: 'https://sellercentral.amazon.pl',
+    adsProfileEnv: null, active: false,
+  },
+  A2VIGQ35RCS4UG: {
+    code: 'AE', platform: 'amazon', currency: 'AED', region: 'eu',
+    label: 'Amazon.ae', flag: '🇦🇪', sellerboard: 'Amazon.ae',
+    storefront: 'https://www.amazon.ae', sellerCentral: 'https://sellercentral.amazon.ae',
+    adsProfileEnv: null, active: false,
+  },
 };
 
 // SP-API + Ads API hosts by region. Refresh tokens are region-scoped too:
@@ -140,7 +207,14 @@ function bySellerboardName(name) {
   const n = (name || '').trim().toLowerCase();
   if (!n) return null;
   const hit = Object.entries(MARKETPLACES).find(([, m]) => (m.sellerboard || '').toLowerCase() === n);
-  return hit ? { id: hit[0], ...hit[1] } : null;
+  if (hit) return { id: hit[0], ...hit[1] };
+  // Walmart's exact Sellerboard label is unverified until the WMCA feed
+  // carries its first rows (the account showed no marketplaces 2026-09-10).
+  // There is only one Walmart marketplace, so any walmart-ish name maps to
+  // it rather than dropping money on a label guess ("Walmart" vs
+  // "Walmart.ca" vs "Walmart Canada"). Amazon names stay exact-match.
+  if (n.includes('walmart')) return { id: 'walmart_ca', ...MARKETPLACES.walmart_ca };
+  return null;
 }
 
 // Public storefront hostname for a marketplace code ('CA' → www.amazon.ca).

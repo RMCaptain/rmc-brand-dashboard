@@ -60,7 +60,7 @@ beyond Amazon retention) fall back to 14d. Range payloads carry
 
 ## Currency Handling
 
-- Marketplaces live in `sync/marketplaces.js` (id, code, currency, Sellerboard name, storefront). CA = CAD, US = USD, UK = GBP, Walmart.ca = CAD.
+- Marketplaces live in `sync/marketplaces.js` (id, code, currency, Sellerboard name, storefront). CA = CAD, US = USD, Walmart.ca = CAD, plus the 11 RMCo Intl marketplaces (UK = GBP; DE/FR/IT/ES/NL/BE/IE = EUR; SE = SEK; PL = PLN; AE = AED) — Sellerboard-only, no Amazon-side sync. FX (`fx.toCad`) covers every registry currency automatically.
 - Range payloads carry `byMp` (native currency per marketplace, with `source` + `flags`) on skus, brand summaries and financials; legacy `revenueCad` / `revenueUsd` are the CA/US slices of the same resolution (`sync/metricsResolver.js`, Sellerboard first).
 - `/api/fx` returns `toCad` for every registry currency; `public/mp-scope.js` blends the marketplaces in scope through CAD into the display currency (the CAD/USD toggle, in every view).
 - Global marketplace picker (`localStorage.mpFilter`) + CAD/USD display-currency toggle (`localStorage.currency`) in every nav. Reconciliation results are internal only (ledger + integrity check), never rendered in the UI.
