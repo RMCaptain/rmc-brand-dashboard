@@ -500,17 +500,19 @@ app.post('/api/brands', async (req, res) => {
 });
 
 app.put('/api/brands/:id', async (req, res) => {
-  const data = await loadBrands();
-  const idx = data.brands.findIndex(b => b.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Brand not found' });
-
-  const { name, marketplace, color } = req.body;
-  if (name) data.brands[idx].name = name;
-  if (marketplace) data.brands[idx].marketplace = marketplace;
-  if (color) data.brands[idx].color = color;
-
-  await saveBrands(data);
-  res.json(data.brands[idx]);
+  try {
+    const { result } = await mutateBrands(data => {
+      const brand = data.brands.find(b => b.id === req.params.id);
+      if (!brand) return { missing: true };
+      const { name, marketplace, color } = req.body;
+      if (name) brand.name = name;
+      if (marketplace) brand.marketplace = marketplace;
+      if (color) brand.color = color;
+      return { brand };
+    }, { tag: 'brand-update' });
+    if (result.missing) return res.status(404).json({ error: 'Brand not found' });
+    res.json(result.brand);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.delete('/api/brands/:id', async (req, res) => {
@@ -560,80 +562,83 @@ app.post('/api/brands/:id/asins', async (req, res) => {
     return res.status(400).json({ error: 'Invalid ASIN format (must be 10 alphanumeric characters)' });
   }
 
-  const data = await loadBrands();
-  const brand = data.brands.find(b => b.id === req.params.id);
-  if (!brand) return res.status(404).json({ error: 'Brand not found' });
-
   const normalized = asin.trim().toUpperCase();
-  const conflict = data.brands.find(b => b.id !== req.params.id && b.asins.includes(normalized));
-  if (conflict) {
-    return res.status(409).json({ error: `ASIN already assigned to "${conflict.name}"` });
-  }
-
-  if (!brand.asins.includes(normalized)) {
-    brand.asins.push(normalized);
-    await saveBrands(data);
-  }
-  const movedRows = await reattributeUnknownHistory([normalized], brand.id, 'add-asin');
-
-  res.json({ ...brand, movedRows });
+  try {
+    const { result } = await mutateBrands(data => {
+      const brand = data.brands.find(b => b.id === req.params.id);
+      if (!brand) return { missing: true };
+      const conflict = data.brands.find(b => b.id !== req.params.id && b.asins.includes(normalized));
+      if (conflict) return { conflict: conflict.name };
+      if (!brand.asins.includes(normalized)) brand.asins.push(normalized);
+      return { brand };
+    }, { tag: 'add-asin' });
+    if (result.missing) return res.status(404).json({ error: 'Brand not found' });
+    if (result.conflict) return res.status(409).json({ error: `ASIN already assigned to "${result.conflict}"` });
+    const movedRows = await reattributeUnknownHistory([normalized], result.brand.id, 'add-asin');
+    res.json({ ...result.brand, movedRows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.put('/api/brands/:id/asins/:asin/move', async (req, res) => {
   const { toBrandId } = req.body;
   if (!toBrandId) return res.status(400).json({ error: 'toBrandId required' });
 
-  const data = await loadBrands();
-  const fromBrand = data.brands.find(b => b.id === req.params.id);
-  const toBrand = data.brands.find(b => b.id === toBrandId);
-
-  if (!fromBrand) return res.status(404).json({ error: 'Source brand not found' });
-  if (!toBrand) return res.status(404).json({ error: 'Destination brand not found' });
-
   const asin = req.params.asin.toUpperCase();
-  fromBrand.asins = fromBrand.asins.filter(a => a !== asin);
-  if (!toBrand.asins.includes(asin)) toBrand.asins.push(asin);
-
-  await saveBrands(data);
-  const movedRows = await reattributeUnknownHistory([asin], toBrand.id, 'move-asin');
-  res.json({ success: true, from: fromBrand, to: toBrand, movedRows });
+  try {
+    const { result } = await mutateBrands(data => {
+      const fromBrand = data.brands.find(b => b.id === req.params.id);
+      const toBrand = data.brands.find(b => b.id === toBrandId);
+      if (!fromBrand) return { error: 'Source brand not found' };
+      if (!toBrand) return { error: 'Destination brand not found' };
+      fromBrand.asins = fromBrand.asins.filter(a => a !== asin);
+      if (!toBrand.asins.includes(asin)) toBrand.asins.push(asin);
+      return { fromBrand, toBrand };
+    }, { tag: 'move-asin' });
+    if (result.error) return res.status(404).json({ error: result.error });
+    const movedRows = await reattributeUnknownHistory([asin], result.toBrand.id, 'move-asin');
+    res.json({ success: true, from: result.fromBrand, to: result.toBrand, movedRows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/brands/:id/asins/bulk-move', async (req, res) => {
   const { asins, toBrandId } = req.body;
   if (!Array.isArray(asins) || !toBrandId) return res.status(400).json({ error: 'Invalid payload' });
 
-  const data = await loadBrands();
-  const fromBrand = data.brands.find(b => b.id === req.params.id);
-  const toBrand = data.brands.find(b => b.id === toBrandId);
-
-  if (!fromBrand) return res.status(404).json({ error: 'Source brand not found' });
-  if (!toBrand) return res.status(404).json({ error: 'Destination brand not found' });
-
-  for (const asin of asins) {
-    const upper = asin.toUpperCase();
-    fromBrand.asins = fromBrand.asins.filter(a => a !== upper);
-    if (!toBrand.asins.includes(upper)) toBrand.asins.push(upper);
-    if (fromBrand.asinTitles?.[upper]) {
-      toBrand.asinTitles = toBrand.asinTitles || {};
-      toBrand.asinTitles[upper] = fromBrand.asinTitles[upper];
-      delete fromBrand.asinTitles[upper];
-    }
-  }
-
-  await saveBrands(data);
-  const movedRows = await reattributeUnknownHistory(asins, toBrand.id, 'bulk-move');
-  res.json({ success: true, from: fromBrand, to: toBrand, movedRows });
+  try {
+    const { result } = await mutateBrands(data => {
+      const fromBrand = data.brands.find(b => b.id === req.params.id);
+      const toBrand = data.brands.find(b => b.id === toBrandId);
+      if (!fromBrand) return { error: 'Source brand not found' };
+      if (!toBrand) return { error: 'Destination brand not found' };
+      for (const asin of asins) {
+        const upper = asin.toUpperCase();
+        fromBrand.asins = fromBrand.asins.filter(a => a !== upper);
+        if (!toBrand.asins.includes(upper)) toBrand.asins.push(upper);
+        if (fromBrand.asinTitles?.[upper]) {
+          toBrand.asinTitles = toBrand.asinTitles || {};
+          toBrand.asinTitles[upper] = fromBrand.asinTitles[upper];
+          delete fromBrand.asinTitles[upper];
+        }
+      }
+      return { fromBrand, toBrand };
+    }, { tag: 'bulk-move' });
+    if (result.error) return res.status(404).json({ error: result.error });
+    const movedRows = await reattributeUnknownHistory(asins, result.toBrand.id, 'bulk-move');
+    res.json({ success: true, from: result.fromBrand, to: result.toBrand, movedRows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.delete('/api/brands/:id/asins/:asin', async (req, res) => {
-  const data = await loadBrands();
-  const brand = data.brands.find(b => b.id === req.params.id);
-  if (!brand) return res.status(404).json({ error: 'Brand not found' });
-
-  brand.asins = brand.asins.filter(a => a !== req.params.asin.toUpperCase());
-  await saveBrands(data);
-  res.json(brand);
+  try {
+    const { result } = await mutateBrands(data => {
+      const brand = data.brands.find(b => b.id === req.params.id);
+      if (!brand) return { missing: true };
+      brand.asins = brand.asins.filter(a => a !== req.params.asin.toUpperCase());
+      return { brand };
+    }, { tag: 'remove-asin' });
+    if (result.missing) return res.status(404).json({ error: 'Brand not found' });
+    res.json(result.brand);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // PUT set per-marketplace COGS for an ASIN
@@ -6448,23 +6453,62 @@ const BOOT_ASIN_MAPPINGS = [
   { asin: 'B0884WMQ45', brandId: 'general-wholesale' }, // Pacha Soap Whipped Soap Scrub
   { asin: 'B07TTDJ6B3', brandId: 'general-wholesale' }, // Jr Watkins Hand Soap Refill
   { asin: 'B0FPTLTZ4H', brandId: 'supreme-petfoods' },  // Tiny Friends Farm Bathing Sand
+  // Zollipops recovery (Mike, 2026-09-10): the brand card was created, ASINs
+  // assigned, then both duplicate cards got deleted — so the orphan repair had
+  // no live brand to restamp into and parked everything in unknown-brand.
+  // BOOT_BRANDS below recreates the brand; the full SKU list comes from the
+  // Sellerboard catalog (all ZP-* SKUs in the RMC account).
+  { asin: 'B0CSDXL3MZ', brandId: 'zollipops' }, // Zolli Caramelz Chocolate Caramel 142g
+  { asin: 'B0HFKQKGT4', brandId: 'zollipops' }, // Zolli Caramelz Chocolate Caramel 85g
+  { asin: 'B00NUW6GHG', brandId: 'zollipops' }, // Clean Teeth Lollipops Variety 147g
+  { asin: 'B076QRBRLS', brandId: 'zollipops' }, // Clean Teeth Lollipops Variety 88g
+  { asin: 'B00NUW6DYW', brandId: 'zollipops' }, // Clean Teeth Pops Raspberry 15ct
+  { asin: 'B0DFRSQGDF', brandId: 'zollipops' }, // Sour Zaffi Taffy 141g
+  { asin: 'B0HFKFC9JF', brandId: 'zollipops' }, // Sour Zaffi Taffy 85g
+  { asin: 'B0C6W88TZ5', brandId: 'zollipops' }, // Lollipops Variety 88g 2-Pack
+  { asin: 'B0B3B4JTWL', brandId: 'zollipops' }, // Vitamin C Lollipops Variety 226g
+  { asin: 'B0198DHO76', brandId: 'zollipops' }, // Hexagon Variety Jar 150ct
+];
+// Brands recreated at boot (same chat-decision-ships-as-code pattern as the
+// mappings). Idempotent: skipped when a brand with the same id or normalized
+// name already exists.
+const BOOT_BRANDS = [
+  { id: 'zollipops', name: 'Zollipops', marketplace: 'CA' },
 ];
 async function applyBootAsinMappings() {
+  const mapped = []; // { asin, brandId } actually added this boot
   try {
     await mutateBrands(data => {
       let changed = false;
+      mapped.length = 0; // replay-safe: recomputed against fresh state
+      for (const spec of BOOT_BRANDS) {
+        if (data.brands.some(b => b.id === spec.id || brandKey(b.name) === brandKey(spec.name))) continue;
+        const color = BRAND_COLORS[data.brands.length % BRAND_COLORS.length];
+        data.brands.push({ ...spec, color, asins: [], createdAt: new Date().toISOString().split('T')[0] });
+        changed = true;
+        console.log(`[BootMap] created brand '${spec.id}'`);
+      }
       for (const { asin, brandId } of BOOT_ASIN_MAPPINGS) {
         const brand = data.brands.find(b => b.id === brandId);
         if (!brand) { console.warn(`[BootMap] brand '${brandId}' not found — ${asin} skipped`); continue; }
         if (brand.asins.includes(asin)) continue;
+        // Respect a manual assignment made after this list was written.
+        const holder = data.brands.find(b => b.id !== brandId && b.id !== 'unknown-brand' && b.asins.includes(asin));
+        if (holder) { console.log(`[BootMap] ${asin} already in '${holder.id}' — left alone`); continue; }
         brand.asins.push(asin);
         const ub = data.brands.find(b => b.id === 'unknown-brand');
         if (ub?.asins) ub.asins = ub.asins.filter(a => a !== asin);
+        mapped.push({ asin, brandId });
         changed = true;
         console.log(`[BootMap] ${asin} → ${brandId}`);
       }
       return changed;
     }, { tag: 'BootMap' });
+    // Restamp history rows parked under unknown-brand/null so the brand's
+    // reports pick up the past days (mirrors the admin add-asin flow).
+    for (const { asin, brandId } of mapped) {
+      await reattributeUnknownHistory([asin], brandId, 'BootMap');
+    }
   } catch (e) {
     console.warn('[BootMap] failed (non-fatal):', e.message);
   }
@@ -6473,9 +6517,9 @@ async function applyBootAsinMappings() {
 // Repair rows stamped with a brand_id that no longer exists — the residue of
 // a deleted (or lookalike-slug) brand. ASIN assignment restamps history via
 // reattributeUnknownHistory, so a brand deleted minutes after mapping leaves
-// its rows orphaned under a dead id ('zellie-s', 2026-09-10) — invisible in
+// its rows orphaned under a dead id (Zollipops, 2026-09-10) — invisible in
 // Admin, excluded from every report. Recovery: a dead id whose normalized
-// name matches a live brand (zellie-s → zellies) restamps to that brand and
+// name matches a live brand restamps to that brand and
 // the orphaned ASINs join it; anything else restamps to unknown-brand, where
 // the reconcile pass will surface it for a human decision. Idempotent.
 async function repairOrphanBrandIds() {
