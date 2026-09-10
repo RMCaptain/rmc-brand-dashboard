@@ -162,18 +162,51 @@ require('./portal/routes').mountAdmin(app, {
 async function loadBrands() {
   const { data, error } = await supabase
     .from('brands')
-    .select('data')
+    .select('data,updated_at')
     .eq('id', 'main')
     .single();
   if (error || !data?.data?.brands) return { brands: [] };
-  return data.data;
+  const out = data.data;
+  // Revision marker for optimistic locking (non-enumerable: never serialized
+  // back into the blob, invisible to JSON.stringify and Object.keys).
+  Object.defineProperty(out, '_rev', { value: data.updated_at, enumerable: false, configurable: true });
+  return out;
 }
 
+/**
+ * Read-modify-write the brands blob with optimistic locking. `mutator(data)`
+ * mutates in place and returns a truthy result (or false to abort without
+ * saving). On a concurrent write the mutation is REPLAYED against fresh
+ * state — the fix for 2026-09-10, where background writers (boot mappings,
+ * COGS refresh, unknown-brand reconcile) doing plain load→save clobbered
+ * admin edits made mid-deploy and made a brand create/delete look haunted.
+ */
+async function mutateBrands(mutator, { retries = 3, tag = 'mutateBrands' } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    const data = await loadBrands();
+    const result = await mutator(data);
+    if (!result) return { saved: false, result };
+    const saved = await saveBrands(data);
+    if (saved) return { saved: true, result };
+    if (attempt >= retries) throw new Error(`${tag}: brands blob kept changing under us (${retries + 1} attempts)`);
+    console.warn(`[${tag}] concurrent brands write detected — replaying mutation (attempt ${attempt + 2})`);
+  }
+}
+
+// Returns true on success, false when the blob changed since this payload
+// was loaded (optimistic-lock conflict — caller decides: mutateBrands
+// replays; legacy callers without _rev keep last-write-wins).
 async function saveBrands(payload) {
-  await supabase
+  let q = supabase
     .from('brands')
     .update({ data: payload, updated_at: new Date().toISOString() })
     .eq('id', 'main');
+  if (payload._rev) q = q.eq('updated_at', payload._rev);
+  const { data, error } = await q.select('updated_at');
+  if (error) throw new Error(`saveBrands: ${error.message}`);
+  if (payload._rev && (!data || !data.length)) return false;
+  if (data?.[0]?.updated_at) Object.defineProperty(payload, '_rev', { value: data[0].updated_at, enumerable: false, configurable: true });
+  return true;
 }
 
 async function loadPresetMetrics() {
@@ -441,28 +474,29 @@ app.get('/api/brands/:id', async (req, res) => {
   });
 });
 
+// Normalized identity for duplicate detection: "Zellie's" / "Zellies " /
+// "ZELLIES" are all the same brand. slugify alone let "Zellie's" (zellie-s)
+// slip past the exact-id check on 2026-09-10 and mint a lookalike card.
+const brandKey = name => String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+
 app.post('/api/brands', async (req, res) => {
   const { name, marketplace } = req.body;
   if (!name) return res.status(400).json({ error: 'Brand name is required' });
-
-  const data = await loadBrands();
   const id = slugify(name);
-
-  if (data.brands.find(b => b.id === id)) {
-    return res.status(409).json({ error: 'A brand with that name already exists' });
-  }
-
-  const color = BRAND_COLORS[data.brands.length % BRAND_COLORS.length];
-  const newBrand = {
-    id, name,
-    marketplace: marketplace || 'CA',
-    color, asins: [],
-    createdAt: new Date().toISOString().split('T')[0]
-  };
-
-  data.brands.push(newBrand);
-  await saveBrands(data);
-  res.json(newBrand);
+  try {
+    const { result } = await mutateBrands(data => {
+      const clash = data.brands.find(b => b.id === id || brandKey(b.name) === brandKey(name));
+      if (clash) return { clash };
+      const color = BRAND_COLORS[data.brands.length % BRAND_COLORS.length];
+      const newBrand = { id, name, marketplace: marketplace || 'CA', color, asins: [], createdAt: new Date().toISOString().split('T')[0] };
+      data.brands.push(newBrand);
+      return { newBrand };
+    }, { tag: 'brand-create' });
+    if (result.clash) {
+      return res.status(409).json({ error: `A brand with that name already exists ('${result.clash.name}', id ${result.clash.id}) — map ASINs to it instead of creating a duplicate` });
+    }
+    res.json(result.newBrand);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.put('/api/brands/:id', async (req, res) => {
@@ -480,10 +514,17 @@ app.put('/api/brands/:id', async (req, res) => {
 });
 
 app.delete('/api/brands/:id', async (req, res) => {
-  const data = await loadBrands();
-  data.brands = data.brands.filter(b => b.id !== req.params.id);
-  await saveBrands(data);
-  res.json({ success: true });
+  try {
+    const { result } = await mutateBrands(data => {
+      const idx = data.brands.findIndex(b => b.id === req.params.id);
+      if (idx === -1) return { missing: true };
+      const removed = data.brands.splice(idx, 1)[0];
+      return { removed: { id: removed.id, name: removed.name, asins: (removed.asins || []).length } };
+    }, { tag: 'brand-delete' });
+    if (result.missing) return res.status(404).json({ error: 'Brand not found (already deleted?)' });
+    console.log(`[BrandDelete] removed ${result.removed.id} ('${result.removed.name}', ${result.removed.asins} ASINs)`);
+    res.json({ success: true, removed: result.removed });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // When an ASIN gets mapped to a brand, its unknown-brand metric history follows.
@@ -6011,7 +6052,7 @@ app.post('/api/sellerboard/sync', async (req, res) => {
     const liveToCad = (await fetchFxRate().catch(() => null))?.toCad || null;
     const ingest = await syncSellerboardFeeds({ supabase, loadBrands, label: 'Sellerboard-manual', liveToCad });
     if (ingest.feeds.some(f => f.status === 'ok')) {
-      await require('./sync/cogsSb').syncCogsFromSellerboard({ supabase, loadBrands, saveBrands, label: 'Sellerboard-manual-Cogs' })
+      await require('./sync/cogsSb').syncCogsFromSellerboard({ supabase, mutateBrands, label: 'Sellerboard-manual-Cogs' })
         .catch(e => console.warn('[sellerboard/sync] SB COGS refresh failed (non-fatal):', e.message));
     }
     const recon = ingest.feeds.some(f => f.status === 'ok') && req.query.reconcile !== '0'
@@ -6410,28 +6451,81 @@ const BOOT_ASIN_MAPPINGS = [
 ];
 async function applyBootAsinMappings() {
   try {
-    const data = await loadBrands();
-    let changed = false;
-    for (const { asin, brandId } of BOOT_ASIN_MAPPINGS) {
-      const brand = data.brands.find(b => b.id === brandId);
-      if (!brand) { console.warn(`[BootMap] brand '${brandId}' not found — ${asin} skipped`); continue; }
-      if (brand.asins.includes(asin)) continue;
-      brand.asins.push(asin);
-      const ub = data.brands.find(b => b.id === 'unknown-brand');
-      if (ub?.asins) ub.asins = ub.asins.filter(a => a !== asin);
-      changed = true;
-      console.log(`[BootMap] ${asin} → ${brandId}`);
-    }
-    if (changed) await saveBrands(data);
+    await mutateBrands(data => {
+      let changed = false;
+      for (const { asin, brandId } of BOOT_ASIN_MAPPINGS) {
+        const brand = data.brands.find(b => b.id === brandId);
+        if (!brand) { console.warn(`[BootMap] brand '${brandId}' not found — ${asin} skipped`); continue; }
+        if (brand.asins.includes(asin)) continue;
+        brand.asins.push(asin);
+        const ub = data.brands.find(b => b.id === 'unknown-brand');
+        if (ub?.asins) ub.asins = ub.asins.filter(a => a !== asin);
+        changed = true;
+        console.log(`[BootMap] ${asin} → ${brandId}`);
+      }
+      return changed;
+    }, { tag: 'BootMap' });
   } catch (e) {
     console.warn('[BootMap] failed (non-fatal):', e.message);
+  }
+}
+
+// Repair rows stamped with a brand_id that no longer exists — the residue of
+// a deleted (or lookalike-slug) brand. ASIN assignment restamps history via
+// reattributeUnknownHistory, so a brand deleted minutes after mapping leaves
+// its rows orphaned under a dead id ('zellie-s', 2026-09-10) — invisible in
+// Admin, excluded from every report. Recovery: a dead id whose normalized
+// name matches a live brand (zellie-s → zellies) restamps to that brand and
+// the orphaned ASINs join it; anything else restamps to unknown-brand, where
+// the reconcile pass will surface it for a human decision. Idempotent.
+async function repairOrphanBrandIds() {
+  try {
+    const data = await loadBrands();
+    const liveIds = new Set(data.brands.map(b => b.id));
+    const byKey = Object.fromEntries(data.brands.map(b => [brandKey(b.name), b.id]));
+    const orphans = {}; // deadId → Set(asins)
+    for (const table of ['daily_metrics', 'daily_metrics_mp', 'sellerboard_daily']) {
+      for (let off = 0; ; off += 1000) {
+        const { data: rows, error } = await supabase.from(table).select('asin,brand_id')
+          .not('brand_id', 'is', null).range(off, off + 999);
+        if (error) { console.warn(`[OrphanRepair] ${table}:`, error.message); break; }
+        for (const r of (rows || [])) {
+          if (!liveIds.has(r.brand_id)) (orphans[r.brand_id] = orphans[r.brand_id] || new Set()).add(r.asin);
+        }
+        if (!rows || rows.length < 1000) break;
+      }
+    }
+    const deadIds = Object.keys(orphans);
+    if (!deadIds.length) return;
+    for (const deadId of deadIds) {
+      const target = byKey[brandKey(deadId)] || 'unknown-brand';
+      const asins = [...orphans[deadId]];
+      for (const table of ['daily_metrics', 'daily_metrics_mp', 'sellerboard_daily']) {
+        const { error } = await supabase.from(table).update({ brand_id: target }).eq('brand_id', deadId);
+        if (error) console.warn(`[OrphanRepair] ${table} ${deadId}→${target}:`, error.message);
+      }
+      if (target !== 'unknown-brand') {
+        await mutateBrands(d => {
+          const brand = d.brands.find(b => b.id === target);
+          if (!brand) return false;
+          const before = new Set(brand.asins);
+          for (const a of asins) if (!before.has(a)) brand.asins.push(a);
+          const ub = d.brands.find(b => b.id === 'unknown-brand');
+          if (ub?.asins) ub.asins = ub.asins.filter(a => !asins.includes(a));
+          return brand.asins.length !== before.size;
+        }, { tag: 'OrphanRepair' });
+      }
+      console.log(`[OrphanRepair] dead brand_id '${deadId}' → '${target}' (${asins.length} ASINs: ${asins.slice(0, 8).join(', ')}${asins.length > 8 ? '…' : ''})`);
+    }
+  } catch (e) {
+    console.warn('[OrphanRepair] failed (non-fatal):', e.message);
   }
 }
 
 app.listen(PORT, () => {
   console.log(`RMC Brand Dashboard → http://localhost:${PORT}`);
   ensureBootMigrations();
-  applyBootAsinMappings();
+  applyBootAsinMappings().then(() => repairOrphanBrandIds());
   if (process.env.SYNC_ENABLED === 'true') {
     scheduleDailySync();
   } else {
@@ -6713,35 +6807,36 @@ async function runFullSync(tag = 'Sync') {
     // sides) that no real brand claims. Self-healing in both directions —
     // mapping an ASIN to a brand removes it here, new activity adds it.
     try {
-      const dataUb = await loadBrands();
-      const ub = dataUb.brands.find(b => b.id === 'unknown-brand');
-      if (ub) {
-        const mapped = new Set(dataUb.brands.filter(b => b.id !== 'unknown-brand').flatMap(b => b.asins || []));
-        const from90 = pstSubtractDays(pstDateStr(), 90);
-        const active = new Set();
-        for (const [table, cols, live] of [
-          ['daily_metrics', 'asin,units,revenue_cad,revenue_usd,inventory_on_hand,inventory_inbound',
-            r => r.units > 0 || r.revenue_cad > 0 || r.revenue_usd > 0 || r.inventory_on_hand > 0 || r.inventory_inbound > 0],
-          ['sellerboard_daily', 'asin,units,sales', r => r.units > 0 || r.sales > 0],
-        ]) {
-          for (let off = 0; ; off += 1000) {
-            const { data: rows, error } = await supabase.from(table).select(cols)
-              .gte('date', from90).range(off, off + 999);
-            if (error) throw new Error(`${table}: ${error.message}`);
-            for (const r of (rows || [])) if (r.asin && live(r)) active.add(r.asin);
-            if (!rows || rows.length < 1000) break;
-          }
+      const from90 = pstSubtractDays(pstDateStr(), 90);
+      const active = new Set();
+      for (const [table, cols, live] of [
+        ['daily_metrics', 'asin,units,revenue_cad,revenue_usd,inventory_on_hand,inventory_inbound',
+          r => r.units > 0 || r.revenue_cad > 0 || r.revenue_usd > 0 || r.inventory_on_hand > 0 || r.inventory_inbound > 0],
+        ['sellerboard_daily', 'asin,units,sales', r => r.units > 0 || r.sales > 0],
+      ]) {
+        for (let off = 0; ; off += 1000) {
+          const { data: rows, error } = await supabase.from(table).select(cols)
+            .gte('date', from90).range(off, off + 999);
+          if (error) throw new Error(`${table}: ${error.message}`);
+          for (const r of (rows || [])) if (r.asin && live(r)) active.add(r.asin);
+          if (!rows || rows.length < 1000) break;
         }
+      }
+      // Mutation replays against fresh state on a concurrent admin edit —
+      // `mapped` is derived INSIDE so a just-mapped ASIN never bounces back.
+      await mutateBrands(dataUb => {
+        const ub = dataUb.brands.find(b => b.id === 'unknown-brand');
+        if (!ub) return false;
+        const mapped = new Set(dataUb.brands.filter(b => b.id !== 'unknown-brand').flatMap(b => b.asins || []));
         const next = [...active].filter(a => !mapped.has(a)).sort();
         const before = new Set(ub.asins || []);
         const added = next.filter(a => !before.has(a));
         const dropped = [...before].filter(a => !active.has(a));
-        if (added.length || dropped.length) {
-          ub.asins = next;
-          await saveBrands(dataUb);
-          console.log(`[${tag}] unknown-brand reconciled: +${added.length} active unmapped (${added.slice(0, 5).join(', ')}${added.length > 5 ? '…' : ''}), -${dropped.length} dead (${dropped.slice(0, 5).join(', ')}${dropped.length > 5 ? '…' : ''})`);
-        }
-      }
+        if (!added.length && !dropped.length) return false;
+        ub.asins = next;
+        console.log(`[${tag}] unknown-brand reconciled: +${added.length} active unmapped (${added.slice(0, 5).join(', ')}${added.length > 5 ? '…' : ''}), -${dropped.length} dead (${dropped.slice(0, 5).join(', ')}${dropped.length > 5 ? '…' : ''})`);
+        return true;
+      }, { tag: `${tag}-UnknownReconcile` });
     } catch (pruneErr) {
       console.warn(`[${tag}] unknown-brand reconcile failed (non-fatal):`, pruneErr.message);
     }
@@ -7087,7 +7182,7 @@ function scheduleDailySync() {
     // back to the previous values if this pass fails.
     let cogs = null;
     try {
-      cogs = await require('./sync/cogsSb').syncCogsFromSellerboard({ supabase, loadBrands, saveBrands, label: `${tag}-Cogs` });
+      cogs = await require('./sync/cogsSb').syncCogsFromSellerboard({ supabase, mutateBrands, label: `${tag}-Cogs` });
     } catch (e) { console.warn(`[${tag}] SB COGS refresh failed (non-fatal):`, e.message); }
     const recon = await reconcileSellerboard({ supabase, loadBrands, label: tag });
     return { ingest, cogs, recon };

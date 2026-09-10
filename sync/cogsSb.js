@@ -72,7 +72,7 @@ function deriveUnitCogs(rows) {
  * entries with no fresh data are KEPT (a SKU that paused selling keeps its
  * last known cost) — the whole map is never wiped by a thin feed day.
  */
-async function syncCogsFromSellerboard({ supabase, loadBrands, saveBrands, days = 30, label = 'CogsSb' }) {
+async function syncCogsFromSellerboard({ supabase, mutateBrands, days = 30, label = 'CogsSb' }) {
   const { pstDateStr, pstSubtractDays } = require('./dateUtils');
   const to = pstSubtractDays(pstDateStr(), 1);
   const from = pstSubtractDays(to, days - 1);
@@ -94,18 +94,20 @@ async function syncCogsFromSellerboard({ supabase, loadBrands, saveBrands, days 
     return { updated: 0, asins: 0 };
   }
 
-  const data = await loadBrands();
   let updated = 0, asins = 0;
-  for (const brand of data.brands || []) {
-    for (const asin of brand.asins || []) {
-      const d = derived[asin];
-      if (!d) continue;
-      brand.cogsSb = brand.cogsSb || {};
-      brand.cogsSb[asin] = { ...(brand.cogsSb[asin] || {}), ...d };
-      asins++; updated += Object.keys(d).length;
+  await mutateBrands(data => {
+    updated = 0; asins = 0; // recomputed on replay against fresh state
+    for (const brand of data.brands || []) {
+      for (const asin of brand.asins || []) {
+        const d = derived[asin];
+        if (!d) continue;
+        brand.cogsSb = brand.cogsSb || {};
+        brand.cogsSb[asin] = { ...(brand.cogsSb[asin] || {}), ...d };
+        asins++; updated += Object.keys(d).length;
+      }
     }
-  }
-  await saveBrands(data);
+    return asins > 0;
+  }, { tag: label });
   console.log(`[${label}] wrote SB unit COGS for ${asins} ASINs (${updated} marketplace entries, window ${from}..${to})`);
   return { updated, asins };
 }
