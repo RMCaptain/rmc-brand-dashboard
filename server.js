@@ -6383,9 +6383,39 @@ async function ensureBootMigrations() {
   }
 }
 
+// One-shot ASIN mappings applied at boot (idempotent: no-op once the ASIN
+// is in the target brand). The remote build session can't reach the authed
+// admin API, but a deploy runs here WITH credentials — so a mapping decided
+// in chat ships as code and self-applies. Root-caused 2026-09-10: both had
+// real sales but were in no brand's asins[] (the 'invisibles' bug).
+const BOOT_ASIN_MAPPINGS = [
+  { asin: 'B0GLZ1448F', brandId: 'zellies' },  // 540ct Spearmint Mints — Zellies' missing 23 Aug units
+  { asin: 'B007ACZW1I', brandId: 'trimax' },   // TDBC22516 Double Tow Ball Mount
+];
+async function applyBootAsinMappings() {
+  try {
+    const data = await loadBrands();
+    let changed = false;
+    for (const { asin, brandId } of BOOT_ASIN_MAPPINGS) {
+      const brand = data.brands.find(b => b.id === brandId);
+      if (!brand) { console.warn(`[BootMap] brand '${brandId}' not found — ${asin} skipped`); continue; }
+      if (brand.asins.includes(asin)) continue;
+      brand.asins.push(asin);
+      const ub = data.brands.find(b => b.id === 'unknown-brand');
+      if (ub?.asins) ub.asins = ub.asins.filter(a => a !== asin);
+      changed = true;
+      console.log(`[BootMap] ${asin} → ${brandId}`);
+    }
+    if (changed) await saveBrands(data);
+  } catch (e) {
+    console.warn('[BootMap] failed (non-fatal):', e.message);
+  }
+}
+
 app.listen(PORT, () => {
   console.log(`RMC Brand Dashboard → http://localhost:${PORT}`);
   ensureBootMigrations();
+  applyBootAsinMappings();
   if (process.env.SYNC_ENABLED === 'true') {
     scheduleDailySync();
   } else {
@@ -6652,21 +6682,27 @@ async function runFullSync(tag = 'Sync') {
     syncState = { status: 'done', lastSync, error: null };
     console.log(`[${tag}] Done:`, lastSync);
 
-    // Prune dead ASINs from unknown-brand. Amazon's account-level S&T
-    // report emits rows for ASINs whose listings are gone (variation-merge
-    // ghosts, deleted duplicates, drafts that grabbed a few bot sessions),
-    // and the auto-map parks every one of them in unknown-brand — where
-    // they sit titleless in Admin forever. Anything with NO money activity
-    // and NO inventory in the trailing 90 days (both Amazon and Sellerboard
-    // sides) gets dropped. Fully self-healing: an ASIN that ever shows
-    // activity again is re-added by the very next sync's auto-map, so the
-    // prune can never lose real sales.
+    // Reconcile unknown-brand to EXACTLY the active-but-unmapped set.
+    // Two failure modes this kills (both hit 2026-09-10):
+    //  - ghosts: Amazon's account-level S&T emits rows for ASINs whose
+    //    listings are gone (variation-merge ghosts, deleted duplicates,
+    //    drafts with a few bot sessions); the auto-map parked them in
+    //    unknown-brand where they sat titleless in Admin forever.
+    //  - invisibles: ASINs with real sales (B0GLZ1448F, B007ACZW1I) that
+    //    never got parked at all — they showed up in report safety-net
+    //    metrics as "Unknown Brand" but were in NO brand's asins[], so
+    //    Admin had nothing to remap. Un-actionable money.
+    // After every sync: unknown-brand.asins = every ASIN with money
+    // activity or inventory in the trailing 90 days (Amazon + Sellerboard
+    // sides) that no real brand claims. Self-healing in both directions —
+    // mapping an ASIN to a brand removes it here, new activity adds it.
     try {
-      const data90 = await loadBrands();
-      const ub = data90.brands.find(b => b.id === 'unknown-brand');
-      if (ub?.asins?.length) {
+      const dataUb = await loadBrands();
+      const ub = dataUb.brands.find(b => b.id === 'unknown-brand');
+      if (ub) {
+        const mapped = new Set(dataUb.brands.filter(b => b.id !== 'unknown-brand').flatMap(b => b.asins || []));
         const from90 = pstSubtractDays(pstDateStr(), 90);
-        const keep = new Set();
+        const active = new Set();
         for (const [table, cols, live] of [
           ['daily_metrics', 'asin,units,revenue_cad,revenue_usd,inventory_on_hand,inventory_inbound',
             r => r.units > 0 || r.revenue_cad > 0 || r.revenue_usd > 0 || r.inventory_on_hand > 0 || r.inventory_inbound > 0],
@@ -6674,21 +6710,24 @@ async function runFullSync(tag = 'Sync') {
         ]) {
           for (let off = 0; ; off += 1000) {
             const { data: rows, error } = await supabase.from(table).select(cols)
-              .in('asin', ub.asins).gte('date', from90).range(off, off + 999);
+              .gte('date', from90).range(off, off + 999);
             if (error) throw new Error(`${table}: ${error.message}`);
-            for (const r of (rows || [])) if (live(r)) keep.add(r.asin);
+            for (const r of (rows || [])) if (r.asin && live(r)) active.add(r.asin);
             if (!rows || rows.length < 1000) break;
           }
         }
-        const dead = ub.asins.filter(a => !keep.has(a));
-        if (dead.length) {
-          ub.asins = ub.asins.filter(a => keep.has(a));
-          await saveBrands(data90);
-          console.log(`[${tag}] Pruned ${dead.length} dead ASINs from unknown-brand (no activity/inventory in 90d): ${dead.slice(0, 10).join(', ')}${dead.length > 10 ? '…' : ''}`);
+        const next = [...active].filter(a => !mapped.has(a)).sort();
+        const before = new Set(ub.asins || []);
+        const added = next.filter(a => !before.has(a));
+        const dropped = [...before].filter(a => !active.has(a));
+        if (added.length || dropped.length) {
+          ub.asins = next;
+          await saveBrands(dataUb);
+          console.log(`[${tag}] unknown-brand reconciled: +${added.length} active unmapped (${added.slice(0, 5).join(', ')}${added.length > 5 ? '…' : ''}), -${dropped.length} dead (${dropped.slice(0, 5).join(', ')}${dropped.length > 5 ? '…' : ''})`);
         }
       }
     } catch (pruneErr) {
-      console.warn(`[${tag}] unknown-brand prune failed (non-fatal):`, pruneErr.message);
+      console.warn(`[${tag}] unknown-brand reconcile failed (non-fatal):`, pruneErr.message);
     }
 
     // Write yesterday's per-ASIN data to daily_metrics for rolling history
