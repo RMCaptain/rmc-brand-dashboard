@@ -6383,9 +6383,39 @@ async function ensureBootMigrations() {
   }
 }
 
+// One-shot ASIN mappings applied at boot (idempotent: no-op once the ASIN
+// is in the target brand). The remote build session can't reach the authed
+// admin API, but a deploy runs here WITH credentials — so a mapping decided
+// in chat ships as code and self-applies. Root-caused 2026-09-10: both had
+// real sales but were in no brand's asins[] (the 'invisibles' bug).
+const BOOT_ASIN_MAPPINGS = [
+  { asin: 'B0GLZ1448F', brandId: 'zellies' },  // 540ct Spearmint Mints — Zellies' missing 23 Aug units
+  { asin: 'B007ACZW1I', brandId: 'trimax' },   // TDBC22516 Double Tow Ball Mount
+];
+async function applyBootAsinMappings() {
+  try {
+    const data = await loadBrands();
+    let changed = false;
+    for (const { asin, brandId } of BOOT_ASIN_MAPPINGS) {
+      const brand = data.brands.find(b => b.id === brandId);
+      if (!brand) { console.warn(`[BootMap] brand '${brandId}' not found — ${asin} skipped`); continue; }
+      if (brand.asins.includes(asin)) continue;
+      brand.asins.push(asin);
+      const ub = data.brands.find(b => b.id === 'unknown-brand');
+      if (ub?.asins) ub.asins = ub.asins.filter(a => a !== asin);
+      changed = true;
+      console.log(`[BootMap] ${asin} → ${brandId}`);
+    }
+    if (changed) await saveBrands(data);
+  } catch (e) {
+    console.warn('[BootMap] failed (non-fatal):', e.message);
+  }
+}
+
 app.listen(PORT, () => {
   console.log(`RMC Brand Dashboard → http://localhost:${PORT}`);
   ensureBootMigrations();
+  applyBootAsinMappings();
   if (process.env.SYNC_ENABLED === 'true') {
     scheduleDailySync();
   } else {
