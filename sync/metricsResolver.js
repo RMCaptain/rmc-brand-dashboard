@@ -58,8 +58,8 @@ function wideParts(r) {
     else refCa = refUnits;
   }
   return {
-    [CA]: { units: num(r.units_ca), sales: num(r.revenue_cad), adSpend: num(r.spend_cad), attributedSales: num(r.attributed_sales_cad), refunds: refCa, refundAmount: rc },
-    [US]: { units: num(r.units_us), sales: num(r.revenue_usd), adSpend: num(r.spend_usd), attributedSales: num(r.attributed_sales_usd), refunds: refUs, refundAmount: ru },
+    [CA]: { units: num(r.units_ca), sales: num(r.revenue_cad), adSpend: num(r.spend_cad), attributedSales: num(r.attributed_sales_7d_cad ?? r.attributed_sales_cad), refunds: refCa, refundAmount: rc },
+    [US]: { units: num(r.units_us), sales: num(r.revenue_usd), adSpend: num(r.spend_usd), attributedSales: num(r.attributed_sales_7d_usd ?? r.attributed_sales_usd), refunds: refUs, refundAmount: ru },
   };
 }
 

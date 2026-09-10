@@ -28,7 +28,7 @@ const D1 = d(2), D2 = d(1), D3 = d(0);
   assert.strictEqual(a1.unitsCad, 38);
   assert.strictEqual(a1.revenueCad, 380);
   assert.strictEqual(a1.spendCad, 12);
-  assert.strictEqual(a1.attributedSalesCad, 34);
+  assert.strictEqual(a1.attributedSalesCad, 32); // 7d-first: d1 7d=18, d2 14d fallback=14
   assert.strictEqual(a1.feesCad, 98);
   assert.strictEqual(a1.sessions, 135);
   assert.strictEqual(a1.inventory.onHand, 85);

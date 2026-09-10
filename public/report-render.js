@@ -600,8 +600,11 @@ const SHARED_RENDERERS = {
     const stat = (label, value, sub) => `<div class="ad-stat"><div class="ad-stat-label">${label}</div><div class="ad-stat-value">${value}</div>${sub ? `<div class="ad-stat-sub">${sub}</div>` : ''}</div>`;
     const totalSpend = (ad.spendCad || 0) + (ad.spendUsd || 0);
     const totalAttr  = (ad.attributedSalesCad || 0) + (ad.attributedSalesUsd || 0);
+    const attrNote = d.adAttribution === '14d' ? '14-day attribution (pre-May 2026 data)'
+                   : d.adAttribution === 'mixed' ? '7-day attribution (14-day before May 2026)'
+                   : '7-day attribution';
     return `
-      <div class="ad-section-sub">Sales &amp; spend</div>
+      <div class="ad-section-sub">Sales &amp; spend <span class="ad-attr-note" style="font-weight:400;opacity:.65">· Sponsored Products, ${attrNote}</span></div>
       <div class="ad-grid">
         ${stat('Total Ad Sales', fmtC(totalAttr, '$'), `CAD ${fmtC(ad.attributedSalesCad)} · USD ${fmtC(ad.attributedSalesUsd, 'US$')}`)}
         ${stat('Total Spend',    fmtC(totalSpend, '$'), `CAD ${fmtC(ad.spendCad)} · USD ${fmtC(ad.spendUsd, 'US$')}`)}

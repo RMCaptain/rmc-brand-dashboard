@@ -87,7 +87,7 @@ async function createAdReport(profileId, token, startDate, endDate) {
     configuration: {
       adProduct:    'SPONSORED_PRODUCTS',
       groupBy:      ['advertiser'],
-      columns:      ['advertisedAsin', 'cost', 'sales14d', 'clicks', 'impressions', 'purchases14d'],
+      columns:      ['advertisedAsin', 'cost', 'sales7d', 'sales14d', 'clicks', 'impressions', 'purchases7d', 'purchases14d'],
       reportTypeId: 'spAdvertisedProduct',
       timeUnit:     'SUMMARY',
       format:       'GZIP_JSON',
@@ -151,17 +151,20 @@ async function downloadAdReport(url) {
 // ── Parse ─────────────────────────────────────────────────────────────────────
 
 function parseAdReport(rows) {
-  // rows: [{ advertisedAsin, cost, sales14d, clicks, impressions, purchases14d }]
+  // rows: [{ advertisedAsin, cost, sales7d, sales14d, clicks, impressions, purchases7d, purchases14d }]
+  // 7d attribution everywhere (2026-08-13 decision) — matches the Ads console
+  // and the master sheet. The report request pulls both windows; the daily
+  // writer still persists both to daily_metrics.
   const result = {};
   for (const row of (rows || [])) {
     const asin = row.advertisedAsin;
     if (!asin) continue;
     if (!result[asin]) result[asin] = { spend: 0, attributedSales: 0, clicks: 0, impressions: 0, orders: 0 };
     result[asin].spend          += Number(row.cost             || 0);
-    result[asin].attributedSales += Number(row.sales14d || 0);
+    result[asin].attributedSales += Number(row.sales7d ?? row.sales14d ?? 0);
     result[asin].clicks         += Number(row.clicks           || 0);
     result[asin].impressions    += Number(row.impressions      || 0);
-    result[asin].orders         += Number(row.purchases14d     || 0);
+    result[asin].orders         += Number(row.purchases7d ?? row.purchases14d ?? 0);
   }
   // Compute derived metrics per ASIN
   for (const d of Object.values(result)) {

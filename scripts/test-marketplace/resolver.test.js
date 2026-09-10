@@ -5,7 +5,7 @@ const CA = 'A2EUQ1WTGCTBG2', US = 'ATVPDKIKX0DER', UK = 'A1F83G8C2ARO7P';
 
 // Range: d1..d3. Sellerboard covers CA on d2,d3 and UK on d3; nothing for US.
 const wideRows = [
-  { date: 'd1', asin: 'A', units: 10, units_ca: 10, units_us: 0, revenue_cad: 100, revenue_usd: 0, spend_cad: 5, spend_usd: 0, attributed_sales_cad: 20, attributed_sales_usd: 0, refunded_units: 1, refund_amount_cad: 10, refund_amount_usd: 0 },
+  { date: 'd1', asin: 'A', units: 10, units_ca: 10, units_us: 0, revenue_cad: 100, revenue_usd: 0, spend_cad: 5, spend_usd: 0, attributed_sales_cad: 20, attributed_sales_usd: 0, attributed_sales_7d_cad: 18, attributed_sales_7d_usd: 0, refunded_units: 1, refund_amount_cad: 10, refund_amount_usd: 0 },
   { date: 'd2', asin: 'A', units: 12, units_ca: 7, units_us: 5, revenue_cad: 70, revenue_usd: 60, spend_cad: 3, spend_usd: 2, attributed_sales_cad: 14, attributed_sales_usd: 12, refunded_units: 0, refund_amount_cad: 0, refund_amount_usd: 0 },
   { date: 'd3', asin: 'A', units: 8,  units_ca: 8, units_us: 0, revenue_cad: 90, revenue_usd: 0, spend_cad: 4, spend_usd: 0, attributed_sales_cad: 0,  attributed_sales_usd: 0, refunded_units: 2, refund_amount_cad: 0, refund_amount_usd: 0 },
   { date: 'd3', asin: 'B', units: 3,  units_ca: 3, units_us: 0, revenue_cad: 30, revenue_usd: 0, spend_cad: 0, spend_usd: 0, attributed_sales_cad: 0,  attributed_sales_usd: 0, refunded_units: 0, refund_amount_cad: 0, refund_amount_usd: 0 },
@@ -32,7 +32,7 @@ assert.strictEqual(aCA.resolved.fees, 98);
 assert.strictEqual(aCA.resolved.refunds, 3);
 assert.strictEqual(aCA.resolved.refundAmount, 10);
 assert.strictEqual(aCA.resolved.netProfit, 124);
-assert.strictEqual(aCA.resolved.attributedSales, 34);   // Amazon-only metric carried on all days
+assert.strictEqual(aCA.resolved.attributedSales, 32);   // Amazon-only metric, 7d-first (d1: 7d=18 wins over 14d=20; d2: no 7d row, falls back to 14d=14)
 assert.strictEqual(aCA.source, 'mixed');
 assert.strictEqual(aCA.sbDays, 2);
 assert.strictEqual(aCA.amzDays, 2);

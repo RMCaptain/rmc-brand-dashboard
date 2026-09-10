@@ -69,7 +69,7 @@ const TOOLS = [
   },
   {
     name: 'get_brand_report',
-    description: 'Full report dataset for one brand and period: summary (units, revenue CAD/USD, sessions, CVR, Buy Box, refunds, ad summary with spend/sales/clicks/impressions/ACOS/TACOS), per-ASIN products, true order counts, inventory, and a prior comparison period. Defaults to last calendar month vs the month before. Pass from/to (YYYY-MM-DD) for a custom window; compFrom/compTo for a custom comparison. Set includeDaily=true only when you need day-by-day series (large). Ads data is Sponsored Products only, CA+US.',
+    description: 'Full report dataset for one brand and period: summary (units, revenue CAD/USD, sessions, CVR, Buy Box, refunds, ad summary with spend/sales/clicks/impressions/ACOS/TACOS), per-ASIN products, true order counts, inventory, and a prior comparison period. Defaults to last calendar month vs the month before. Pass from/to (YYYY-MM-DD) for a custom window; compFrom/compTo for a custom comparison. Set includeDaily=true only when you need day-by-day series (large). Ads data is Sponsored Products only, CA+US, 7-day attribution (14-day fallback for pre-May-2026 rows; dataset.adAttribution says which).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -194,7 +194,7 @@ async function handleMessage(msg) {
         protocolVersion,
         capabilities: { tools: {} },
         serverInfo: { name: 'RMC Brand Dashboard', version: '1.0.0' },
-        instructions: 'Read-only tools over the RMC brand dashboard (Amazon CA/US sales, sessions, ads, search terms, Data Dive keywords). Start with list_brands to get brand ids. Ads data is Sponsored Products only. Always state the period and pull time next to any number you quote.',
+        instructions: 'Read-only tools over the RMC brand dashboard (Amazon CA/US sales, sessions, ads, search terms, Data Dive keywords). Start with list_brands to get brand ids. Ads data is Sponsored Products only, 7-day attribution. Always state the period and pull time next to any number you quote.',
       });
     }
     case 'ping':

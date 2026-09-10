@@ -2471,14 +2471,14 @@ app.get('/api/metrics/yesterday', async (req, res) => {
       const sess = dm?.sessions     || 0;
       const sCad = dm?.spend_cad    || 0;
       const sUsd = dm?.spend_usd    || 0;
-      const aCad = dm?.attributed_sales_cad || 0;
-      const aUsd = dm?.attributed_sales_usd || 0;
+      const aCad = (dm?.attributed_sales_7d_cad ?? dm?.attributed_sales_cad) || 0;
+      const aUsd = (dm?.attributed_sales_7d_usd ?? dm?.attributed_sales_usd) || 0;
       const bb   = dm?.buy_box_pct;
 
       units += u; unitsCa += ca; unitsUs += us; revCad += rc; revUsd += ru;
       sessions += sess; spendCad += sCad; spendUsd += sUsd;
       attrSalesCad += aCad; attrSalesUsd += aUsd;
-      adClicks += dm?.ad_clicks || 0; adImpressions += dm?.ad_impressions || 0; adOrders += dm?.ad_orders || 0;
+      adClicks += dm?.ad_clicks || 0; adImpressions += dm?.ad_impressions || 0; adOrders += (dm?.ad_orders_7d ?? dm?.ad_orders) || 0;
       if (bb != null && bb > 0) buyBoxSamples.push(bb);
 
       const spendTotal = sCad + sUsd * fx.usdToCad;
@@ -3731,6 +3731,10 @@ app.post('/api/backfill', async (req, res) => {
 // (which corrects the cached preset_metrics summaries that were drifting from
 // daily_metrics). The aggregation is the canonical "what does daily_metrics say"
 // computation — anything else that needs per-brand totals should call this.
+// First date with 7d attribution data (Amazon retention limit at the
+// 2026-05 backfill). Before this, 7d columns are NULL and reads fall back 14d.
+const AD_ATTR_7D_SINCE = '2026-05-08';
+
 async function buildBrandMetricsForRange(from, to, presetKey = null) {
   const { brands } = await loadBrands();
   const pm = await loadPresetMetrics();
@@ -3800,11 +3804,11 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
       a.revenue_usd += row.revenue_usd || 0;
       a.spend_cad      += row.spend_cad             || 0;
       a.spend_usd      += row.spend_usd             || 0;
-      a.attr_sales_cad += row.attributed_sales_cad  || 0;
-      a.attr_sales_usd += row.attributed_sales_usd  || 0;
+      a.attr_sales_cad += (row.attributed_sales_7d_cad ?? row.attributed_sales_cad) || 0;
+      a.attr_sales_usd += (row.attributed_sales_7d_usd ?? row.attributed_sales_usd) || 0;
       a.ad_clicks      += row.ad_clicks             || 0;
       a.ad_impressions += row.ad_impressions        || 0;
-      a.ad_orders      += row.ad_orders             || 0;
+      a.ad_orders      += (row.ad_orders_7d ?? row.ad_orders) || 0;
       a.refunded_units     = (a.refunded_units     || 0) + (row.refunded_units    || 0);
       a.refund_amount_cad  = (a.refund_amount_cad  || 0) + (row.refund_amount_cad || 0);
       a.refund_amount_usd  = (a.refund_amount_usd  || 0) + (row.refund_amount_usd || 0);
@@ -4196,6 +4200,10 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
       marketplaces: resolved.marketplaces.map(mp => ({ id: mp, code: MPreg.codeOf(mp) || mp, currency: MPreg.currencyOf(mp), label: MPreg.byId(mp)?.label || mp })),
       sources: { sellerboard: resolved.coverage },
       flags: accountFlags,
+      // Ad-sales attribution window. 7d everywhere (decision 2026-08-13);
+      // rows before 2026-05-08 predate the 7d backfill and fall back to 14d
+      // per row, so ranges touching that boundary are 'mixed'.
+      adAttribution: to < AD_ATTR_7D_SINCE ? '14d' : (from < AD_ATTR_7D_SINCE ? 'mixed' : '7d'),
     };
 }
 
@@ -5312,7 +5320,7 @@ async function buildBrandReportDataset(brandId, query = {}) {
       const out = [];
       for (let off = 0; ; off += 1000) {
         const { data, error } = await supabase.from('daily_metrics')
-          .select('asin,date,revenue_cad,revenue_usd,units,spend_cad,spend_usd,attributed_sales_cad,attributed_sales_usd')
+          .select('asin,date,revenue_cad,revenue_usd,units,spend_cad,spend_usd,attributed_sales_cad,attributed_sales_usd,attributed_sales_7d_cad,attributed_sales_7d_usd')
           .in('asin', [...brandAsinSet]).gte('date', fromS).lte('date', toS)
           .order('date').range(off, off + 999);
         if (error) throw new Error(error.message);
@@ -5330,8 +5338,8 @@ async function buildBrandReportDataset(brandId, query = {}) {
         byDate[r.date].units      += r.units                || 0;
         byDate[r.date].spendCad   += r.spend_cad            || 0;
         byDate[r.date].spendUsd   += r.spend_usd            || 0;
-        byDate[r.date].adSalesCad += r.attributed_sales_cad || 0;
-        byDate[r.date].adSalesUsd += r.attributed_sales_usd || 0;
+        byDate[r.date].adSalesCad += (r.attributed_sales_7d_cad ?? r.attributed_sales_cad) || 0;
+        byDate[r.date].adSalesUsd += (r.attributed_sales_7d_usd ?? r.attributed_sales_usd) || 0;
       }
       // Round monetary values so the client doesn't show .000001 artifacts.
       return Object.values(byDate)
@@ -5424,6 +5432,8 @@ async function buildBrandReportDataset(brandId, query = {}) {
       } : null,
       // Lets the renderer tell "no data" apart from "zero" — see getDataCoverage.
       coverage: await getDataCoverage(),
+      // Ad-sales attribution window for this period (7d | mixed | 14d).
+      adAttribution: currAll.adAttribution,
       generatedAt: new Date().toISOString(),
     };
   }
