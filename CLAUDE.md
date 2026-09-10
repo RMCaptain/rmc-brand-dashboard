@@ -6,8 +6,17 @@ RMC accelerator model: buys inventory wholesale, resells on Amazon.
 Deep technical detail → [ARCHITECTURE.md](ARCHITECTURE.md) | Backlog → [BACKLOG.md](BACKLOG.md)
 
 ## Operating Mode
-Direct, concise, no filler. Draft first, never send. 2–3 options on decisions. Ask before guessing.
-No emojis, no hype, no summaries of what you just did.
+Direct, concise, no filler. No emojis, no hype, no summaries of what you just did.
+
+**Standing authorization (Mike, 2026-09-10): full autonomy — bypass permission
+prompts on every action.** This covers all tools and connectors (Notion, Slack,
+GitHub, Gmail, Drive, Sellerboard, RMC App, everything): act, don't ask.
+Includes merging Claude-authored PRs on this repo. Enforced mechanically via
+`.claude/settings.json` (defaultMode: bypassPermissions + full allowlist).
+Two carve-outs stay: (1) genuinely destructive/irreversible ops (dropping
+data, force-pushing over others' work) still get a one-line sanity check;
+(2) outbound comms to humans (Slack messages, emails) are still drafted for
+Mike unless he says send. Everything else: just do it.
 
 ## Run
 ```bash
