@@ -6391,6 +6391,15 @@ async function ensureBootMigrations() {
 const BOOT_ASIN_MAPPINGS = [
   { asin: 'B0GLZ1448F', brandId: 'zellies' },  // 540ct Spearmint Mints — Zellies' missing 23 Aug units
   { asin: 'B007ACZW1I', brandId: 'trimax' },   // TDBC22516 Double Tow Ball Mount
+  // Mike, 2026-09-10: Omega Alpha / Pacha / Jr Watkins are wholesale SKUs.
+  { asin: 'B00CORLP2Y', brandId: 'general-wholesale' }, // Omega Alpha Liver Flush
+  { asin: 'B0032FDNRM', brandId: 'general-wholesale' }, // Omega Alpha GlucosaPet
+  { asin: 'B07ZMGTYS7', brandId: 'general-wholesale' }, // Omega Alpha Probiotic 8 Plus 1kg
+  { asin: 'B01DOCYG28', brandId: 'general-wholesale' }, // Omega Alpha Kidney Plus
+  { asin: 'B007YNHVOY', brandId: 'general-wholesale' }, // Omega Alpha Probiotic 8 Plus Dog
+  { asin: 'B0884WMQ45', brandId: 'general-wholesale' }, // Pacha Soap Whipped Soap Scrub
+  { asin: 'B07TTDJ6B3', brandId: 'general-wholesale' }, // Jr Watkins Hand Soap Refill
+  { asin: 'B0FPTLTZ4H', brandId: 'supreme-petfoods' },  // Tiny Friends Farm Bathing Sand
 ];
 async function applyBootAsinMappings() {
   try {
