@@ -615,18 +615,33 @@ async function getFinancialSummary(startDate, endDate, token) {
       }
     }
 
-    // Refunds — returned principal + refund processing fees
-    for (const refund of (events.RefundEventList || [])) {
+    // Refunds — returned principal + refund processing fees.
+    // Basis fixes (2026-09-11, CA account_7d refunds flag ran ~20-30% under
+    // Sellerboard for a week straight):
+    //  1. Count refunded UNITS (QuantityShipped), not adjustment rows — a
+    //     2-unit refund is one ShipmentItemAdjustment but 2 in Sellerboard's
+    //     refunds column, so the old ++ per item undercounted structurally.
+    //  2. Fold in GuaranteeClaimEventList (A-to-z claims) and
+    //     ChargebackEventList: same ShipmentItemAdjustmentList shape, money
+    //     out that Sellerboard books as refunds, but never present in
+    //     RefundEventList — invisible to the old walk entirely.
+    const refundLikeEvents = [
+      ...(events.RefundEventList || []),
+      ...(events.GuaranteeClaimEventList || []),
+      ...(events.ChargebackEventList || []),
+    ];
+    for (const refund of refundLikeEvents) {
       for (const item of (refund.ShipmentItemAdjustmentList || [])) {
-        result.refundCount++;
+        const qty = Math.abs(Number(item.QuantityShipped) || 0) || 1;
+        result.refundCount += qty;
         for (const charge of (item.ItemChargeAdjustmentList || [])) {
           if (charge.ChargeType === 'Principal') {
             const amount = Math.abs(charge.ChargeAmount?.CurrencyAmount || 0);
             const cur = charge.ChargeAmount?.CurrencyCode;
             if (!cur) {} else if (result[cur]) {
-              result[cur].refundAmount += amount; result[cur].refundCount++;
+              result[cur].refundAmount += amount; result[cur].refundCount += qty;
               const acc = skuAcc(item.SellerSKU, cur);
-              acc.refundAmount += amount; acc.refundCount++;
+              acc.refundAmount += amount; acc.refundCount += qty;
             } else droppedCur.set(cur, (droppedCur.get(cur) || 0) + 1);
           }
         }
