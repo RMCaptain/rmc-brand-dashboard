@@ -429,4 +429,4 @@ async function syncSellerboardFeeds({ supabase, loadBrands, label = 'Sellerboard
   return out;
 }
 
-module.exports = { FEEDS, MONEY_COLS, IMPLIED, parseCsv, parseFeed, parseSbDate, normHeader, fetchFeed, convertRows, impliedRates, loadAmazonMpDay, syncSellerboardFeeds, FEE_COLS, REFUND_COST_COLS, PRODUCT_COST_COLS };
+module.exports = { FEEDS, MONEY_COLS, IMPLIED, parseCsv, parseFeed, parseSbDate, normHeader, fetchFeed, convertRows, impliedRates, loadAmazonMpDay, syncSellerboardFeeds, upsertRows, FEE_COLS, REFUND_COST_COLS, PRODUCT_COST_COLS };
