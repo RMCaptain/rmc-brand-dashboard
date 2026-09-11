@@ -6514,6 +6514,62 @@ async function applyBootAsinMappings() {
   }
 }
 
+// One-shot Sellerboard history seed. Sellerboard offers no longer-period
+// Automation link (Mike, 2026-09-11), so the pre-feed coverage gap
+// (Aug 1–7, before the standard feed's first ingest on Aug 8) was pulled
+// through the Sellerboard dashboard API instead and ships as
+// data/sb-backfill-2026-08.json: per-(UTC day, marketplace, SKU) rows in
+// account currency (USD), validated to the cent against Sellerboard's own
+// account-day totals (the account-level FBAInboundTransportationFee, which
+// the dashboard doesn't attach to products, is allocated across that day's
+// unit-selling rows so account/brand profit closes exactly). The loader
+// mirrors the feed ingest: brand ids stamped from the live brands blob,
+// money converted USD → marketplace-native at each day's rate, upserted on
+// (date, mp_id, sku). A (day, marketplace) that already has ANY
+// sellerboard_daily rows is skipped — real feed data always wins, so this
+// is a no-op everywhere except the seeded gap, and safe on every boot.
+// Known limit: dashboard days are UTC, feed days are PST — boundary-hour
+// orders can sit one day off; block totals are exact.
+async function applySellerboardBackfill() {
+  const tag = 'SbBackfill';
+  try {
+    const fsMod = require('fs');
+    const file = path.join(__dirname, 'data', 'sb-backfill-2026-08.json');
+    if (!fsMod.existsSync(file)) return;
+    const seed = JSON.parse(fsMod.readFileSync(file, 'utf8'));
+    const groups = {};
+    for (const r of seed.rows || []) (groups[`${r.date}|${r.mp_id}`] = groups[`${r.date}|${r.mp_id}`] || []).push(r);
+    const pending = [];
+    for (const [key, rows] of Object.entries(groups)) {
+      const [date, mpId] = key.split('|');
+      const { data, error } = await supabase.from('sellerboard_daily')
+        .select('sku').eq('date', date).eq('mp_id', mpId).limit(1);
+      if (error) { console.warn(`[${tag}] coverage check ${key}: ${error.message} — seed skipped`); return; }
+      if (data && data.length) continue; // real feed rows present — never overwrite
+      pending.push(...rows);
+    }
+    if (!pending.length) return; // all seeded days already covered
+    const asinBrand = {};
+    try {
+      const { brands } = await loadBrands();
+      for (const b of brands || []) for (const a of (b.asins || [])) asinBrand[a] = b.id;
+    } catch (e) { console.warn(`[${tag}] brands blob unavailable (${e.message}) — rows stamped unknown-brand`); }
+    const fetchedAt = new Date().toISOString();
+    for (const r of pending) { r.brand_id = asinBrand[r.asin] || 'unknown-brand'; r.fetched_at = fetchedAt; }
+    const dates = pending.map(r => r.date);
+    const from = dates.reduce((a, b) => (a < b ? a : b)), to = dates.reduce((a, b) => (a > b ? a : b));
+    const FX = require('./sync/fxRates');
+    const SB = require('./sync/sellerboard');
+    const daily = await FX.loadDailyRates(supabase, from, to);
+    const live = await FX.fetchLatestToCad();
+    const { stats } = SB.convertRows(pending, { rateFor: FX.makeRateResolver({ daily, live }) });
+    const written = await SB.upsertRows(supabase, pending, tag);
+    console.log(`[${tag}] seeded ${written} rows for ${from}..${to} (fx: ${Object.entries(stats).map(([k, v]) => `${k}=${v}`).join(' ') || 'native'})`);
+  } catch (e) {
+    console.warn(`[${tag}] failed (non-fatal):`, e.message);
+  }
+}
+
 // Repair rows stamped with a brand_id that no longer exists — the residue of
 // a deleted (or lookalike-slug) brand. ASIN assignment restamps history via
 // reattributeUnknownHistory, so a brand deleted minutes after mapping leaves
@@ -6568,7 +6624,7 @@ async function repairOrphanBrandIds() {
 
 app.listen(PORT, () => {
   console.log(`RMC Brand Dashboard → http://localhost:${PORT}`);
-  ensureBootMigrations();
+  ensureBootMigrations().then(() => applySellerboardBackfill());
   applyBootAsinMappings().then(() => repairOrphanBrandIds());
   if (process.env.SYNC_ENABLED === 'true') {
     scheduleDailySync();
