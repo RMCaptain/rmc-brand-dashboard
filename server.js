@@ -409,6 +409,21 @@ const BRAND_COLORS = [
 
 // --- Brand Routes ---
 
+// Marketplaces present in a stored preset, derived from the brands' byMp
+// slices (registry shape, same as buildBrandMetricsForRange's `marketplaces`).
+// The preset rebuild never stored the range-level list, so the picker on
+// preset-driven pages only ever saw registry actives — UK had live
+// Sellerboard sales but no picker entry (Mike, 2026-09-12). Deriving from
+// byMp keeps the list in lockstep with the data actually served.
+function presetMarketplaces(preset) {
+  const MPreg = require('./sync/marketplaces');
+  const ids = new Set();
+  for (const bm of Object.values(preset?.brands || {})) {
+    for (const id of Object.keys(bm?.summary?.byMp || {})) ids.add(id);
+  }
+  return [...ids].map(id => ({ id, code: MPreg.codeOf(id) || id, currency: MPreg.currencyOf(id), label: MPreg.byId(id)?.label || id }));
+}
+
 app.get('/api/brands', async (req, res) => {
   const { brands } = await loadBrands();
   const pm = await loadPresetMetrics();
@@ -416,7 +431,7 @@ app.get('/api/brands', async (req, res) => {
   const presetData = pm.presets?.[presetKey]?.brands || {};
   const result = brands.map(b => ({ ...b, metrics: presetData[b.id] || null }));
   const presetMeta = Object.fromEntries(
-    Object.entries(pm.presets || {}).map(([k, v]) => [k, { label: v.label, startDate: v.startDate, endDate: v.endDate }])
+    Object.entries(pm.presets || {}).map(([k, v]) => [k, { label: v.label, startDate: v.startDate, endDate: v.endDate, marketplaces: presetMarketplaces(v) }])
   );
   res.json({ brands: result, lastSync: pm.lastSync, presets: presetMeta });
 });
@@ -429,7 +444,7 @@ app.get('/api/brands/:id', async (req, res) => {
   const brand = brands.find(b => b.id === req.params.id);
   if (!brand) return res.status(404).json({ error: 'Brand not found' });
   const presetMeta = Object.fromEntries(
-    Object.entries(pm.presets || {}).map(([k, v]) => [k, { label: v.label, startDate: v.startDate, endDate: v.endDate }])
+    Object.entries(pm.presets || {}).map(([k, v]) => [k, { label: v.label, startDate: v.startDate, endDate: v.endDate, marketplaces: presetMarketplaces(v) }])
   );
 
   // Inventory snapshot per ASIN — most recent non-null on-hand + inbound from
@@ -2361,7 +2376,14 @@ app.get('/api/download/settlement', (req, res) => {
 });
 
 app.get('/api/preset-metrics', async (req, res) => {
-  res.json(await loadPresetMetrics());
+  const pm = await loadPresetMetrics();
+  // Attach the derived marketplace list per preset (see presetMarketplaces):
+  // pages hand these preset objects to the picker as datasets, and without
+  // the list a Sellerboard-only marketplace (UK) never surfaced as an option.
+  const presets = Object.fromEntries(
+    Object.entries(pm.presets || {}).map(([k, v]) => [k, { ...v, marketplaces: presetMarketplaces(v) }])
+  );
+  res.json({ ...pm, presets });
 });
 
 // Per-ASIN posted Amazon fees + refund money for a date range (daily_fees_asin).
