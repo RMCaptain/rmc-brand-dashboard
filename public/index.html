@@ -301,7 +301,10 @@
       if (sku.byMp) return sku.byMp && Object.values(sku.byMp).find(m => m.code === code)?.units || 0;
       if (code === 'CA') return sku.unitsCad != null ? sku.unitsCad : ((brand?.marketplace || 'CA') !== 'US' ? (sku.units || 0) : 0);
       if (code === 'US') return sku.unitsUsd != null ? sku.unitsUsd : ((brand?.marketplace || 'CA') === 'US' ? (sku.units || 0) : 0);
-      return sku.units || 0;
+      // Legacy payloads only know CA/US. Any other scope (UK, WMCA…) has no
+      // slice here — returning the blended count leaked total-account units
+      // into a UK-scoped Yesterday tile next to $0 money (2026-09-12).
+      return 0;
     }
     // COGS per unit for an ASIN on a marketplace code. Per-marketplace buy
     // costs win; the legacy single cost applies to the brand's home marketplace.
@@ -340,10 +343,29 @@
       return getNum(Math.round(cad * 100) / 100, Math.round(usd * 100) / 100);
     }
 
+    // True when the loaded payload is a legacy CAD/USD pair (Today/Yesterday
+    // Amazon live views, no byMp slices) while the picker is scoped to a
+    // marketplace those views can't represent (anything beyond CA/US).
+    function legacyNoCoverage(preset) {
+      if (!preset || !mpScoped() || mpFilter === 'CA' || mpFilter === 'US') return false;
+      const hasAnyByMp = !!(preset.financials?.byMp)
+        || Object.values(preset.brands || {}).some(bm => bm.summary?.byMp);
+      return !hasAnyByMp;
+    }
+
     // ── Tile metrics ──────────────────────────────────────────────────────────
     function getTileMetrics(presetData) {
       const preset = presetData;
       if (!preset) return null;
+
+      // Today/Yesterday payloads are legacy CAD/USD pairs from the Amazon
+      // live views — they carry no slice for any other marketplace. Scoped
+      // to one (UK, WMCA…), every figure would render as a fake $0/0:
+      // return an explicit no-coverage marker instead and let the tile say
+      // where that marketplace's numbers live (range views, via Sellerboard).
+      if (legacyNoCoverage(preset)) {
+        return { noCoverage: mpFilter, startDate: preset.startDate, endDate: preset.endDate };
+      }
 
       // Aggregate across all brands
       let revCad = 0, revUsd = 0, units = 0, sessions = 0, refundUnits = 0;
@@ -469,6 +491,15 @@
             <div class="text-sm font-semibold mb-0.5" style="color:${accent}">${label}</div>
             <div class="text-xs" style="color:var(--text-3)">${dateStr}</div>
             <p class="text-xs mt-4" style="color:var(--text-3)">No data — run sync</p>
+          </div>
+        </div>`;
+      }
+      if (m.noCoverage) {
+        return `<div class="rmc-card overflow-hidden" style="border-top:3px solid ${accent}">
+          <div class="px-4 py-4">
+            <div class="text-sm font-semibold mb-0.5" style="color:${accent}">${label}</div>
+            <div class="text-xs" style="color:var(--text-3)">${dateStr}</div>
+            <p class="text-xs mt-4" style="color:var(--text-3)">No live ${m.noCoverage} view — Today/Yesterday track Amazon CA/US only.<br>${m.noCoverage} numbers arrive with the Sellerboard feed: use a date range or preset.</p>
           </div>
         </div>`;
       }
@@ -843,6 +874,12 @@
       const skus = getAllSkus(getActiveTableData())
         .filter(s => !mpScoped() || s.marketplace === mpFilter);
 
+      if (legacyNoCoverage(getActiveTableData())) {
+        tbody.innerHTML = `<tr><td colspan="12" class="text-center text-slate-500 py-8">No live ${mpFilter} view — Today/Yesterday track Amazon CA/US only. Pick a date range or preset for ${mpFilter}.</td></tr>`;
+        document.getElementById('productPagination').innerHTML = '';
+        updateSortIndicators();
+        return;
+      }
       if (!skus.length) {
         tbody.innerHTML = '<tr><td colspan="12" class="text-center text-slate-500 py-8">No data — run sync first</td></tr>';
         document.getElementById('productPagination').innerHTML = '';
@@ -1027,6 +1064,12 @@
 
       if (!brandsData.length) {
         tbody.innerHTML = '<tr><td colspan="10" class="text-center text-slate-500 py-8">No brands — <a href="/admin.html" class="text-indigo-400">add one</a></td></tr>';
+        document.getElementById('brandPagination').innerHTML = '';
+        updateBrandSortIndicators();
+        return;
+      }
+      if (legacyNoCoverage(preset)) {
+        tbody.innerHTML = `<tr><td colspan="10" class="text-center text-slate-500 py-8">No live ${mpFilter} view — Today/Yesterday track Amazon CA/US only. Pick a date range or preset for ${mpFilter}.</td></tr>`;
         document.getElementById('brandPagination').innerHTML = '';
         updateBrandSortIndicators();
         return;
