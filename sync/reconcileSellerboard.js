@@ -29,10 +29,13 @@
  *
  * Tolerance (Mike, 2026-09-09): money max($25, 1%), counts max(2, 1%) for
  * units / sales / ad_spend, which share a basis with Amazon and match to the
- * cent on a clean day. Fees and refunds get 10%: Sellerboard books them to
- * the order day, Amazon's Finances walk to the posted day (a day or two
- * later), so daily rows lag each other by design and the `account_7d` scope
- * (trailing 7-day sums) is the row that should stay green.
+ * cent on a clean day. Fees and refunds get 10%: Sellerboard sees them in
+ * near-real-time from the order/returns feeds while Amazon's Finances API
+ * surfaces the same events 2-7 days later (backfilled onto the day they
+ * happened — matured days match to the unit, verified 2026-09-12). The
+ * `account_7d` scope is the row that should stay green; for fees/refunds it
+ * compares a 7-day window ending MATURE_LAG_DAYS back so the structurally
+ * incomplete fresh edge never reads as a loss.
  *
  * Volume control: account / account_7d / brand rows are stored for every
  * status; asin rows only when status != 'match', and only for the trailing
@@ -149,11 +152,28 @@ function reconcileRows({ sbRows, mpRows, feeAsinRows, feeMpRows, asinBrand, yest
   }
 
   // ── Trailing-7d account scope (per mp) — the alert-grade signal ──
+  // Two windows: shared-basis metrics compare the fresh trailing 7 days;
+  // LAGGED metrics (fees, refunds) compare a 7-day window that ends
+  // MATURE_LAG_DAYS ago. Amazon's Finances API backfills each refund onto
+  // the day it happened, but events only become VISIBLE 2-7 days later —
+  // verified 2026-09-12: matured days (Aug 20-Sep 5) match Sellerboard
+  // day-by-day almost to the unit, while the freshest 2-3 days always run
+  // 20-35% short. Comparing the fresh edge flagged that permanent artifact
+  // every night; the daily trailing-8 re-collect (Sundays 40) fills the
+  // lagged window before it's compared, so a flag there is a real loss.
+  const MATURE_LAG_DAYS = 7;
   const sevenFrom = pstSubtractDays(yesterday, 6);
+  const lagTo = pstSubtractDays(yesterday, MATURE_LAG_DAYS);
+  const lagFrom = pstSubtractDays(lagTo, 6);
   for (const side of [A, S]) {
     for (const slot of Object.values(side)) {
-      if (slot.scope !== 'account' || slot.date < sevenFrom) continue;
-      for (const [metric, v] of Object.entries(slot.m)) bump(side, yesterday, slot.mp, 'account_7d', '*', metric, v);
+      if (slot.scope !== 'account') continue;
+      for (const [metric, v] of Object.entries(slot.m)) {
+        const lagged = LAGGED_METRICS.has(metric);
+        const from = lagged ? lagFrom : sevenFrom, to = lagged ? lagTo : yesterday;
+        if (slot.date < from || slot.date > to) continue;
+        bump(side, yesterday, slot.mp, 'account_7d', '*', metric, v);
+      }
     }
   }
 
