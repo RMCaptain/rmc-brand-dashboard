@@ -306,9 +306,15 @@
       // into a UK-scoped Yesterday tile next to $0 money (2026-09-12).
       return 0;
     }
-    // COGS per unit for an ASIN on a marketplace code. Per-marketplace buy
-    // costs win; the legacy single cost applies to the brand's home marketplace.
+    // COGS per unit for an ASIN on a marketplace code. Sellerboard-derived
+    // unit cost wins (COGS source of truth since 2026-09-10); manual
+    // per-marketplace entries next; the legacy single cost applies to the
+    // brand's home marketplace. This page recomputed profit from manual
+    // entries only until 2026-09-14 — a week read C$2k high vs Sellerboard,
+    // almost entirely missing COGS.
     function cogsFor(brand, asin, code) {
+      const sb = brand?.cogsSb?.[asin]?.[code];
+      if (sb?.unit != null) return sb.unit;
       const per = brand?.cogsPerMarketplace?.[asin]?.[code];
       if (per != null) return per;
       const home = (brand?.marketplace || 'CA').split(',')[0].trim();
@@ -328,7 +334,13 @@
         for (const sku of bm.skus) {
           if (sku.byMp) {
             hasByMp = true;
-            for (const m of scopedMps(sku.byMp)) total += toDisplay(m.units * cogsFor(brand, sku.asin, m.code), m.currency);
+            // Sellerboard-covered slices carry the ACTUAL charged product
+            // costs (m.cogsSb) — use them; unit-cost × units is the fallback
+            // for Amazon-covered/mixed slices only.
+            for (const m of scopedMps(sku.byMp)) {
+              const actual = (m.source === 'sellerboard' && m.cogsSb != null);
+              total += toDisplay(actual ? m.cogsSb : m.units * cogsFor(brand, sku.asin, m.code), m.currency);
+            }
           } else {
             const cogsCA = brand.cogsPerMarketplace?.[sku.asin]?.CA ?? (brand.marketplace !== 'US' ? brand.cogs?.[sku.asin] : null) ?? 0;
             const cogsUS = brand.cogsPerMarketplace?.[sku.asin]?.US ?? (brand.marketplace === 'US' ? brand.cogs?.[sku.asin] : null) ?? 0;
@@ -369,12 +381,27 @@
 
       // Aggregate across all brands
       let revCad = 0, revUsd = 0, units = 0, sessions = 0, refundUnits = 0;
-      let salesMp = 0, unitsMp = 0, hasByMp = false;
+      let salesMp = 0, unitsMp = 0, promoMp = 0, hasByMp = false;
+      // Sellerboard-direct net profit: when every active scoped slice is
+      // Sellerboard-covered, the range's true profit is the sum of SB's own
+      // per-slice net profit (actual COGS, all fees, refund costs, promos).
+      // The component formula below stays the fallback for mixed/Amazon
+      // ranges — it can never hit SB exactly (refund-cost credits and
+      // service-fee scope differ), which is why a fully covered week read
+      // C$2k high on 2026-09-14.
+      let npSb = 0, npAllSb = true;
       for (const [brandId, bm] of Object.entries(preset.brands || {})) {
         if (bm.summary?.byMp) {
           hasByMp = true;
           salesMp += sumMp(bm.summary.byMp, 'sales') || 0;
           unitsMp += sumMp(bm.summary.byMp, 'units') || 0;
+          promoMp += sumMp(bm.summary.byMp, 'promo') || 0;
+          for (const m of scopedMps(bm.summary.byMp)) {
+            const active = m.units > 0 || m.sales > 0 || m.adSpend > 0 || m.fees > 0 || m.refundAmount > 0;
+            if (!active) continue;
+            if (m.source === 'sellerboard' && m.netProfit != null) npSb += toDisplay(m.netProfit, m.currency);
+            else npAllSb = false;
+          }
         }
         revCad += bm.summary?.revenueCad || 0;
         revUsd += bm.summary?.revenueUsd || 0;
@@ -423,7 +450,13 @@
         adSpend     = getNum(fCad.adSpend, fUsd.adSpend);
       }
 
-      const grossProfit = sales - cogsTotal - amzFees - serviceFees - refunds - refundFee - adSpend;
+      // Promo value: Sellerboard nets promotions out of profit; this formula
+      // never did (part of the 2026-09-14 week reading C$2k high vs SB).
+      // Only byMp payloads carry it — legacy Today/Yesterday stay as-is.
+      const promo = finMp ? promoMp : 0;
+      const sbDirect = !!finMp && hasByMp && npAllSb;
+      const grossProfit = sbDirect ? npSb
+        : sales - cogsTotal - amzFees - serviceFees - refunds - refundFee - adSpend - promo;
       const netProfit   = grossProfit;
       const estPayout   = sales - amzFees - serviceFees - adSpend - refunds;
       const margin      = sales > 0 ? (netProfit / sales) * 100 : null;
@@ -700,10 +733,20 @@
               const feesNative = m.fees != null ? m.fees : (legacyFees ?? null);
               const fees = feesNative != null ? disp(feesNative) : null;
               const adSpend = disp(m.adSpend || 0);
-              const refunds = disp(mp === 'CA' ? (sku.refundPostedCad || 0) : mp === 'US' ? (sku.refundPostedUsd || 0) : (m.refundAmount || 0));
-              const totalCogs = (m.units || 0) * costPerUnit;
+              // Sellerboard-covered slice: its ACTUAL figures — charged
+              // product costs, order-day refund principal, and Sellerboard's
+              // own per-row net profit (which also nets promos and refund
+              // costs the component formula never saw). Component math is
+              // the fallback for Amazon-covered/mixed slices.
+              const sbSlice = m.source === 'sellerboard';
+              const refunds = disp(sbSlice
+                ? (m.refundAmount || 0)
+                : (mp === 'CA' ? (sku.refundPostedCad || 0) : mp === 'US' ? (sku.refundPostedUsd || 0) : (m.refundAmount || 0)));
+              const totalCogs = (sbSlice && m.cogsSb != null) ? m.cogsSb : (m.units || 0) * costPerUnit;
               const cogsDisp = disp(totalCogs);
-              const netProfit = (costPerUnit > 0 && fees != null) ? rev - cogsDisp - fees - adSpend - refunds : null;
+              const netProfit = (sbSlice && m.netProfit != null)
+                ? disp(m.netProfit)
+                : ((costPerUnit > 0 && fees != null) ? rev - cogsDisp - fees - adSpend - refunds : null);
               const margin = netProfit != null && rev > 0 ? (netProfit / rev) * 100 : null;
               const inv = sku.inventory || {};
               const inventory = (inv.onHand ?? 0) + (inv.inbound ?? 0) + (inv.reserved ?? 0) + (inv.researching ?? 0) + (inv.unfulfillable ?? 0);
@@ -929,7 +972,9 @@
         const est = s.feesEstimated;
         const tilde = est ? '~' : '';
         const npTitle = s.netProfit != null
-          ? `Sales ${fmtN(s.revenue)} − COGS ${fmtN(s.totalCogsDisp)} − Fees ${tilde}${fmtN(s.fees)} − Ads ${fmtN(s.adSpend)} − Refunds ${fmtN(s.refunds)}${est ? '. Fees estimated from trailing 14-day per-unit rates — replaced with Amazon-posted fees within 24–48h. Refunds excluded intraday.' : ''}`
+          ? (s.source === 'sellerboard'
+            ? `Sellerboard actuals for this range: net profit after real product costs, all Amazon fees, refund costs, promos and ads (COGS shown ${fmtN(s.totalCogsDisp)} is the actual charged amount)`
+            : `Sales ${fmtN(s.revenue)} − COGS ${fmtN(s.totalCogsDisp)} − Fees ${tilde}${fmtN(s.fees)} − Ads ${fmtN(s.adSpend)} − Refunds ${fmtN(s.refunds)}${est ? '. Fees estimated from trailing 14-day per-unit rates — replaced with Amazon-posted fees within 24–48h. Refunds excluded intraday.' : ''}`)
           : (s.costPerUnit > 0 ? 'No posted-fee data for this period yet' : 'Enter COGS to see net profit');
         const bbColor = s.buyBox == null ? 'text-slate-600' : s.buyBox >= 90 ? 'text-emerald-400' : s.buyBox >= 70 ? 'text-amber-400' : 'text-red-400';
 
@@ -1093,7 +1138,11 @@
           adSpend = rows.reduce((t, r) => t + r.adSpend, 0);
           refunds = rows.reduce((t, r) => t + r.refunds, 0);
           units = rows.reduce((t, r) => t + r.units, 0);
-          netProfit = (cogsNum > 0 && fees != null) ? rev - cogsNum - fees - adSpend - refunds : null;
+          // Sum the rows' own net profit when every row has one (Sellerboard
+          // actuals ride through); the component formula stays the fallback.
+          netProfit = rows.length && rows.every(r => r.netProfit != null)
+            ? rows.reduce((t, r) => t + r.netProfit, 0)
+            : ((cogsNum > 0 && fees != null) ? rev - cogsNum - fees - adSpend - refunds : null);
           margin = netProfit != null && rev > 0 ? (netProfit / rev) * 100 : null;
           sessions = mpScoped() ? null : (s.sessions || 0);
           buyBox = s.buyBox ?? null;
