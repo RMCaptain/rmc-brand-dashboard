@@ -42,8 +42,8 @@ near(m.amzFees, (25+20+53+9) + 30 * usd + 12 * gbp, 'all fees');
 near(m.adSpend, 12 + 10 * usd + 1 * gbp, 'all ads');
 if (m.source !== 'mixed') throw new Error('all source ' + m.source);
 if (!m.flags.some(f => f.mp === 'CA' && f.metric === 'units')) throw new Error('CA units flag missing at tile level');
-// COGS all: A1 38u*2 CAD + Z1 CA 3u*3 + US 6u*2.5 USD + UK 4u*2 GBP
-near(m.cogsTotal, 76 + 9 + 15 * usd + 8 * gbp, 'all cogs');
+// COGS all: A1 (mixed) 38u*2 manual CAD + Z1 CA ACTUAL SB 6 + US (amazon) 6u*2.5 manual USD + UK ACTUAL SB 10 GBP
+near(m.cogsTotal, 76 + 6 + 15 * usd + 10 * gbp, 'all cogs');
 // CA scope: native CAD
 mpFilter = 'CA'; m = getTileMetrics(customTableData);
 near(m.sales, 410, 'CA sales'); if (m.units !== 41) throw new Error('CA units ' + m.units);
@@ -61,11 +61,13 @@ near(m.sales, 40 * gbp, 'UK sales in CAD'); if (m.units !== 4) throw new Error('
 if (displayCurrency() !== 'CAD' || curSym() !== 'CA$') throw new Error('UK scope must stay in the toggle currency');
 currency = 'USD'; m = getTileMetrics(customTableData); near(m.sales, 40 * gbp / usd, 'UK sales in USD'); if (curSym() !== 'US$') throw new Error('USD toggle'); currency = 'CAD'; m = getTileMetrics(customTableData);
 if (m.source !== 'sellerboard') throw new Error('UK source ' + m.source);
-near(m.amzFees, 12 * gbp, 'UK fees'); near(m.cogsTotal, 8 * gbp, 'UK cogs');
+near(m.amzFees, 12 * gbp, 'UK fees'); near(m.cogsTotal, 10 * gbp, 'UK cogs (SB actual, not manual 8)');
+near(m.netProfit, 15 * gbp, 'UK tile np = Sellerboard net profit direct');
 // product rows under UK scope
 const rowsUK = getAllSkus(customTableData).filter(s => s.marketplace === 'UK');
 if (rowsUK.length !== 1 || rowsUK[0].asin !== 'Z1') throw new Error('UK rows ' + JSON.stringify(rowsUK.map(r => r.asin)));
-near(rowsUK[0].revenue, 40 * gbp, 'UK row rev'); near(rowsUK[0].fees, 12 * gbp, 'UK row fees'); near(rowsUK[0].netProfit, (40 - 8 - 12 - 1) * gbp, 'UK row np');
+near(rowsUK[0].revenue, 40 * gbp, 'UK row rev'); near(rowsUK[0].fees, 12 * gbp, 'UK row fees');
+near(rowsUK[0].netProfit, 15 * gbp, 'UK row np = SB net profit direct'); near(rowsUK[0].totalCogsDisp, 10 * gbp, 'UK row cogs = SB actual');
 // product rows ALL: A1 CA row carries flags; Z1 has CA, US, UK rows
 mpFilter = 'all'; const rows = getAllSkus(customTableData);
 const a1 = rows.find(r => r.asin === 'A1' && r.marketplace === 'CA');
