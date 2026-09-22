@@ -111,7 +111,7 @@
                 <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('acos')">ACOS <span class="sort-ind" data-col="acos"></span></th>
                 <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('refunds')" title="Refunded units (rate = refunds ÷ units sold). Sellerboard order-day basis where covered">Refunds <span class="sort-ind" data-col="refunds"></span></th>
                 <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('fees')" title="Real Amazon fees posted in the period (referral + FBA + other item fees). ~ = estimated intraday">Fees <span class="sort-ind" data-col="fees"></span></th>
-                <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('netProfit')" title="Revenue − COGS − Amazon fees − ad spend − refunds">Net Profit <span class="sort-ind" data-col="netProfit"></span></th>
+                <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('netProfit')" title="Sellerboard actual where the period is fully Sellerboard-covered; else revenue − COGS − Amazon fees − ad spend − refunds">Net Profit <span class="sort-ind" data-col="netProfit"></span></th>
                 <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('margin')" title="Net profit ÷ revenue">Margin <span class="sort-ind" data-col="margin"></span></th>
                 <th class="text-left" style="color:var(--text-2)">Promos</th>
                 <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('sns')">S&amp;S Subs <span class="sort-ind" data-col="sns"></span></th>
@@ -300,11 +300,23 @@
             revDisp   = MpScope.sumMp(s.byMp, 'sales') || 0;
             unitsDisp = MpScope.sumMp(s.byMp, 'units') || 0;
             spendDisp = MpScope.sumMp(s.byMp, 'adSpend') || 0;
+            // Sellerboard actuals first (same rule as the dashboard tile,
+            // 2026-09-22): all ACTIVE scoped slices Sellerboard-covered →
+            // sum their per-slice net profit directly (nets promos + refund
+            // costs the component formula misses). Component math is the
+            // fallback for mixed/Amazon slices.
             let feesTot = 0, feesKnown = false, cogsTot = 0, cogsOk = true, refunds = 0;
+            let npSb = 0, allSb = true, anyActive = false;
             for (const m of mps) {
               const legacyFees = m.code === 'CA' ? s.feesCad : m.code === 'US' ? s.feesUsd : null;
               const f = m.fees != null ? m.fees : legacyFees;
               if (f != null) { feesKnown = true; feesTot += MpScope.toDisplay(f, m.currency); }
+              const active = m.units > 0 || m.sales > 0 || m.adSpend > 0 || m.fees > 0 || m.refundAmount > 0;
+              if (active) {
+                anyActive = true;
+                if (m.source === 'sellerboard' && m.netProfit != null) npSb += MpScope.toDisplay(m.netProfit, m.currency);
+                else allSb = false;
+              }
               if (m.cogsSb != null && m.source === 'sellerboard') {
                 // Actual COGS Sellerboard charged this period (native
                 // currency) — beats units × unit-cost. Only when the whole
@@ -320,7 +332,8 @@
               refunds += MpScope.toDisplay(m.code === 'CA' ? (s.refundPostedCad || 0) : m.code === 'US' ? (s.refundPostedUsd || 0) : (m.refundAmount || 0), m.currency);
             }
             fees = feesKnown ? feesTot : null;
-            netProfit = (feesKnown && cogsOk && cogsTot > 0) ? revDisp - cogsTot - fees - spendDisp - refunds : null;
+            netProfit = (anyActive && allSb) ? npSb
+              : (feesKnown && cogsOk && cogsTot > 0) ? revDisp - cogsTot - fees - spendDisp - refunds : null;
             marketplaces = MpScope.activeCodes(s.byMp);
             flags = MpScope.scopedFlags(s.byMp);
             source = MpScope.sourceOf(s.byMp);

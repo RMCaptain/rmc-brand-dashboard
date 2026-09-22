@@ -116,7 +116,7 @@ function parseSbDate(s) {
 }
 
 const num = v => { const n = parseFloat(String(v ?? '').replace(/,/g, '')); return Number.isFinite(n) ? n : 0; };
-const money = v => Math.round(v * 100) / 100;
+const money = v => { const r = Math.round(v * 100) / 100; return r === 0 ? 0 : r; }; // fold -0 (money(-0) from an absent column)
 
 // Fee columns in the live file sit between "Commission" and "EstimatedPayout"
 // (inclusive of every Amazon fee/reimbursement code). Matched by name so a new
@@ -157,6 +157,15 @@ function parseFeed(text, { account = null, asinBrand = {}, feedCurrency = null }
   const get = (r, h) => (idx[h] == null ? '' : (r[idx[h]] ?? ''));
   const sum = (r, cols) => cols.reduce((s, c) => s + num(get(r, c)), 0);
 
+  // Two live layouts share the header names above EXCEPT costs:
+  //  - itemized (NA accounts, 68 cols): Commission…EstimatedPayout fee codes,
+  //    "ProductCost Sales", "Refund Principal" etc.
+  //  - condensed (RMCo Intl, 41 cols): one aggregate "AmazonFees", one
+  //    "Cost of Goods", one "RefundCost"; NO per-code fees, NO refund
+  //    principal. Found 2026-09-22: UK rows parsed with $0 fees and $0 COGS
+  //    because only the itemized names were read.
+  const condensed = ('amazonfees' in idx) && !('commission' in idx);
+
   const rows = [];
   const skipped = { unknownMarketplace: {}, badDate: 0, noKey: 0 };
   const fetchedAt = new Date().toISOString();
@@ -180,6 +189,12 @@ function parseFeed(text, { account = null, asinBrand = {}, feedCurrency = null }
     const salesPpc     = num(get(r, 'salesppc'));
     const sessionsRaw  = get(r, 'sessions');
     const uspRaw       = get(r, 'unit session percentage');
+    // Condensed-layout costs (see header note). The aggregate AmazonFees nets
+    // reimbursements, so split by sign; order_fees rides the same aggregate —
+    // these marketplaces have no Amazon-side feed, so the reconciliation
+    // never compares them anyway. Refund principal does not exist in this
+    // layout: refund_amount stays 0 and RefundCost carries the money.
+    const aggFees = condensed ? -num(get(r, 'amazonfees')) : null;
     rows.push({
       date, mp_id: mp.id, sku, asin,
       currency: mp.currency,
@@ -197,26 +212,28 @@ function parseFeed(text, { account = null, asinBrand = {}, feedCurrency = null }
       units_ppc:    Math.round(num(get(r, 'unitsppc'))),
       refunds:      Math.round(num(get(r, 'refunds'))),
       refund_amount: money(-num(get(r, 'refund principal'))),
-      refund_costs:  money(-sum(r, REFUND_COST_COLS)),
+      refund_costs:  condensed
+        ? money(-(num(get(r, 'refundcost')) + num(get(r, 'value of returned items')) + num(get(r, 'productcost unsellable refunds'))))
+        : money(-sum(r, REFUND_COST_COLS)),
       promo_value:   money(-num(get(r, 'promovalue'))),
       ad_spend:      money(-num(get(r, 'ads spend'))),
       ad_spend_sp:   money(-num(get(r, 'sponsoredproducts'))),
       ad_spend_sb:   money(-num(get(r, 'sponsoredbrands'))),
       ad_spend_sbv:  money(-num(get(r, 'sponsoredbrandsvideo'))),
       ad_spend_sd:   money(-num(get(r, 'sponsoreddisplay'))),
-      amazon_fees:   money(-sum(r, FEE_COLS)),
+      amazon_fees:   condensed ? money(aggFees) : money(-sum(r, FEE_COLS)),
       // Split of the same columns by sign: charges (Sellerboard negative) vs
       // reimbursements (positive — lost/damaged inventory, re-evaluations).
       // Amazon's Finances walk counts charges only, so the reconciliation
       // compares fee_charges; amazon_fees stays Sellerboard's netted figure.
-      fee_charges:   money(-FEE_COLS.reduce((s, c) => s + Math.min(0, num(get(r, c))), 0)),
-      reimbursements: money(FEE_COLS.reduce((s, c) => s + Math.max(0, num(get(r, c))), 0)),
-      storage_fees:  money(-(num(get(r, 'fbastoragefee')) + num(get(r, 'fbalongtermstoragefee')))),
+      fee_charges:   condensed ? money(Math.max(aggFees, 0)) : money(-FEE_COLS.reduce((s, c) => s + Math.min(0, num(get(r, c))), 0)),
+      reimbursements: condensed ? money(Math.max(-aggFees, 0)) : money(FEE_COLS.reduce((s, c) => s + Math.max(0, num(get(r, c))), 0)),
+      storage_fees:  condensed ? 0 : money(-(num(get(r, 'fbastoragefee')) + num(get(r, 'fbalongtermstoragefee')))),
       // Per-order fees only (referral + FBA per-unit + sales-tax collection):
       // the basis of daily_fees_*.fees, whose storage / inbound / removal sit
       // in service_fees instead. This is what the reconciliation compares.
-      order_fees:    money(-(num(get(r, 'commission')) + num(get(r, 'fbaperunitfulfillmentfee')) + num(get(r, 'salestaxcollectionfee')))),
-      product_costs: money(-sum(r, PRODUCT_COST_COLS)),
+      order_fees:    condensed ? money(aggFees) : money(-(num(get(r, 'commission')) + num(get(r, 'fbaperunitfulfillmentfee')) + num(get(r, 'salestaxcollectionfee')))),
+      product_costs: condensed ? money(-num(get(r, 'cost of goods'))) : money(-sum(r, PRODUCT_COST_COLS)),
       est_payout:    money(num(get(r, 'estimatedpayout'))),
       gross_profit:  money(num(get(r, 'grossprofit'))),
       net_profit:    money(num(get(r, 'netprofit'))),

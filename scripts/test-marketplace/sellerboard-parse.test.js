@@ -122,3 +122,32 @@ assert.deepStrictEqual(rf('2026-09-01', 'USD', 'GBP'), { rate: 0.7667, source: '
 assert.deepStrictEqual(rf('2026-09-01', 'CAD', 'CAD'), { rate: 1, source: 'same' });
 assert.strictEqual(FX.makeRateResolver({})('2026-09-01', 'USD', 'CAD').source, 'fallback');
 console.log('all sellerboard fx/conversion checks passed');
+
+// ── condensed (RMCo Intl) layout: aggregate AmazonFees / Cost of Goods / RefundCost ──
+const condensedCsv = [
+  '"Date","Marketplace","ASIN","SKU","Name","SalesOrganic","SalesPPC","SalesSponsoredProducts","SalesSponsoredDisplay","UnitsOrganic","UnitsPPC","UnitsSponsoredProducts","UnitsSponsoredDisplay","Refunds","PromoValue","SponsoredProducts","SponsoredDisplay","SponsoredВrands","SponsoredBrandsVideo","Google ads","Facebook ads","GiftWrap","Shipping","RefundCost","Value of returned items","ProductCost Unsellable Refunds","AmazonFees","EstimatedPayout","Cost of Goods","VAT","GrossProfit","NetProfit","Margin","Real ACOS","Sessions","Unit Session Percentage","Ads spend","Sellable Returns %","ROI","Fulfillment Channel","Expenses"',
+  '"9/21/2026","Amazon.co.uk","B0TESTUK01","UK-SKU-1","Test UK","27.62","0.00","0.00","0.00","1","0","0.00","0.00","0","0.00","0.00","0.00","0.00","0.00","0.00","0.00","0.00","0.00","-1.20","0.50","0.00","-8.45","19.17","-10.38","-4.60","4.19","4.19","15.16","0.00","12","8.33","0.00","0.00","40.37","FBA","0.00"',
+].join('\n') + '\n';
+const cRows = sb.parseFeed(condensedCsv, { account: 'INTL', asinBrand: {}, feedCurrency: 'USD' }).rows;
+assert.strictEqual(cRows.length, 1);
+const cu = cRows[0];
+assert.strictEqual(cu.mp_id, 'A1F83G8C2ARO7P');
+assert.strictEqual(cu.currency, 'GBP');
+assert.strictEqual(cu.sales, 27.62);
+assert.strictEqual(cu.amazon_fees, 8.45, 'aggregate AmazonFees read in condensed layout');
+assert.strictEqual(cu.fee_charges, 8.45);
+assert.strictEqual(cu.reimbursements, 0);
+assert.strictEqual(cu.order_fees, 8.45);
+assert.strictEqual(cu.storage_fees, 0);
+assert.strictEqual(cu.product_costs, 10.38, '"Cost of Goods" read in condensed layout');
+assert.strictEqual(cu.refund_costs, 0.7, 'RefundCost 1.20 net of returned-items value 0.50');
+assert.strictEqual(cu.refund_amount, 0, 'no refund principal column in condensed layout');
+assert.strictEqual(cu.net_profit, 4.19);
+assert.strictEqual(cu.sessions, 12);
+// reimbursement day: positive AmazonFees (money in)
+const cr2 = sb.parseFeed(condensedCsv.replace('"-8.45"', '"3.10"'), { account: 'INTL' }).rows[0];
+assert.strictEqual(cr2.amazon_fees, -3.1);
+assert.strictEqual(cr2.fee_charges, 0);
+assert.strictEqual(cr2.reimbursements, 3.1);
+// itemized layout still parses identically (regression: t1 asserts above)
+console.log('all condensed-layout checks passed');

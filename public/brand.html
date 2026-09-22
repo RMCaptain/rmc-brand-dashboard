@@ -119,7 +119,7 @@
               <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('acos')">ACOS <span class="sort-asin-ind" data-col="acos"></span></th>
               <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('refunds')" title="Refunded units (rate = refunds ÷ units sold). Sellerboard order-day basis where covered">Refunds <span class="sort-asin-ind" data-col="refunds"></span></th>
               <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('fees')" title="Real Amazon fees posted in the period (referral + FBA + other item fees). ~ = estimated intraday">Fees <span class="sort-asin-ind" data-col="fees"></span></th>
-              <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('netProfit')" title="Revenue − COGS − Amazon fees − ad spend − refunds">Net Profit <span class="sort-asin-ind" data-col="netProfit"></span></th>
+              <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('netProfit')" title="Sellerboard actual where the period is fully Sellerboard-covered; else revenue − COGS − Amazon fees − ad spend − refunds">Net Profit <span class="sort-asin-ind" data-col="netProfit"></span></th>
               <th class="sortable-asin-th text-right cursor-pointer select-none hover:text-white" onclick="sortAsinBy('margin')" title="Net profit ÷ revenue">Margin <span class="sort-asin-ind" data-col="margin"></span></th>
               <th class="text-left" style="color:var(--text-2)">Promos</th>
               <th class="text-right" style="color:var(--text-2)">S&amp;S Subs</th>
@@ -241,11 +241,23 @@
         // Resolved per-marketplace payload: marketplaces in scope, native
         // currency each, converted to display. Fees follow Sellerboard where
         // it covers the marketplace, else the Amazon per-ASIN fee rows.
+        // Sellerboard actuals first (same rule as the dashboard tile,
+        // 2026-09-22): when every ACTIVE scoped slice resolved from
+        // Sellerboard, its per-slice net profit IS the number — it already
+        // nets promos and refund costs the component formula never saw
+        // (pages ran ~C$70-100/brand/week under SB, and UK broke entirely).
         let fees = 0, feesKnown = false, cogsTot = 0, cogsOk = true, refunds = 0;
+        let npSb = 0, allSb = true, anyActive = false;
         for (const m of MpScope.scopedMps(s.byMp)) {
           const legacyFees = m.code === 'CA' ? s.feesCad : m.code === 'US' ? s.feesUsd : null;
           const f = m.fees != null ? m.fees : legacyFees;
           if (f != null) { feesKnown = true; fees += MpScope.toDisplay(f, m.currency); }
+          const active = m.units > 0 || m.sales > 0 || m.adSpend > 0 || m.fees > 0 || m.refundAmount > 0;
+          if (active) {
+            anyActive = true;
+            if (m.source === 'sellerboard' && m.netProfit != null) npSb += MpScope.toDisplay(m.netProfit, m.currency);
+            else allSb = false;
+          }
           if (m.cogsSb != null && m.source === 'sellerboard') {
             // Actual COGS Sellerboard charged (native currency). Pure-SB
             // slices only: on mixed windows cogsSb covers just the SB days.
@@ -258,6 +270,10 @@
           refunds += MpScope.toDisplay(m.code === 'CA' ? (s.refundPostedCad || 0) : m.code === 'US' ? (s.refundPostedUsd || 0) : (m.refundAmount || 0), m.currency);
         }
         const rev = skuRev(s), spend = skuSpend(s);
+        if (anyActive && allSb) {
+          const margin = rev > 0 ? npSb / rev * 100 : null;
+          return { fees: feesKnown ? fees : null, netProfit: npSb, margin, estimated: false };
+        }
         const netProfit = (feesKnown && cogsOk && cogsTot > 0) ? rev - cogsTot - fees - spend - refunds : null;
         const margin = netProfit != null && rev > 0 ? netProfit / rev * 100 : null;
         return { fees: feesKnown ? fees : null, netProfit, margin, estimated: !!s.feesEstimated };
