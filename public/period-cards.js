@@ -254,16 +254,18 @@
       e.stopPropagation();
       if (menu) return close();
       const sel = selection();
+      // Fixed + body-appended: card backdrop-filters composite above any
+      // in-flow sibling regardless of z-index.
       menu = document.createElement('div');
-      menu.className = 'rmc-card p-1 absolute z-50 mt-1';
-      menu.style.cssText += ';right:0;min-width:420px;box-shadow:0 8px 30px rgba(0,0,0,0.5)';
+      menu.className = 'p-1 rounded-lg';
+      const r = btn.getBoundingClientRect();
+      menu.style.cssText = `position:fixed;top:${r.bottom + 4}px;right:${Math.max(8, window.innerWidth - r.right)}px;width:600px;max-width:90vw;z-index:1000;background:#0e1524;border:1px solid #1f2937;box-shadow:0 8px 30px rgba(0,0,0,0.6)`;
       menu.innerHTML = `<p class="text-xs px-3 py-2 font-semibold" style="color:var(--text-3)">Personalized tiles</p>` +
         TILE_SETS.map(s => `
           <button class="pc-set w-full text-left px-3 py-2 text-sm rounded hover:bg-white/5" data-id="${s.id}" style="color:${s.id === sel.id ? '#60a5fa' : 'var(--text)'}">
             ${s.id === sel.id ? '✓ ' : ''}${s.label}
           </button>`).join('');
-      btn.parentElement.style.position = 'relative';
-      btn.parentElement.appendChild(menu);
+      document.body.appendChild(menu);
       menu.querySelectorAll('.pc-set').forEach(b => b.addEventListener('click', () => {
         const set = TILE_SETS.find(s => s.id === b.dataset.id);
         saveSelection({ id: set.id, tiles: set.tiles });

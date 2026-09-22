@@ -63,10 +63,6 @@
     </div>
     <div id="periodCards" class="mb-8"></div>
 
-    <!-- 4 Tiles -->
-    <div class="tile-row mb-8" id="tilesRow">
-      <!-- Rendered by JS -->
-    </div>
 
     <!-- Bottom table -->
     <div class="rmc-card overflow-hidden">
@@ -518,13 +514,15 @@
     }
 
     // ── Tile rendering ────────────────────────────────────────────────────────
+    // The legacy selected-period summary tile is gone (Mike, 2026-09-22): the
+    // period cards ARE the overview; the period selector scopes everything
+    // below them (brand + product tables). buildTile/getTileMetrics stay for
+    // the scope tests and any future selected-period readout.
     function renderTiles() {
       renderPeriodCards();
-      const container = document.getElementById('tilesRow');
-      const data = getActiveTableData();
       syncMpOptions();
-      const label = PRESET_LABEL_MAP[activeBrandPreset] || activeBrandPreset;
-      container.innerHTML = buildTile({ key: 'main', label, accent: '#537D30', data });
+      const container = document.getElementById('tilesRow');
+      if (container) container.innerHTML = '';
     }
 
     function buildTile({ key, label, accent, data }) {

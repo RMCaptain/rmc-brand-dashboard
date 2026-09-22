@@ -68,19 +68,16 @@
     <!-- Date Range Picker -->
     <div class="flex items-center justify-between mb-6">
       <div class="flex items-center gap-1 flex-wrap">
-        <select id="presetSelect" onchange="onPresetChange(this.value)" class="rmc-select" style="width:auto;min-width:140px;color-scheme:dark">
-          <option value="today">Today</option>
-          <option value="yesterday">Yesterday</option>
-          <option value="last7d">Last 7 Days</option>
-          <option value="last14d">Last 14 Days</option>
-          <option value="last30d">Last 30 Days</option>
-          <option value="last60d">Last 60 Days</option>
-          <option value="last90d">Last 90 Days</option>
-          <option value="mtd">Month to Date</option>
-          <option value="lastMonth">Last Month</option>
-          <option value="ytd">Year to Date</option>
-          <option value="custom">Custom Range…</option>
-        </select>
+        <!-- Sellerboard-style Period dropdown (Mike, 2026-09-22) -->
+        <div class="relative" id="periodMenuWrap" style="z-index:60">
+          <button id="periodBtn" onclick="togglePeriodMenu(event)" class="rmc-card flex items-center gap-2 px-3 py-2 text-sm" style="color:var(--text)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--text-3)"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            <span>Period</span>
+            <span id="periodBtnLabel" class="text-xs" style="color:var(--text-3)"></span>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--text-3)"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div id="periodMenu" class="p-1 absolute z-50 mt-1 hidden rounded-lg" style="z-index:70;min-width:230px;background:#0e1524;border:1px solid #1f2937;box-shadow:0 8px 30px rgba(0,0,0,0.6)"></div>
+        </div>
         <div id="customDateRow" class="hidden flex items-center gap-2">
           <input type="date" id="customFrom" class="rmc-input" style="padding:4px 8px;font-size:11px;width:128px;color-scheme:dark" />
           <span style="color:var(--text-3);font-size:11px;padding:0 2px">–</span>
@@ -422,9 +419,54 @@
       if (brandCache) renderBrand(brandCache);
     }
 
+    // ── SB-style Period menu ─────────────────────────────────────────────────
+    const PERIOD_ITEMS = [
+      ['today', 'Today'], ['yesterday', 'Yesterday'], ['last7d', 'Last 7 days'],
+      ['last14d', 'Last 14 days'], ['last30d', 'Last 30 days'], ['mtd', 'Month to date'],
+      ['lastMonth', 'Last month'], ['last60d', 'Last 60 days'], ['last90d', 'Last 90 days'],
+      ['ytd', 'Year to date'], ['custom', 'Custom range'],
+    ];
+    const periodLabelOf = key => (PERIOD_ITEMS.find(([k]) => k === key) || [null, key])[1];
+    function buildPeriodMenu() {
+      const menu = document.getElementById('periodMenu');
+      if (!menu) return;
+      menu.innerHTML = PERIOD_ITEMS.map(([k, label]) =>
+        `<button class="w-full text-left px-3 py-2 text-sm rounded hover:bg-white/5" onclick="pickPeriod('${k}')" style="color:${k === activePreset ? '#60a5fa' : 'var(--text)'}">${k === activePreset ? '✓ ' : ''}${label}</button>`
+      ).join('');
+      const lbl = document.getElementById('periodBtnLabel');
+      if (lbl) lbl.textContent = periodLabelOf(activePreset);
+    }
+    function togglePeriodMenu(e) {
+      e.stopPropagation();
+      const menu = document.getElementById('periodMenu');
+      if (!menu) return;
+      const opening = menu.classList.contains('hidden');
+      menu.classList.toggle('hidden');
+      if (opening) {
+        // Portal to <body>: rmc-card's backdrop-filter promotes every card
+        // into its own compositing layer, which painted above the in-flow
+        // menu no matter the z-index. Fixed at the button's rect instead.
+        if (menu.parentElement !== document.body) document.body.appendChild(menu);
+        const r = document.getElementById('periodBtn').getBoundingClientRect();
+        menu.style.position = 'fixed';
+        menu.style.left = r.left + 'px';
+        menu.style.top = (r.bottom + 4) + 'px';
+        menu.style.width = '230px';
+        menu.style.zIndex = '1000';
+        buildPeriodMenu();
+        document.addEventListener('click', () => menu.classList.add('hidden'), { once: true });
+      }
+    }
+    function pickPeriod(key) {
+      document.getElementById('periodMenu')?.classList.add('hidden');
+      onPresetChange(key);
+      buildPeriodMenu();
+    }
+
     function onPresetChange(key) {
       document.getElementById('customDateRow').classList.toggle('hidden', key !== 'custom');
       if (key !== 'custom') setPreset(key);
+      else { activePreset = 'custom'; localStorage.setItem('brandPreset', 'custom'); buildPeriodMenu(); }
     }
 
     function applyCustomRange() {
@@ -446,8 +488,7 @@
     function setPreset(key) {
       activePreset = key;
       localStorage.setItem('brandPreset', key);
-      const sel = document.getElementById('presetSelect');
-      if (sel) sel.value = key;
+      buildPeriodMenu();
       const cdr = document.getElementById('customDateRow');
       if (cdr) cdr.classList.toggle('hidden', key !== 'custom');
 
