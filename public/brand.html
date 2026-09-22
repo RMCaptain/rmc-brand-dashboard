@@ -90,10 +90,8 @@
       <p id="dateRangeLabel" class="text-sm text-slate-500 ml-4 whitespace-nowrap"></p>
     </div>
 
-    <!-- Summary tiles -->
-    <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8" id="summaryTiles">
-      <!-- Rendered by JS -->
-    </div>
+    <!-- Summary tiles — Sellerboard-style P&L strip + ops row, rendered by JS -->
+    <div class="mb-8" id="summaryTiles"></div>
 
     <!-- Alerts row -->
     <div id="alertsRow" class="hidden mb-6 flex gap-3"></div>
@@ -272,11 +270,11 @@
         const rev = skuRev(s), spend = skuSpend(s);
         if (anyActive && allSb) {
           const margin = rev > 0 ? npSb / rev * 100 : null;
-          return { fees: feesKnown ? fees : null, netProfit: npSb, margin, estimated: false };
+          return { fees: feesKnown ? fees : null, netProfit: npSb, margin, estimated: false, cogs: cogsTot, cogsOk: true };
         }
         const netProfit = (feesKnown && cogsOk && cogsTot > 0) ? rev - cogsTot - fees - spend - refunds : null;
         const margin = netProfit != null && rev > 0 ? netProfit / rev * 100 : null;
-        return { fees: feesKnown ? fees : null, netProfit, margin, estimated: !!s.feesEstimated };
+        return { fees: feesKnown ? fees : null, netProfit, margin, estimated: !!s.feesEstimated, cogs: cogsTot, cogsOk };
       }
       const conv = (cad, usd) => MpScope.legacyNum(cad, usd);
       const feesKnown = s.feesCad != null || s.feesUsd != null;
@@ -600,14 +598,73 @@
           ${sub ? `<p class="text-xs mt-0.5" style="color:var(--text-3)">${sub}</p>` : ''}
         </div>`;
 
+      // ── Sellerboard-style P&L strip (Mike, 2026-09-22): the tile row reads
+      // like SB's dashboard card — Sales → Refunds → Advertising → Amazon
+      // fees → COGS → Est. payout → Net profit — costs red with % of sales,
+      // profit carrying Margin + ROI. Values in the display currency; every
+      // money figure comes from the resolved byMp payload (Sellerboard first).
+      const salesVal = m ? (mBy ? (MpScope.sumMp(mBy, 'sales') || 0) : MpScope.legacyNum(m.revenueCad, m.revenueUsd)) : 0;
+      const scoped = mBy ? MpScope.scopedMps(mBy) : [];
+      let feesVal = null, promoVal = 0, refAmt = 0, refUnits = 0;
+      let npSb = 0, npAllSb = true, npAny = false;
+      for (const mp of scoped) {
+        if (mp.fees != null) feesVal = (feesVal || 0) + MpScope.toDisplay(mp.fees, mp.currency);
+        promoVal += MpScope.toDisplay(mp.promo || 0, mp.currency);
+        refAmt   += MpScope.toDisplay(mp.refundAmount || 0, mp.currency);
+        refUnits += mp.refunds || 0;
+        const active = mp.units > 0 || mp.sales > 0 || mp.adSpend > 0 || mp.fees > 0 || mp.refundAmount > 0;
+        if (active) {
+          npAny = true;
+          if (mp.source === 'sellerboard' && mp.netProfit != null) npSb += MpScope.toDisplay(mp.netProfit, mp.currency);
+          else npAllSb = false;
+        }
+      }
+      if (!mBy) { refAmt = MpScope.legacyNum(m?.refundAmountCad, m?.refundAmountUsd); refUnits = m?.refundedUnits || 0; }
+      // COGS and fallback net profit aggregate per ASIN (calcSkuNet handles
+      // the mixed Sellerboard/Amazon split per slice — a summary-level cogsSb
+      // sum drops the non-SB days entirely and made ROI read 60,000%).
+      let netVal = null, netApprox = !(npAny && npAllSb), cogsVal = 0, cogsAllSb = true;
+      {
+        let sum = 0, ok = true;
+        for (const s of (brand.metrics?.skus || [])) {
+          const n = calcSkuNet(brand, s);
+          cogsVal += n.cogs || 0;
+          if (!n.cogsOk) cogsAllSb = false;
+          if (n.netProfit == null) { if (skuRev(s) > 0) ok = false; continue; }
+          sum += n.netProfit;
+        }
+        if (npAny && npAllSb) netVal = npSb;             // Sellerboard actual, exact
+        else if (m && ok) netVal = sum;                  // component math per ASIN
+      }
+      const estPayout = (m && feesVal != null) ? salesVal - feesVal - refAmt - adSpendVal - promoVal : null;
+      const marginPct = netVal != null && salesVal > 0 ? (netVal / salesVal) * 100 : null;
+      const roiPct    = netVal != null && cogsVal > 0 ? (netVal / cogsVal) * 100 : null;
+      const tilde2    = netApprox ? '~' : '';
+      const pctOf     = v => salesVal > 0 ? (v / salesVal * 100).toFixed(1) + '% of sales' : null;
+      const tacosPct  = salesVal > 0 && adSpendVal > 0 ? (adSpendVal / salesVal * 100).toFixed(1) : null;
+      const cost = v => v > 0 ? '-' + MpScope.fmt(v) : MpScope.fmt(0);
+      const RED = '#f87171', GREEN = '#34d399';
+
+      const pnlTiles = [
+        tile('Sales', m ? MpScope.fmt(salesVal) : '—', m ? unitsVal.toLocaleString() + ' units' : null),
+        tile('Refunds', m ? cost(refAmt) : '—', m ? `${refUnits.toLocaleString()} units${salesVal > 0 ? ' · ' + (refAmt / salesVal * 100).toFixed(1) + '%' : ''}` : null, refAmt > 0 ? RED : undefined),
+        tile('Advertising', m ? cost(adSpendVal) : '—', adSpendVal > 0 ? [ad?.acos != null ? 'ACOS ' + ad.acos.toFixed(1) + '%' : null, tacosPct ? 'TACOS ' + tacosPct + '%' : null].filter(Boolean).join(' · ') || null : 'no ad spend', adSpendVal > 0 ? RED : undefined),
+        tile('Amazon fees', feesVal != null ? cost(feesVal) : '—', feesVal != null ? pctOf(feesVal) : 'no fee data', feesVal > 0 ? RED : undefined),
+        tile('Cost of goods', m ? cost(cogsVal) : '—', cogsVal > 0 ? pctOf(cogsVal) + (cogsAllSb ? '' : ' · some ASINs missing unit cost') : null, cogsVal > 0 ? RED : undefined),
+        tile('Est. payout', estPayout != null ? MpScope.fmt(estPayout) : '—', estPayout != null ? 'after promos, before COGS' : null),
+        tile('Net profit', netVal != null ? tilde2 + (netVal < 0 ? '-' : '') + MpScope.fmt(Math.abs(netVal)) : '—',
+          netVal != null ? `Margin ${marginPct.toFixed(1)}%${roiPct != null ? ' · ROI ' + roiPct.toFixed(0) + '%' : ''}` : 'missing fee or COGS data',
+          netVal == null ? undefined : netVal >= 0 ? GREEN : RED),
+      ];
       const totalSns = Object.values(brand.asinSns || {}).reduce((a, b) => a + b, 0);
-      document.getElementById('summaryTiles').innerHTML = [
-        tile('Revenue',  revenueDisp, m ? unitsVal.toLocaleString() + ' units' : null),
+      const opsTiles = [
         tile('Sessions', m && !MpScope.scoped() ? (m.sessions || 0).toLocaleString() : '—', m?.avgCvr != null && !MpScope.scoped() ? 'CVR ' + m.avgCvr.toFixed(2) + '%' : (MpScope.scoped() ? 'not split by marketplace' : null)),
-        tile('Ad Spend', adSpendDisp, ad?.clicks ? ad.clicks.toLocaleString() + ' clicks' : null, adSpendVal > 0 ? '#f87171' : undefined),
-        tile('ACOS',     acosDisp,    ad?.roas != null ? 'ROAS ' + roasDisp : null, acosColor),
+        tile('Buy Box', m?.buyBox != null ? m.buyBox.toFixed(1) + '%' : '—', m?.buyBox != null ? 'avg over period' : null, m?.buyBox != null ? (m.buyBox >= 90 ? GREEN : m.buyBox >= 70 ? '#fbbf24' : RED) : undefined),
         tile('S&S Subs', totalSns > 0 ? totalSns.toLocaleString() : '—', totalSns > 0 ? 'active subscribers' : null),
-      ].join('');
+      ];
+      document.getElementById('summaryTiles').innerHTML =
+        `<div class="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3 mb-3">${pnlTiles.join('')}</div>` +
+        `<div class="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">${opsTiles.join('')}</div>`;
 
       // Ad metrics card (show only when ad data exists, hide otherwise)
       const existingAdCard = document.getElementById('adMetricsCard');
