@@ -55,11 +55,14 @@
         All Brands
       </a>
       <span class="text-slate-600">/</span>
-      <div class="flex items-center gap-2">
+      <!-- Brand switcher (Mike, 2026-09-22): jump between brands without the round trip -->
+      <button id="brandSwitchBtn" onclick="toggleBrandMenu(event)" class="flex items-center gap-2 rounded px-1 py-0.5 hover:bg-white/5" title="Switch brand">
         <div id="brandColorDot" class="w-3 h-3 rounded-full"></div>
         <h1 id="brandName" class="text-lg font-semibold text-white">—</h1>
         <span id="brandMarketplace" class="text-xs text-slate-400 bg-slate-700 px-2 py-0.5 rounded-full"></span>
-      </div>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--text-3)"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <div id="brandMenu" class="p-1 hidden rounded-lg" style="position:fixed;width:260px;max-height:70vh;overflow-y:auto;z-index:1000;background:#0e1524;border:1px solid #1f2937;box-shadow:0 8px 30px rgba(0,0,0,0.6)"></div>
       <div class="ml-auto flex items-center gap-3">
         <a id="editMappingLink" href="#" class="text-sm font-medium transition-colors" style="color:var(--brand)">Edit ASIN Mapping →</a>
       </div>
@@ -417,6 +420,31 @@
       localStorage.setItem('currency', c);
       updateToggleUI();
       if (brandCache) renderBrand(brandCache);
+    }
+
+    // ── Brand switcher menu (same fixed-portal pattern as the Period menu) ──
+    function toggleBrandMenu(e) {
+      e.stopPropagation();
+      const menu = document.getElementById('brandMenu');
+      if (!menu) return;
+      const opening = menu.classList.contains('hidden');
+      menu.classList.toggle('hidden');
+      if (!opening) return;
+      if (menu.parentElement !== document.body) document.body.appendChild(menu);
+      const r = document.getElementById('brandSwitchBtn').getBoundingClientRect();
+      menu.style.left = r.left + 'px';
+      menu.style.top = (r.bottom + 4) + 'px';
+      const list = (allBrandsData || []).slice().sort((a, b) => {
+        if (a.id === 'unknown-brand') return 1;
+        if (b.id === 'unknown-brand') return -1;
+        return a.name.localeCompare(b.name);
+      });
+      menu.innerHTML = list.map(b => `
+        <a href="/brand.html?id=${encodeURIComponent(b.id)}" class="flex items-center gap-2 px-3 py-2 text-sm rounded hover:bg-white/5" style="color:${b.id === brandId ? '#60a5fa' : 'var(--text)'}">
+          <span class="w-2.5 h-2.5 rounded-full" style="background:${b.color || '#64748b'};flex-shrink:0"></span>
+          <span class="truncate">${b.id === brandId ? '✓ ' : ''}${b.name}</span>
+        </a>`).join('');
+      document.addEventListener('click', () => menu.classList.add('hidden'), { once: true });
     }
 
     // ── SB-style Period menu ─────────────────────────────────────────────────
