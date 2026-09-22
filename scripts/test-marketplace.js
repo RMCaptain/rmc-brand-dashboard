@@ -40,6 +40,7 @@ function run(label, file, args = []) {
     ['traffic mp writer',       'traffic-mp.test.js'],
     ['sellerboard cogs',        'cogs-sb.test.js'],
     ['period-card forecast',    'forecast.test.js'],
+    ['weekly digest',           'weekly-digest.test.js'],
   ]) if (!run(label, path.join(DIR, file))) failures++;
 
   // Stub server for the API + page checks

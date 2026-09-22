@@ -6294,6 +6294,40 @@ app.post('/api/health/digest', async (req, res) => {
   }
 });
 
+// Weekly performance digest — last full Mon–Sun week vs the week before,
+// per brand, to Slack. ?dry=1 returns the lines without posting (preview).
+// Cron fires Monday 13:00 UTC (6am PT); this endpoint is the manual trigger.
+async function runWeeklyDigest({ dry = false } = {}) {
+  const { weekRanges, buildWeeklyDigest } = require('./slack/weeklyDigest');
+  const range = weekRanges();
+  const [curPayload, prevPayload, { brands }, fx] = await Promise.all([
+    buildBrandMetricsForRange(range.cur.from, range.cur.to),
+    buildBrandMetricsForRange(range.prev.from, range.prev.to),
+    loadBrands(),
+    fetchFxRate(),
+  ]);
+  const digest = buildWeeklyDigest({
+    curPayload, prevPayload, brands, fx, range,
+    dashboardUrl: process.env.DASHBOARD_URL || 'http://localhost:3000/brands.html',
+  });
+  if (dry) return { posted: false, dry: true, range, fallback: digest.fallback, lines: digest.lines };
+  const { postBlocks } = require('./slack/digest');
+  const result = await postBlocks(digest);
+  return { ...result, range, fallback: digest.fallback };
+}
+
+app.post('/api/digest/weekly', async (req, res) => {
+  if (process.env.SLACK_DIGEST_ENABLED !== 'true' && req.query.dry !== '1') {
+    return res.status(403).json({ error: 'Slack digest is disabled. Set SLACK_DIGEST_ENABLED=true to enable.' });
+  }
+  try {
+    res.json(await runWeeklyDigest({ dry: req.query.dry === '1' }));
+  } catch (err) {
+    console.error('[digest/weekly]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/bulk-template', async (req, res) => {
   try {
     const [brandData, pm] = await Promise.all([loadBrands(), loadPresetMetrics()]);
@@ -7191,6 +7225,19 @@ function scheduleDailySync() {
       }
     });
     console.log('[AutoSync] Slack digest enabled — fires 7am UTC → #account-health');
+
+    // Weekly performance digest — Monday 13:00 UTC (6am PT), after the
+    // Sellerboard feed crons (10:45/12:45 UTC) so the closing Sunday is
+    // Sellerboard-covered and per-brand profit is exact.
+    cron.schedule('0 13 * * 1', async () => {
+      console.log('[WeeklyDigest] Monday 13:00 UTC cron fired');
+      try {
+        await runWeeklyDigest();
+      } catch (err) {
+        console.error('[WeeklyDigest] cron error:', err.message);
+      }
+    });
+    console.log('[AutoSync] Weekly performance digest enabled — Mondays 13:00 UTC');
   }
 
   // Orders poller: every 15 min for intraday revenue/units (~15 min lag)

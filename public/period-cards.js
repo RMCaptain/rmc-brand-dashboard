@@ -65,8 +65,7 @@
           if (m.fees != null) out.fees = (out.fees || 0) + M.toDisplay(m.fees, m.currency);
           out.refundAmount += M.toDisplay(m.refundAmount || 0, m.currency);
           out.refundUnits  += m.refunds || 0;
-          const active = m.units > 0 || m.sales > 0 || m.adSpend > 0 || m.fees > 0 || m.refundAmount > 0;
-          if (active) {
+          if (M.activeSlice(m)) {
             npAny = true;
             if (m.source === 'sellerboard' && m.netProfit != null) npSb += M.toDisplay(m.netProfit, m.currency);
             else npAllSb = false;

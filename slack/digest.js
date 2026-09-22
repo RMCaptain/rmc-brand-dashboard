@@ -254,18 +254,13 @@ function buildHealthDigestBlocks({ alerts, summary, generatedAt, dashboardUrl })
   return blocks;
 }
 
-async function postSlackDigest({ alerts, summary, generatedAt, dashboardUrl }) {
+// Generic webhook poster — any digest (health, weekly performance) rides this.
+async function postBlocks({ blocks, fallback }) {
   const webhook = process.env.SLACK_WEBHOOK_URL;
   if (!webhook) {
     console.log('[Slack] SLACK_WEBHOOK_URL not set — skipping digest');
     return { posted: false, reason: 'no_webhook' };
   }
-
-  const blocks = buildHealthDigestBlocks({ alerts, summary, generatedAt, dashboardUrl });
-  const fallback = summary.total === 0
-    ? `RMC Brand Health: All clear — no issues today.`
-    : `RMC Brand Health: ${summary.critical} critical, ${summary.warning} warnings, ${summary.brandsAffected} brands affected.`;
-
   try {
     const res = await fetch(webhook, {
       method: 'POST',
@@ -285,4 +280,12 @@ async function postSlackDigest({ alerts, summary, generatedAt, dashboardUrl }) {
   }
 }
 
-module.exports = { buildHealthDigestBlocks, postSlackDigest };
+async function postSlackDigest({ alerts, summary, generatedAt, dashboardUrl }) {
+  const blocks = buildHealthDigestBlocks({ alerts, summary, generatedAt, dashboardUrl });
+  const fallback = summary.total === 0
+    ? `RMC Brand Health: All clear — no issues today.`
+    : `RMC Brand Health: ${summary.critical} critical, ${summary.warning} warnings, ${summary.brandsAffected} brands affected.`;
+  return postBlocks({ blocks, fallback });
+}
+
+module.exports = { buildHealthDigestBlocks, postSlackDigest, postBlocks };

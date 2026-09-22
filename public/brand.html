@@ -251,7 +251,7 @@
           const legacyFees = m.code === 'CA' ? s.feesCad : m.code === 'US' ? s.feesUsd : null;
           const f = m.fees != null ? m.fees : legacyFees;
           if (f != null) { feesKnown = true; fees += MpScope.toDisplay(f, m.currency); }
-          const active = m.units > 0 || m.sales > 0 || m.adSpend > 0 || m.fees > 0 || m.refundAmount > 0;
+          const active = MpScope.activeSlice(m);
           if (active) {
             anyActive = true;
             if (m.source === 'sellerboard' && m.netProfit != null) npSb += MpScope.toDisplay(m.netProfit, m.currency);

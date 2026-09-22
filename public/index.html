@@ -387,7 +387,12 @@
           unitsMp += sumMp(bm.summary.byMp, 'units') || 0;
           promoMp += sumMp(bm.summary.byMp, 'promo') || 0;
           for (const m of scopedMps(bm.summary.byMp)) {
-            const active = m.units > 0 || m.sales > 0 || m.adSpend > 0 || m.fees > 0 || m.refundAmount > 0;
+            // "Active" must catch either sign: fees go negative on FBA
+            // reimbursements and netProfit-only rows carry cost adjustments —
+            // a > 0 test dropped their profit (2026-09-22). Kept inline (no
+            // MpScope dependency) for the dashboard-scope test harness.
+            const active = (m.units || 0) !== 0 || (m.sales || 0) !== 0 || (m.adSpend || 0) !== 0
+              || (m.fees || 0) !== 0 || (m.refundAmount || 0) !== 0 || (m.promo || 0) !== 0 || (m.netProfit || 0) !== 0;
             if (!active) continue;
             if (m.source === 'sellerboard' && m.netProfit != null) npSb += toDisplay(m.netProfit, m.currency);
             else npAllSb = false;
@@ -807,7 +812,11 @@
           // covers the marketplace; refunds (posted) stay Amazon-side CA/US.
           if (sku.byMp && Object.keys(sku.byMp).length) {
             for (const m of Object.values(sku.byMp)) {
-              if (!(m.units > 0 || m.sales > 0 || m.adSpend > 0 || m.fees > 0)) continue;
+              // Either-sign activity test: reimbursement (negative-fee) and
+              // adjustment (netProfit-only) slices are real money — dropping
+              // them made the brand table understate profit (2026-09-22).
+              if (!((m.units || 0) !== 0 || (m.sales || 0) !== 0 || (m.adSpend || 0) !== 0
+                || (m.fees || 0) !== 0 || (m.refundAmount || 0) !== 0 || (m.netProfit || 0) !== 0)) continue;
               const mp = m.code;
               const costPerUnit = cogsFor(brand, sku.asin, mp);
               const disp = v => toDisplay(v, m.currency);

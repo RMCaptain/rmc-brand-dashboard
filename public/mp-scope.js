@@ -138,9 +138,17 @@
     const home = (brand?.marketplace || 'CA').split(',')[0].trim();
     return code === home && brand?.cogs?.[asin] != null ? 'legacy' : null;
   }
+  // A slice is "active" when any money moved on it — either sign. Fees go
+  // NEGATIVE on FBA reimbursements and netProfit-only rows carry cost
+  // adjustments; a `> 0` test silently dropped both (understated a Trimax
+  // week by C$122 in the profit sums, found 2026-09-22).
+  function activeSlice(m) {
+    return !!m && ((m.units || 0) !== 0 || (m.sales || 0) !== 0 || (m.adSpend || 0) !== 0
+      || (m.fees || 0) !== 0 || (m.refundAmount || 0) !== 0 || (m.promo || 0) !== 0 || (m.netProfit || 0) !== 0);
+  }
   // Marketplaces with activity on a sku's byMp, as codes.
   function activeCodes(byMp) {
-    return Object.values(byMp || {}).filter(m => m.units > 0 || m.sales > 0 || m.adSpend > 0 || m.fees > 0).map(m => m.code);
+    return Object.values(byMp || {}).filter(activeSlice).map(m => m.code);
   }
 
   // ── Picker UI ──
@@ -228,8 +236,7 @@
         const legacyFees = m.code === 'CA' ? s.feesCad : m.code === 'US' ? s.feesUsd : null;
         const f = m.fees != null ? m.fees : legacyFees;
         if (f != null) { feesKnown = true; fees += toDisplay(f, m.currency); }
-        const active = m.units > 0 || m.sales > 0 || m.adSpend > 0 || m.fees > 0 || m.refundAmount > 0;
-        if (active) {
+        if (activeSlice(m)) {
           anyActive = true;
           if (m.source === 'sellerboard' && m.netProfit != null) npSb += toDisplay(m.netProfit, m.currency);
           else allSb = false;
@@ -266,7 +273,7 @@
     filter: () => state.filter, scoped, byCode, displayCurrency, nativeCurrencyOf, curSym, locale,
     toCadRate, toDisplay, legacyNum, fmt, fmtIn,
     scopedMps, sumMp, scopedFlags, sourceOf, flagBadge, sourceBadge, mpBadge,
-    storefrontFor, sellerCentralFor, labelFor, cogsFor, cogsSourceFor, activeCodes, skuNet,
+    storefrontFor, sellerCentralFor, labelFor, cogsFor, cogsSourceFor, activeCodes, activeSlice, skuNet,
     CUR_SYM, CUR_LOCALE, MP_BADGE,
   };
 })();
