@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="/style.css" />
   <script src="/mobile-nav.js" defer></script>
   <script src="/mp-scope.js"></script>
+  <script src="/period-cards.js"></script>
   <style>
     #salesPopup, #inventoryPopup { pointer-events: none; transition: opacity 0.1s ease; }
     .asin-remove-btn { opacity: 0; transition: opacity 0.15s ease; }
@@ -535,6 +536,13 @@
         if (customTo)   document.getElementById('customTo').value   = customTo;
 
         setPreset(activePreset);
+
+        // Today card data — prefetch regardless of the selected table period.
+        if (!todayData) {
+          fetch('/api/metrics/today').then(r => r.json()).then(d => {
+            if (!todayData) { todayData = d; if (brandCache) renderBrand({ ...brandCache, metrics: getCurrentBrandMetrics(brandCache.id) }); }
+          }).catch(() => {});
+        }
       } catch(e) {
         document.getElementById('brandName').textContent = 'Load error: ' + e.message;
         console.error('loadBrand error:', e);
@@ -598,73 +606,29 @@
           ${sub ? `<p class="text-xs mt-0.5" style="color:var(--text-3)">${sub}</p>` : ''}
         </div>`;
 
-      // ── Sellerboard-style P&L strip (Mike, 2026-09-22): the tile row reads
-      // like SB's dashboard card — Sales → Refunds → Advertising → Amazon
-      // fees → COGS → Est. payout → Net profit — costs red with % of sales,
-      // profit carrying Margin + ROI. Values in the display currency; every
-      // money figure comes from the resolved byMp payload (Sellerboard first).
-      const salesVal = m ? (mBy ? (MpScope.sumMp(mBy, 'sales') || 0) : MpScope.legacyNum(m.revenueCad, m.revenueUsd)) : 0;
-      const scoped = mBy ? MpScope.scopedMps(mBy) : [];
-      let feesVal = null, promoVal = 0, refAmt = 0, refUnits = 0;
-      let npSb = 0, npAllSb = true, npAny = false;
-      for (const mp of scoped) {
-        if (mp.fees != null) feesVal = (feesVal || 0) + MpScope.toDisplay(mp.fees, mp.currency);
-        promoVal += MpScope.toDisplay(mp.promo || 0, mp.currency);
-        refAmt   += MpScope.toDisplay(mp.refundAmount || 0, mp.currency);
-        refUnits += mp.refunds || 0;
-        const active = mp.units > 0 || mp.sales > 0 || mp.adSpend > 0 || mp.fees > 0 || mp.refundAmount > 0;
-        if (active) {
-          npAny = true;
-          if (mp.source === 'sellerboard' && mp.netProfit != null) npSb += MpScope.toDisplay(mp.netProfit, mp.currency);
-          else npAllSb = false;
-        }
-      }
-      if (!mBy) { refAmt = MpScope.legacyNum(m?.refundAmountCad, m?.refundAmountUsd); refUnits = m?.refundedUnits || 0; }
-      // COGS and fallback net profit aggregate per ASIN (calcSkuNet handles
-      // the mixed Sellerboard/Amazon split per slice — a summary-level cogsSb
-      // sum drops the non-SB days entirely and made ROI read 60,000%).
-      let netVal = null, netApprox = !(npAny && npAllSb), cogsVal = 0, cogsAllSb = true;
-      {
-        let sum = 0, ok = true;
-        for (const s of (brand.metrics?.skus || [])) {
-          const n = calcSkuNet(brand, s);
-          cogsVal += n.cogs || 0;
-          if (!n.cogsOk) cogsAllSb = false;
-          if (n.netProfit == null) { if (skuRev(s) > 0) ok = false; continue; }
-          sum += n.netProfit;
-        }
-        if (npAny && npAllSb) netVal = npSb;             // Sellerboard actual, exact
-        else if (m && ok) netVal = sum;                  // component math per ASIN
-      }
-      const estPayout = (m && feesVal != null) ? salesVal - feesVal - refAmt - adSpendVal - promoVal : null;
-      const marginPct = netVal != null && salesVal > 0 ? (netVal / salesVal) * 100 : null;
-      const roiPct    = netVal != null && cogsVal > 0 ? (netVal / cogsVal) * 100 : null;
-      const tilde2    = netApprox ? '~' : '';
-      const pctOf     = v => salesVal > 0 ? (v / salesVal * 100).toFixed(1) + '% of sales' : null;
-      const tacosPct  = salesVal > 0 && adSpendVal > 0 ? (adSpendVal / salesVal * 100).toFixed(1) : null;
-      const cost = v => v > 0 ? '-' + MpScope.fmt(v) : MpScope.fmt(0);
+      // ── Sellerboard-style period cards (Mike, 2026-09-22): Today /
+      // Yesterday / MTD / Forecast / Last month columns, brand-scoped, from
+      // the shared PeriodCards module. The ops row (traffic/Buy Box/S&S)
+      // rides below; the period dropdown drives the ASIN table only.
       const RED = '#f87171', GREEN = '#34d399';
-
-      const pnlTiles = [
-        tile('Sales', m ? MpScope.fmt(salesVal) : '—', m ? unitsVal.toLocaleString() + ' units' : null),
-        tile('Refunds', m ? cost(refAmt) : '—', m ? `${refUnits.toLocaleString()} units${salesVal > 0 ? ' · ' + (refAmt / salesVal * 100).toFixed(1) + '%' : ''}` : null, refAmt > 0 ? RED : undefined),
-        tile('Advertising', m ? cost(adSpendVal) : '—', adSpendVal > 0 ? [ad?.acos != null ? 'ACOS ' + ad.acos.toFixed(1) + '%' : null, tacosPct ? 'TACOS ' + tacosPct + '%' : null].filter(Boolean).join(' · ') || null : 'no ad spend', adSpendVal > 0 ? RED : undefined),
-        tile('Amazon fees', feesVal != null ? cost(feesVal) : '—', feesVal != null ? pctOf(feesVal) : 'no fee data', feesVal > 0 ? RED : undefined),
-        tile('Cost of goods', m ? cost(cogsVal) : '—', cogsVal > 0 ? pctOf(cogsVal) + (cogsAllSb ? '' : ' · some ASINs missing unit cost') : null, cogsVal > 0 ? RED : undefined),
-        tile('Est. payout', estPayout != null ? MpScope.fmt(estPayout) : '—', estPayout != null ? 'after promos, before COGS' : null),
-        tile('Net profit', netVal != null ? tilde2 + (netVal < 0 ? '-' : '') + MpScope.fmt(Math.abs(netVal)) : '—',
-          netVal != null ? `Margin ${marginPct.toFixed(1)}%${roiPct != null ? ' · ROI ' + roiPct.toFixed(0) + '%' : ''}` : 'missing fee or COGS data',
-          netVal == null ? undefined : netVal >= 0 ? GREEN : RED),
-      ];
       const totalSns = Object.values(brand.asinSns || {}).reduce((a, b) => a + b, 0);
       const opsTiles = [
-        tile('Sessions', m && !MpScope.scoped() ? (m.sessions || 0).toLocaleString() : '—', m?.avgCvr != null && !MpScope.scoped() ? 'CVR ' + m.avgCvr.toFixed(2) + '%' : (MpScope.scoped() ? 'not split by marketplace' : null)),
-        tile('Buy Box', m?.buyBox != null ? m.buyBox.toFixed(1) + '%' : '—', m?.buyBox != null ? 'avg over period' : null, m?.buyBox != null ? (m.buyBox >= 90 ? GREEN : m.buyBox >= 70 ? '#fbbf24' : RED) : undefined),
+        tile('Sessions', m && !MpScope.scoped() ? (m.sessions || 0).toLocaleString() : '—', m?.avgCvr != null && !MpScope.scoped() ? 'CVR ' + m.avgCvr.toFixed(2) + '% · selected period' : (MpScope.scoped() ? 'not split by marketplace' : 'selected period')),
+        tile('Buy Box', m?.buyBox != null ? m.buyBox.toFixed(1) + '%' : '—', m?.buyBox != null ? 'avg over selected period' : null, m?.buyBox != null ? (m.buyBox >= 90 ? GREEN : m.buyBox >= 70 ? '#fbbf24' : RED) : undefined),
         tile('S&S Subs', totalSns > 0 ? totalSns.toLocaleString() : '—', totalSns > 0 ? 'active subscribers' : null),
       ];
       document.getElementById('summaryTiles').innerHTML =
-        `<div class="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3 mb-3">${pnlTiles.join('')}</div>` +
+        `<div id="brandPeriodCards" class="mb-3"></div>` +
         `<div class="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">${opsTiles.join('')}</div>`;
+      if (window.PeriodCards) {
+        const pcCtx = {
+          presets: () => presetMetrics.presets || {},
+          today: () => todayData,
+          brands: () => [brand],
+          scopeBrandId: brand.id,
+        };
+        PeriodCards.render(document.getElementById('brandPeriodCards'), pcCtx);
+      }
 
       // Ad metrics card (show only when ad data exists, hide otherwise)
       const existingAdCard = document.getElementById('adMetricsCard');

@@ -210,12 +210,63 @@
     return state.registry;
   }
 
+  // Per-SKU economics in the DISPLAY currency — the one shared implementation
+  // of the Sellerboard-first rule (brand.html/products.html mirror this):
+  // every ACTIVE scoped slice Sellerboard-covered → Σ per-slice netProfit
+  // (nets promos + refund costs); otherwise revenue − COGS − fees − ad spend
+  // − posted refunds, null when fees are absent or a selling marketplace has
+  // no unit cost. Returns { rev, units, adSpend, fees, feesKnown, cogs,
+  // cogsOk, netProfit, estimated }.
+  function skuNet(brand, s) {
+    if (!s) return { rev: 0, units: 0, adSpend: 0, fees: null, feesKnown: false, cogs: 0, cogsOk: true, netProfit: null, estimated: false };
+    const hasBy = s.byMp && Object.keys(s.byMp).length;
+    if (hasBy) {
+      let fees = 0, feesKnown = false, cogsTot = 0, cogsOk = true, refunds = 0;
+      let npSb = 0, allSb = true, anyActive = false;
+      const rev = sumMp(s.byMp, 'sales') || 0, units = sumMp(s.byMp, 'units') || 0, spend = sumMp(s.byMp, 'adSpend') || 0;
+      for (const m of scopedMps(s.byMp)) {
+        const legacyFees = m.code === 'CA' ? s.feesCad : m.code === 'US' ? s.feesUsd : null;
+        const f = m.fees != null ? m.fees : legacyFees;
+        if (f != null) { feesKnown = true; fees += toDisplay(f, m.currency); }
+        const active = m.units > 0 || m.sales > 0 || m.adSpend > 0 || m.fees > 0 || m.refundAmount > 0;
+        if (active) {
+          anyActive = true;
+          if (m.source === 'sellerboard' && m.netProfit != null) npSb += toDisplay(m.netProfit, m.currency);
+          else allSb = false;
+        }
+        if (m.cogsSb != null && m.source === 'sellerboard') cogsTot += toDisplay(m.cogsSb, m.currency);
+        else {
+          const c = cogsFor(brand, s.asin, m.code);
+          if (m.units > 0 && !(c > 0)) cogsOk = false;
+          cogsTot += toDisplay(m.units * c, m.currency);
+        }
+        refunds += toDisplay(m.code === 'CA' ? (s.refundPostedCad || 0) : m.code === 'US' ? (s.refundPostedUsd || 0) : (m.refundAmount || 0), m.currency);
+      }
+      if (anyActive && allSb) return { rev, units, adSpend: spend, fees: feesKnown ? fees : null, feesKnown, cogs: cogsTot, cogsOk: true, netProfit: npSb, estimated: false };
+      const netProfit = (feesKnown && cogsOk && cogsTot > 0) ? rev - cogsTot - fees - spend - refunds : null;
+      return { rev, units, adSpend: spend, fees: feesKnown ? fees : null, feesKnown, cogs: cogsTot, cogsOk, netProfit, estimated: !!s.feesEstimated };
+    }
+    // Legacy CAD/USD pair (Today/Yesterday live endpoints).
+    const uCa = s.unitsCad ?? s.unitsCa ?? 0, uUs = s.unitsUsd ?? s.unitsUs ?? 0;
+    const cCa = cogsFor(brand, s.asin, 'CA'), cUs = cogsFor(brand, s.asin, 'US');
+    const feesKnown = s.feesCad != null || s.feesUsd != null;
+    const fees = feesKnown ? legacyNum(s.feesCad, s.feesUsd) : null;
+    const cogsOk = (!(uCa > 0) || cCa > 0) && (!(uUs > 0) || cUs > 0);
+    const rev = legacyNum(s.revenueCad, s.revenueUsd);
+    const units = state.filter === 'CA' ? uCa : state.filter === 'US' ? uUs : scoped() ? 0 : (s.units ?? uCa + uUs);
+    const cogsTot = legacyNum(uCa * cCa, uUs * cUs);
+    const spend = legacyNum(s.spendCad, s.spendUsd);
+    const refunds = legacyNum(s.refundPostedCad, s.refundPostedUsd);
+    const netProfit = (feesKnown && cogsOk && cogsTot > 0) ? rev - cogsTot - fees - spend - refunds : null;
+    return { rev, units, adSpend: spend, fees, feesKnown, cogs: cogsTot, cogsOk, netProfit, estimated: !!s.feesEstimated };
+  }
+
   window.MpScope = {
     state, init, setFilter, syncOptions, updateUI,
     filter: () => state.filter, scoped, byCode, displayCurrency, nativeCurrencyOf, curSym, locale,
     toCadRate, toDisplay, legacyNum, fmt, fmtIn,
     scopedMps, sumMp, scopedFlags, sourceOf, flagBadge, sourceBadge, mpBadge,
-    storefrontFor, sellerCentralFor, labelFor, cogsFor, cogsSourceFor, activeCodes,
+    storefrontFor, sellerCentralFor, labelFor, cogsFor, cogsSourceFor, activeCodes, skuNet,
     CUR_SYM, CUR_LOCALE, MP_BADGE,
   };
 })();

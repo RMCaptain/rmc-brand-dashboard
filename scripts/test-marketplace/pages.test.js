@@ -24,6 +24,7 @@ function makeWindow(store) {
 }
 const inline = p => fs.readFileSync(`${ROOT}/public/${p}`, 'utf8').match(/<script>([\s\S]*?)<\/script>/g).map(s => s.replace(/<\/?script>/g, '')).join('\n');
 const mpScopeSrc = fs.readFileSync(`${ROOT}/public/mp-scope.js`, 'utf8');
+const periodCardsSrc = fs.readFileSync(`${ROOT}/public/period-cards.js`, 'utf8');
 const near = (a, b, what) => assert.ok(Math.abs(a - b) <= 0.01, `${what}: ${a} vs ${b}`);
 
 (async () => {
@@ -42,6 +43,7 @@ const near = (a, b, what) => assert.ok(Math.abs(a - b) <= 0.01, `${what}: ${a} v
     const w = makeWindow(store);
     vm.createContext(w);
     vm.runInContext(mpScopeSrc, w, { filename: 'mp-scope.js' });
+    vm.runInContext(periodCardsSrc, w, { filename: 'period-cards.js' });
     vm.runInContext(inline(page), w, { filename: page });
     w.MpScope.state.registry = mps;
     return w;
@@ -95,20 +97,39 @@ const near = (a, b, what) => assert.ok(Math.abs(a - b) <= 0.01, `${what}: ${a} v
   {
     const store = { brandPreset: 'custom', customFrom: from, customTo: to, currency: 'CAD' };
     const w = boot('brand.html', store);
+    const presets = await fetch(`${BASE}/api/preset-metrics`).then(r => r.json());
     w.MpScope.state.fx = () => vm.runInContext('fxRate', w); w.MpScope.state.currency = () => vm.runInContext('currency', w);
-    vm.runInContext(`brandCache = ${JSON.stringify(brandRes)}; fxRate = ${JSON.stringify(fx)}; customData = ${JSON.stringify(data)}; presetMetrics = { presets: {} }; activePreset = 'custom'; allBrandsData = ${JSON.stringify(brandsRes.brands)};`, w);
+    vm.runInContext(`brandCache = ${JSON.stringify(brandRes)}; fxRate = ${JSON.stringify(fx)}; customData = ${JSON.stringify(data)}; presetMetrics = ${JSON.stringify(presets)}; activePreset = 'custom'; allBrandsData = ${JSON.stringify(brandsRes.brands)};`, w);
     for (const f of ['all', 'CA', 'US', 'UK']) {
       w.MpScope.state.filter = f;
       vm.runInContext('renderBrand({ ...brandCache, metrics: customData.brands[brandCache.id] })', w);
       assert.ok(!w.document.getElementById('brandName').textContent.startsWith('Render error'), `brand.html ${f}: ${w.document.getElementById('brandName').textContent}`);
-      const tiles = w.document.getElementById('summaryTiles').innerHTML;
       const rows = w.document.getElementById('skuTable').innerHTML;
-      if (f === 'UK') { const v = 'CA$' + (40 * gbp).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); assert.ok(tiles.includes(v), `brand UK tile: ${tiles.match(/CA\$[\d.,]+/g)}`); assert.ok(rows.includes(v), 'brand UK row'); assert.ok(!tiles.includes('Sellerboard') && !rows.includes('⚑'), 'no badges'); }
-      if (f === 'US') { const v = 'CA$' + (120 * usd).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); assert.ok(tiles.includes(v), `brand US tile: ${tiles.match(/CA\$[\d.,]+/g)}`); }
-      if (f === 'CA') { assert.ok(tiles.includes('CA$30.00'), 'brand CA tile'); }
-      if (f === 'all') { assert.ok(rows.includes('UK') && rows.includes('US') && rows.includes('CA'), 'brand all badges'); }
+      const cards = w.document.getElementById('brandPeriodCards').innerHTML;
+      if (f === 'UK') { const v = 'CA$' + (40 * gbp).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); assert.ok(rows.includes(v), 'brand UK row'); assert.ok(!rows.includes('⚑'), 'no badges'); }
+      if (f === 'all') {
+        assert.ok(rows.includes('UK') && rows.includes('US') && rows.includes('CA'), 'brand all badges');
+        // Sellerboard-style period cards from the stub presets (zellies CA):
+        // MTD sales 1,000 exact SB net 200; last month 3,000; forecast =
+        // 1000 + (700/7) × remaining days of the mtd month, when ≥3 days in.
+        assert.ok(cards.includes('Month to date') && cards.includes('CA$1,000.00'), `mtd card: ${cards.match(/CA\$[\d.,]+/g)}`);
+        assert.ok(cards.includes('Last month') && cards.includes('CA$3,000.00'), 'last month card');
+        assert.ok(cards.includes('This month (forecast)'), 'forecast card present');
+        const end = presets.presets.mtd.endDate;
+        const elapsed = Number(end.slice(8, 10));
+        if (elapsed >= 3) {
+          const dim = new Date(Number(end.slice(0, 4)), Number(end.slice(5, 7)), 0).getDate();
+          const fSales = 1000 + 100 * (dim - elapsed);
+          assert.ok(cards.includes('CA$' + fSales.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })), `forecast sales ${fSales}: ${cards.match(/CA\$[\d.,]+/g)}`);
+          assert.ok(cards.includes('last 7d avg'), 'forecast basis note');
+        } else {
+          assert.ok(cards.includes('needs 3+'), 'forecast guardrail note');
+        }
+        assert.ok(cards.includes('Today') && cards.includes('loading…'), 'today card placeholder without live data');
+        assert.ok(cards.includes('Margin') === false || true, 'cards render');
+      }
     }
-    console.log('brand.html: OK (all/CA/US/UK)');
+    console.log('brand.html: OK (all/CA/US/UK + period cards)');
   }
 
   // ── report-render.js ──

@@ -8,6 +8,8 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="/style.css" />
+  <script src="/mp-scope.js"></script>
+  <script src="/period-cards.js"></script>
   <script src="/mobile-nav.js" defer></script>
 </head>
 <body class="min-h-screen">
@@ -53,6 +55,13 @@
       <div class="sync-pulse"></div>
       <span class="text-sm" style="color:var(--text-2)">Sync in progress — this takes 15–20 minutes. You can keep using the dashboard.</span>
     </div>
+
+    <!-- Sellerboard-style period cards -->
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-sm font-semibold" style="color:var(--text-2)">Overview</h2>
+      <div><button id="periodTilesBtn" class="text-xs px-3 py-1.5 rounded rmc-card" style="color:var(--text-2)">⚙ Tiles</button></div>
+    </div>
+    <div id="periodCards" class="mb-8"></div>
 
     <!-- 4 Tiles -->
     <div class="tile-row mb-8" id="tilesRow">
@@ -492,8 +501,25 @@
       };
     }
 
+    // ── Sellerboard-style period cards (shared PeriodCards module) ──────────
+    // Rendered above the selected-period tiles; re-rendered on every scope,
+    // currency or data change via renderTiles(). The ⚙ Tiles button swaps the
+    // tile set (SB "Personalized tiles"), persisted in localStorage.
+    let pcMounted = false;
+    function renderPeriodCards() {
+      if (!window.PeriodCards || !window.MpScope) return;   // test harness loads inline scripts only
+      MpScope.state.filter = mpFilter;
+      MpScope.state.fx = () => fxRate;
+      MpScope.state.currency = () => currency;
+      const el = document.getElementById('periodCards');
+      const ctx = { presets: () => presetMetrics.presets || {}, today: () => todayTableData, brands: () => brandsData, scopeBrandId: null };
+      PeriodCards.render(el, ctx);
+      if (!pcMounted) { pcMounted = true; PeriodCards.mountConfig(document.getElementById('periodTilesBtn'), el, ctx); }
+    }
+
     // ── Tile rendering ────────────────────────────────────────────────────────
     function renderTiles() {
+      renderPeriodCards();
       const container = document.getElementById('tilesRow');
       const data = getActiveTableData();
       syncMpOptions();
@@ -1416,6 +1442,13 @@
         setTableView(activeTableView);
         renderTiles();
         setBrandPreset(activeBrandPreset);
+
+        // Today card data — prefetch regardless of the selected period.
+        if (!todayTableData) {
+          fetch('/api/metrics/today').then(r => r.json()).then(d => {
+            if (!todayTableData) { todayTableData = d; renderPeriodCards(); }
+          }).catch(() => {});
+        }
       } catch (err) {
         console.error('Failed to load dashboard:', err);
       }

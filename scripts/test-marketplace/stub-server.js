@@ -12,7 +12,23 @@ const T = {
     { id: 'acure',   name: 'Acure',   marketplace: 'CA', color: '#111', asins: ['A1', 'A2'], asinTitles: { A1: 'Acure One' }, cogs: { A1: 2 } },
     { id: 'zellies', name: 'Zellies', marketplace: 'CA,US', color: '#222', asins: ['Z1'], cogsPerMarketplace: { Z1: { CA: 3, US: 2.5, UK: 2 } } },
   ] } }],
-  preset_metrics: [{ id: 'main', data: { presets: {}, lastSync: null } }],
+  preset_metrics: [{ id: 'main', data: { presets: (() => {
+    // Minimal cached presets for the PeriodCards row: one Sellerboard-covered
+    // CA slice for zellies. mtd spans 10 elapsed days ending yesterday so the
+    // forecast math has room; last7d is the run-rate window.
+    const mkBm = (sales, units, np, cogs, fees, ads) => ({
+      summary: { byMp: { A2EUQ1WTGCTBG2: { code: 'CA', currency: 'CAD', units, sales, adSpend: ads, fees, netProfit: np, promo: 0, cogsSb: cogs, refunds: 1, refundAmount: 10, source: 'sellerboard', sbDays: 7, flags: {} } } },
+      skus: [{ asin: 'Z1', byMp: { A2EUQ1WTGCTBG2: { code: 'CA', currency: 'CAD', units, sales, adSpend: ads, fees, netProfit: np, promo: 0, cogsSb: cogs, refunds: 1, refundAmount: 10, source: 'sellerboard', sbDays: 7, flags: {} } } }],
+    });
+    const mtdEnd = y;
+    const mtdStart = mtdEnd.slice(0, 8) + '01';
+    return {
+      mtd:       { label: 'Month to Date', startDate: mtdStart, endDate: mtdEnd, brands: { zellies: mkBm(1000, 100, 200, 300, 250, 50) } },
+      last7d:    { label: 'Last 7 Days',   startDate: d(6),     endDate: y,      brands: { zellies: mkBm(700, 70, 140, 210, 175, 35) } },
+      yesterday: { label: 'Yesterday',     startDate: y,        endDate: y,      brands: { zellies: mkBm(100, 10, 20, 30, 25, 5) } },
+      lastMonth: { label: 'Last Month',    startDate: '2026-08-01', endDate: '2026-08-31', brands: { zellies: mkBm(3000, 300, 600, 900, 750, 150) } },
+    };
+  })(), lastSync: null } }],
   daily_metrics: [
     { date: D1, asin: 'A1', brand_id: 'acure', units: 10, units_ca: 10, units_us: 0, revenue_cad: 100, revenue_usd: 0, spend_cad: 5, spend_usd: 0, attributed_sales_cad: 20, attributed_sales_usd: 0, attributed_sales_7d_cad: 18, attributed_sales_7d_usd: 0, refunded_units: 1, refund_amount_cad: 10, refund_amount_usd: 0, refund_count: 1, sessions: 50, page_views: 60, buy_box_pct: 90, inventory_on_hand: 100 },
     { date: D2, asin: 'A1', brand_id: 'acure', units: 7,  units_ca: 7,  units_us: 0, revenue_cad: 70,  revenue_usd: 0, spend_cad: 3, spend_usd: 0, attributed_sales_cad: 14, attributed_sales_usd: 0, refunded_units: 0, refund_amount_cad: 0, refund_amount_usd: 0, refund_count: 0, sessions: 40, page_views: 45, buy_box_pct: 95, inventory_on_hand: 93 },
