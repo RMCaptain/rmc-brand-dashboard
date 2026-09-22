@@ -153,12 +153,18 @@
     return `<div><p class="text-xs" style="color:var(--text-3)">${lbl}</p><p class="text-sm font-semibold" style="color:${color || 'var(--text)'}">${valHtml}</p></div>`;
   }
 
-  function cardHtml(key, met, dates, idx, note) {
+  function cardHtml(key, met, dates, idx, note, opts = {}) {
     const M = window.MpScope;
     const band = BAND[idx % BAND.length];
     const label = PERIOD_LABEL[key] || key;
+    // Selectable cards (dashboard) drive the table below; the active one gets
+    // a band-colored ring. Forecast is a projection with no product rows, so
+    // it never selects.
+    const shell = opts.selectable
+      ? `class="rmc-card overflow-hidden flex flex-col cursor-pointer" data-pc-card="${key}" style="${opts.active ? `box-shadow:0 0 0 2px ${band}` : ''}" title="Show ${label} in the table below"`
+      : `class="rmc-card overflow-hidden flex flex-col"${opts.inPicker ? ` data-pc-card="${key}" title="No product-level data for a forecast — tiles only"` : ''}`;
     if (!met) {
-      return `<div class="rmc-card overflow-hidden flex flex-col">
+      return `<div ${shell}>
         <div class="px-4 py-3" style="background:${band}"><p class="font-semibold" style="color:#0b1418">${label}</p>
           <p class="text-xs" style="color:rgba(8,18,24,0.7)">${dates || ''}</p></div>
         <div class="p-4 flex-1 flex items-center justify-center text-xs" style="color:var(--text-3)">${note || 'no data'}</div>
@@ -180,7 +186,7 @@
         ${row('Margin', margin)}
         ${row('ROI', roi)}
       </div>` : '';
-    return `<div class="rmc-card overflow-hidden flex flex-col">
+    return `<div ${shell}>
       <div class="px-4 py-3" style="background:${band}">
         <p class="font-semibold" style="color:#0b1418">${label}</p>
         <p class="text-xs" style="color:rgba(8,18,24,0.7)">${dates || ''}</p>
@@ -210,13 +216,18 @@
   }
 
   // ── Public render ───────────────────────────────────────────────────────────
-  // ctx: { presets(), today(), brands(), scopeBrandId }
+  // ctx: { presets(), today(), brands(), scopeBrandId, activeKey?(), onSelect?(key) }
+  // With onSelect, cards become the period picker for whatever sits below
+  // them: clicking one calls back with its key, activeKey() marks the ring.
   function render(el, ctx) {
     if (!el) return;
     const sel = selection();
     const presets = ctx.presets() || {};
     const brandsMeta = ctx.brands() || [];
     const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+    const pickable = typeof ctx.onSelect === 'function';
+    const activeKey = pickable && ctx.activeKey ? ctx.activeKey() : null;
+    const opts = key => ({ selectable: pickable && key !== 'forecast', active: key === activeKey, inPicker: pickable });
 
     const mtdAgg = aggregate(presets.mtd, brandsMeta, ctx.scopeBrandId);
     const l7Agg  = aggregate(presets.last7d, brandsMeta, ctx.scopeBrandId);
@@ -226,56 +237,38 @@
         const t = ctx.today();
         const met = t ? aggregate(t, brandsMeta, ctx.scopeBrandId) : null;
         if (met) { met.estimated = true; met.fees = met.fees ?? null; }
-        return cardHtml('today', met, fmtRange(todayStr, todayStr), idx, met ? 'live · fees estimated, refunds post next day' : 'loading…');
+        return cardHtml('today', met, fmtRange(todayStr, todayStr), idx, met ? 'live · fees estimated, refunds post next day' : 'loading…', opts(key));
       }
       if (key === 'forecast') {
         const f = forecastFrom(mtdAgg, l7Agg, presets.mtd?.endDate, todayStr);
         const end = presets.mtd?.endDate || todayStr;
         const d = new Date(end + 'T00:00:00');
         const dates = fmtRange(end.slice(0, 8) + '01', end.slice(0, 8) + String(new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate()).padStart(2, '0'));
-        return cardHtml('forecast', f, dates, idx, f ? f.basis : 'needs 3+ days of month data');
+        return cardHtml('forecast', f, dates, idx, f ? f.basis : 'needs 3+ days of month data', opts(key));
       }
       const p = presets[key];
       const met = aggregate(p, brandsMeta, ctx.scopeBrandId);
-      return cardHtml(key, met, p ? fmtRange(p.startDate, p.endDate) : '', idx, null);
+      return cardHtml(key, met, p ? fmtRange(p.startDate, p.endDate) : '', idx, null, opts(key));
     });
 
     el.innerHTML = `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-${Math.min(sel.tiles.length, 5)} gap-3">${cards.join('')}</div>`;
-    el.querySelectorAll('.pc-more').forEach(b => b.addEventListener('click', () => { expandState[b.dataset.key] = !expandState[b.dataset.key]; render(el, ctx); }));
+    el.querySelectorAll('.pc-more').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); expandState[b.dataset.key] = !expandState[b.dataset.key]; render(el, ctx); }));
+    if (pickable) el.querySelectorAll('[data-pc-card]').forEach(c => c.addEventListener('click', () => {
+      const key = c.dataset.pcCard;
+      if (key !== 'forecast') ctx.onSelect(key);
+    }));
   }
 
-  // Tile-set dropdown (SB "Personalized tiles"). btn toggles the menu.
-  function mountConfig(btn, el, ctx) {
-    if (!btn || btn._pcMounted) return;
-    btn._pcMounted = true;
-    let menu = null;
-    const close = () => { if (menu) { menu.remove(); menu = null; } };
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      if (menu) return close();
-      const sel = selection();
-      // Fixed + body-appended: card backdrop-filters composite above any
-      // in-flow sibling regardless of z-index.
-      menu = document.createElement('div');
-      menu.className = 'p-1 rounded-lg';
-      const r = btn.getBoundingClientRect();
-      menu.style.cssText = `position:fixed;top:${r.bottom + 4}px;right:${Math.max(8, window.innerWidth - r.right)}px;width:600px;max-width:90vw;z-index:1000;background:#0e1524;border:1px solid #1f2937;box-shadow:0 8px 30px rgba(0,0,0,0.6)`;
-      menu.innerHTML = `<p class="text-xs px-3 py-2 font-semibold" style="color:var(--text-3)">Personalized tiles</p>` +
-        TILE_SETS.map(s => `
-          <button class="pc-set w-full text-left px-3 py-2 text-sm rounded hover:bg-white/5" data-id="${s.id}" style="color:${s.id === sel.id ? '#60a5fa' : 'var(--text)'}">
-            ${s.id === sel.id ? '✓ ' : ''}${s.label}
-          </button>`).join('');
-      document.body.appendChild(menu);
-      menu.querySelectorAll('.pc-set').forEach(b => b.addEventListener('click', () => {
-        const set = TILE_SETS.find(s => s.id === b.dataset.id);
-        saveSelection({ id: set.id, tiles: set.tiles });
-        close(); render(el, ctx);
-      }));
-      document.addEventListener('click', close, { once: true });
-    });
+  // Swap the persisted tile set (SB "Personalized tiles"); returns the new
+  // selection. The dashboard's nav dropdown is the only chooser — the brand
+  // page just reads whatever it saved.
+  function setSelection(id) {
+    const set = TILE_SETS.find(s => s.id === id);
+    if (set) saveSelection({ id: set.id, tiles: set.tiles });
+    return selection();
   }
 
-  const api = { render, mountConfig, aggregate, forecastFrom, TILE_SETS, PERIOD_LABEL, selection };
+  const api = { render, setSelection, aggregate, forecastFrom, TILE_SETS, PERIOD_LABEL, selection };
   if (typeof window !== 'undefined') window.PeriodCards = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })();

@@ -30,6 +30,12 @@
         </div>
       </div>
       <div class="flex items-center gap-3">
+        <!-- The one period control (Mike, 2026-09-22): picks the tile set and
+             a custom range. The table below follows the highlighted tile —
+             leftmost by default, or whichever the user clicks. -->
+        <button id="periodPickerBtn" class="rmc-select" style="width:auto;font-size:12px;padding:6px 10px;cursor:pointer;display:inline-flex;align-items:center;gap:6px" onclick="togglePeriodMenu(event)" title="Tiles &amp; period — the table follows the highlighted tile">
+          <span id="periodPickerLabel">Period</span><span style="opacity:0.6;font-size:9px">▾</span>
+        </button>
         <!-- Marketplace filter: scope every number to one marketplace or blend
              all; the CAD/USD toggle sets the display currency either way.
              Options come from /api/marketplaces + whatever the data carries. -->
@@ -56,10 +62,10 @@
       <span class="text-sm" style="color:var(--text-2)">Sync in progress — this takes 15–20 minutes. You can keep using the dashboard.</span>
     </div>
 
-    <!-- Sellerboard-style period cards -->
+    <!-- Sellerboard-style period cards. Clicking one drives the table below;
+         the tile set + custom range live in the nav period picker. -->
     <div class="flex items-center justify-between mb-3">
       <h2 class="text-sm font-semibold" style="color:var(--text-2)">Overview</h2>
-      <div><button id="periodTilesBtn" class="text-xs px-3 py-1.5 rounded rmc-card" style="color:var(--text-2)">⚙ Tiles</button></div>
     </div>
     <div id="periodCards" class="mb-8"></div>
 
@@ -68,33 +74,12 @@
     <div class="rmc-card overflow-hidden">
       <div class="px-5 py-3 flex items-center justify-between flex-wrap gap-2" style="border-bottom:1px solid var(--border)">
         <div class="flex items-center gap-4 mobile-wrap">
-          <!-- View tabs -->
+          <!-- View tabs. The period comes from the nav picker / clicked tile. -->
           <div class="view-tabs">
             <button onclick="setTableView('products')" id="view-products" class="view-tab">Products</button>
             <button onclick="setTableView('brands')"   id="view-brands"   class="view-tab">Brands</button>
           </div>
-          <!-- Period selector -->
-          <div class="flex items-center gap-2 mobile-wrap">
-            <select id="presetSelect" onchange="onPresetChange(this.value)" class="rmc-select" style="width:auto;min-width:140px;color-scheme:dark">
-              <option value="today">Today</option>
-              <option value="yesterday">Yesterday</option>
-              <option value="last7d">Last 7 Days</option>
-              <option value="last14d">Last 14 Days</option>
-              <option value="last30d">Last 30 Days</option>
-              <option value="last60d">Last 60 Days</option>
-              <option value="last90d">Last 90 Days</option>
-              <option value="mtd">Month to Date</option>
-              <option value="lastMonth">Last Month</option>
-              <option value="ytd">Year to Date</option>
-              <option value="custom">Custom Range…</option>
-            </select>
-            <div id="customDateRow" class="hidden flex items-center gap-2">
-              <input type="date" id="customFrom" class="rmc-input" style="padding:4px 8px;font-size:11px;width:128px;color-scheme:dark" />
-              <span style="color:var(--text-3);font-size:11px;padding:0 2px">–</span>
-              <input type="date" id="customTo" class="rmc-input" style="padding:4px 8px;font-size:11px;width:128px;color-scheme:dark" />
-              <button onclick="applyCustomRange()" class="preset-btn active">Apply</button>
-            </div>
-          </div>
+          <span id="tablePeriodLabel" class="text-xs" style="color:var(--text-3)"></span>
         </div>
       </div>
 
@@ -498,19 +483,93 @@
     }
 
     // ── Sellerboard-style period cards (shared PeriodCards module) ──────────
-    // Rendered above the selected-period tiles; re-rendered on every scope,
-    // currency or data change via renderTiles(). The ⚙ Tiles button swaps the
-    // tile set (SB "Personalized tiles"), persisted in localStorage.
-    let pcMounted = false;
+    // Re-rendered on every scope, currency, data or selection change via
+    // renderTiles(). The cards are also the table's period picker: clicking
+    // one calls selectTile, the active one wears a ring. Tile set + custom
+    // range live in the nav period dropdown (togglePeriodMenu).
     function renderPeriodCards() {
       if (!window.PeriodCards || !window.MpScope) return;   // test harness loads inline scripts only
       MpScope.state.filter = mpFilter;
       MpScope.state.fx = () => fxRate;
       MpScope.state.currency = () => currency;
       const el = document.getElementById('periodCards');
-      const ctx = { presets: () => presetMetrics.presets || {}, today: () => todayTableData, brands: () => brandsData, scopeBrandId: null };
+      const ctx = {
+        presets: () => presetMetrics.presets || {}, today: () => todayTableData,
+        brands: () => brandsData, scopeBrandId: null,
+        activeKey: () => activeTileKey, onSelect: selectTile,
+      };
       PeriodCards.render(el, ctx);
-      if (!pcMounted) { pcMounted = true; PeriodCards.mountConfig(document.getElementById('periodTilesBtn'), el, ctx); }
+    }
+
+    // Clicking a card scopes the table below to its period. Forecast never
+    // arrives here (PeriodCards refuses it — a projection has no product rows).
+    function selectTile(key) {
+      if (key === 'forecast' || key === activeBrandPreset) return;
+      setBrandPreset(key);
+    }
+
+    // ── Nav period picker (the ONE date control, Mike 2026-09-22) ─────────────
+    // Dropdown = SB "Personalized tiles" sets + a custom range for the table.
+    // Fixed + body-appended: card backdrop-filters composite above any
+    // in-flow sibling regardless of z-index.
+    let periodMenuEl = null, periodMenuDocClose = null;
+    function closePeriodMenu() {
+      if (periodMenuEl) { periodMenuEl.remove(); periodMenuEl = null; }
+      if (periodMenuDocClose) { document.removeEventListener('click', periodMenuDocClose); periodMenuDocClose = null; }
+    }
+    function togglePeriodMenu(e) {
+      e?.stopPropagation?.();
+      if (periodMenuEl) return closePeriodMenu();
+      if (!window.PeriodCards) return;
+      const btn = document.getElementById('periodPickerBtn');
+      const sel = PeriodCards.selection();
+      const menu = document.createElement('div');
+      menu.className = 'p-1 rounded-lg';
+      const r = btn.getBoundingClientRect();
+      menu.style.cssText = `position:fixed;top:${r.bottom + 6}px;right:${Math.max(8, window.innerWidth - r.right)}px;width:600px;max-width:92vw;z-index:1000;background:#0e1524;border:1px solid #1f2937;box-shadow:0 8px 30px rgba(0,0,0,0.6)`;
+      menu.innerHTML = `<p class="text-xs px-3 py-2 font-semibold" style="color:var(--text-3)">Personalized tiles</p>` +
+        PeriodCards.TILE_SETS.map(s => `
+          <button class="pp-set w-full text-left px-3 py-2 text-sm rounded hover:bg-white/5" data-id="${s.id}" style="color:${s.id === sel.id ? '#60a5fa' : 'var(--text)'}">
+            ${s.id === sel.id ? '✓ ' : ''}${s.label}
+          </button>`).join('') + `
+        <div class="my-1" style="border-top:1px solid #1f2937"></div>
+        <p class="text-xs px-3 py-2 font-semibold" style="color:var(--text-3)">Custom range (table below)</p>
+        <div class="flex items-center gap-2 px-3 pb-3">
+          <input type="date" id="customFrom" class="rmc-input" style="padding:4px 8px;font-size:11px;width:132px;color-scheme:dark" value="${customFrom || ''}" />
+          <span style="color:var(--text-3);font-size:11px">–</span>
+          <input type="date" id="customTo" class="rmc-input" style="padding:4px 8px;font-size:11px;width:132px;color-scheme:dark" value="${customTo || ''}" />
+          <button onclick="applyCustomRange()" class="preset-btn active">Apply</button>
+        </div>`;
+      menu.addEventListener('click', ev => ev.stopPropagation());   // keep open while typing dates
+      document.body.appendChild(menu);
+      menu.querySelectorAll('.pp-set').forEach(b => b.addEventListener('click', () => chooseTileSet(b.dataset.id)));
+      periodMenuEl = menu;
+      periodMenuDocClose = () => closePeriodMenu();
+      setTimeout(() => document.addEventListener('click', periodMenuDocClose), 0);
+    }
+    function chooseTileSet(id) {
+      const set = PeriodCards.TILE_SETS.find(s => s.id === id);
+      if (!set) return;
+      PeriodCards.setSelection(id);
+      closePeriodMenu();
+      // New set → table follows its leftmost selectable tile unless the
+      // current period is still on screen.
+      if (set.tiles.includes(activeBrandPreset) && activeBrandPreset !== 'forecast') {
+        activeTileKey = activeBrandPreset;
+        renderTiles();
+      } else {
+        setBrandPreset(set.tiles.find(t => t !== 'forecast'));
+      }
+    }
+    function updatePeriodLabel() {
+      const fmtD = d => new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const label = activeBrandPreset === 'custom' && customFrom && customTo
+        ? `${fmtD(customFrom)} – ${fmtD(customTo)}`
+        : (PRESET_LABEL_MAP[activeBrandPreset] || activeBrandPreset || 'Period');
+      const nav = document.getElementById('periodPickerLabel');
+      if (nav) nav.textContent = label;
+      const tbl = document.getElementById('tablePeriodLabel');
+      if (tbl) tbl.textContent = label;
     }
 
     // ── Tile rendering ────────────────────────────────────────────────────────
@@ -1041,21 +1100,21 @@
       updateSortIndicators();
     }
 
-    // ── Table preset ──────────────────────────────────────────────────────────
-    function onPresetChange(key) {
-      document.getElementById('customDateRow').classList.toggle('hidden', key !== 'custom');
-      if (key !== 'custom') setBrandPreset(key);
-    }
-
+    // ── Custom range (from the nav period dropdown) ───────────────────────────
+    // Scopes the table only — the tiles keep their fixed periods, no ring.
     function applyCustomRange() {
-      const from = document.getElementById('customFrom').value;
-      const to   = document.getElementById('customTo').value;
+      const from = document.getElementById('customFrom')?.value;
+      const to   = document.getElementById('customTo')?.value;
       if (!from || !to || from > to) return;
       customFrom = from; customTo = to;
       localStorage.setItem('customFrom', from);
       localStorage.setItem('customTo', to);
       activeBrandPreset = 'custom';
       localStorage.setItem('brandPreset', 'custom');
+      activeTileKey = null;
+      updatePeriodLabel();
+      renderPeriodCards();   // drop the ring now, not after the fetch
+      closePeriodMenu();
       productPage = 1; brandPage = 1;
       fetch(`/api/metrics?from=${from}&to=${to}`)
         .then(r => r.json())
@@ -1097,10 +1156,10 @@
     function setBrandPreset(key) {
       activeBrandPreset = key;
       localStorage.setItem('brandPreset', key);
-      const sel = document.getElementById('presetSelect');
-      if (sel) sel.value = key;
-      const cdr = document.getElementById('customDateRow');
-      if (cdr) cdr.classList.toggle('hidden', key !== 'custom');
+      // Ring the matching card right away (data re-renders after the fetch).
+      activeTileKey = (key !== 'custom' && window.PeriodCards && PeriodCards.selection().tiles.includes(key)) ? key : null;
+      updatePeriodLabel();
+      renderPeriodCards();
       productPage = 1; brandPage = 1;
       if (key === 'today') {
         fetch('/api/metrics/today').then(r => r.json()).then(d => { todayTableData = d; renderTiles(); renderBrandTable(); renderProductTable(); });
@@ -1427,14 +1486,14 @@
             'Synced ' + new Date(brandsRes.lastSync).toLocaleString();
         }
 
-        // Validate active preset
-        const available = Object.keys(presetMetrics.presets || {});
-        if (activeBrandPreset !== 'today' && activeBrandPreset !== 'custom' && !available.includes(activeBrandPreset) && available.length > 0) {
-          activeBrandPreset = available[0];
+        // Validate active preset against the tile set: the table follows the
+        // leftmost tile unless a stored pick (a tile on screen, or a custom
+        // range with dates) still applies.
+        const tiles = window.PeriodCards ? PeriodCards.selection().tiles : [];
+        const validCustom = activeBrandPreset === 'custom' && customFrom && customTo;
+        if (!validCustom && tiles.length && (!tiles.includes(activeBrandPreset) || activeBrandPreset === 'forecast')) {
+          activeBrandPreset = tiles.find(t => t !== 'forecast') || 'last30d';
         }
-
-        if (customFrom) document.getElementById('customFrom').value = customFrom;
-        if (customTo)   document.getElementById('customTo').value   = customTo;
 
         updateToggleUI();
         setTableView(activeTableView);
