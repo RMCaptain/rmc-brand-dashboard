@@ -502,6 +502,9 @@
         presets: () => presetMetrics.presets || {}, today: () => todayTableData,
         brands: () => brandsData, scopeBrandId: null,
         activeKey: () => activeTileKey, onSelect: selectTile,
+        // Custom range collapses the tiles to one card for that range.
+        custom: () => (activeBrandPreset === 'custom' && customFrom && customTo)
+          ? { from: customFrom, to: customTo, payload: customTableData } : null,
       };
       PeriodCards.render(el, ctx);
     }

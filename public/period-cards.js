@@ -23,7 +23,7 @@
   const PERIOD_LABEL = {
     today: 'Today', yesterday: 'Yesterday', mtd: 'Month to date', forecast: 'This month (forecast)',
     lastMonth: 'Last month', last7d: '7 days', last14d: '14 days', last30d: '30 days',
-    last60d: '60 days', last90d: '90 days', ytd: 'Year to date',
+    last60d: '60 days', last90d: '90 days', ytd: 'Year to date', custom: 'Custom range',
   };
   // Header band colors, SB-style blue → green sweep by position.
   const BAND = ['#5b8def', '#53a8c9', '#3fae9e', '#43ad82', '#55b163'];
@@ -157,11 +157,12 @@
     const band = BAND[idx % BAND.length];
     const label = PERIOD_LABEL[key] || key;
     // Selectable cards (dashboard) drive the table below; the active one gets
-    // a band-colored ring. Forecast is a projection with no product rows, so
-    // it never selects.
+    // a band-colored ring (the custom card is ringed but not clickable).
+    // Forecast is a projection with no product rows, so it never selects.
+    const ring = opts.active ? ` style="box-shadow:0 0 0 2px ${band}"` : '';
     const shell = opts.selectable
-      ? `class="rmc-card overflow-hidden flex flex-col cursor-pointer" data-pc-card="${key}" style="${opts.active ? `box-shadow:0 0 0 2px ${band}` : ''}" title="Show ${label} in the table below"`
-      : `class="rmc-card overflow-hidden flex flex-col"${opts.inPicker ? ` data-pc-card="${key}" title="No product-level data for a forecast — tiles only"` : ''}`;
+      ? `class="rmc-card overflow-hidden flex flex-col cursor-pointer" data-pc-card="${key}"${ring} title="Show ${label} in the table below"`
+      : `class="rmc-card overflow-hidden flex flex-col"${ring}${opts.inPicker ? ` data-pc-card="${key}" title="No product-level data for a forecast — tiles only"` : ''}`;
     if (!met) {
       return `<div ${shell}>
         <div class="px-4 py-3" style="background:${band}"><p class="font-semibold" style="color:#0b1418">${label}</p>
@@ -227,6 +228,22 @@
     const pickable = typeof ctx.onSelect === 'function';
     const activeKey = pickable && ctx.activeKey ? ctx.activeKey() : null;
     const opts = key => ({ selectable: pickable && key !== 'forecast', active: key === activeKey, inPicker: pickable });
+    const grid = html => `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-${Math.min(sel.tiles.length, 5)} gap-3">${html}</div>`;
+    const bindMore = () => el.querySelectorAll('.pc-more').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); expandState[b.dataset.key] = !expandState[b.dataset.key]; render(el, ctx); }));
+
+    // Custom range active (Mike, 2026-09-22): the tiles collapse to ONE card
+    // — the custom range itself, in the leftmost slot at tile width, ringed
+    // since it's what the table below shows. Picking any tile set in the nav
+    // dropdown brings the tiles back.
+    if (pickable && ctx.custom) {
+      const c = ctx.custom();
+      if (c) {
+        const met = c.payload ? aggregate(c.payload, brandsMeta, ctx.scopeBrandId) : null;
+        el.innerHTML = grid(cardHtml('custom', met, fmtRange(c.from, c.to), 0, met ? null : 'loading…', { active: true }));
+        bindMore();
+        return;
+      }
+    }
 
     const mtdAgg = aggregate(presets.mtd, brandsMeta, ctx.scopeBrandId);
     const l7Agg  = aggregate(presets.last7d, brandsMeta, ctx.scopeBrandId);
@@ -250,8 +267,8 @@
       return cardHtml(key, met, p ? fmtRange(p.startDate, p.endDate) : '', idx, null, opts(key));
     });
 
-    el.innerHTML = `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-${Math.min(sel.tiles.length, 5)} gap-3">${cards.join('')}</div>`;
-    el.querySelectorAll('.pc-more').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); expandState[b.dataset.key] = !expandState[b.dataset.key]; render(el, ctx); }));
+    el.innerHTML = grid(cards.join(''));
+    bindMore();
     if (pickable) el.querySelectorAll('[data-pc-card]').forEach(c => c.addEventListener('click', () => {
       const key = c.dataset.pcCard;
       if (key !== 'forecast') ctx.onSelect(key);
