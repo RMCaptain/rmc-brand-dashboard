@@ -25,7 +25,7 @@ assert.strictEqual(R.compare('units', 182, 179).status, 'flag');
 assert.strictEqual(R.compare('units', 0, 179).status, 'sb_only');
 assert.strictEqual(R.compare('units', 179, null).status, 'amz_only');
 assert.strictEqual(R.compare('sales', 110, 100).delta_pct, 10);
-assert.ok(R.METRICS.includes('sessions'), 'sessions are reconciled (2026-09-10 — the app/SB CVR gap ask)');
+assert.ok(!R.METRICS.includes('sessions'), 'sessions are NOT reconciled (Mike, 2026-09-26 — Amazon and Sellerboard count traffic differently; nightly flags were pure noise)');
 
 // reconcileRows end-to-end on synthetic data
 const y = pstSubtractDays(pstDateStr(), 1);
@@ -56,10 +56,9 @@ const feeAsinRows = [
 ];
 const feeMpRows = [{ date: y, mp_id: CA, fees: 245, refund_amount: 20, refund_count: 1 }]; // 245 vs SB 270 → -25 → match at boundary (tol 27)
 
-// Sessions: SB carries them per row; mirror rows predating the traffic
-// writer have sessions NULL (absent, not zero) and must produce NO row.
+// Sessions on the input rows must be IGNORED end-to-end (dropped 2026-09-26).
 sbRows[0].sessions = 40; sbRows[1].sessions = 8;
-mpRows[0].sessions = 50;      // A1 CA yesterday: mirror 50 vs SB 48 → flag (> max(2,1%))
+mpRows[0].sessions = 50;
 if (mpRows[1]) mpRows[1].sessions = null;
 
 const { rows } = R.reconcileRows({ sbRows, mpRows, feeAsinRows, feeMpRows, asinBrand, yesterday: y, days: 30 });
@@ -80,18 +79,10 @@ assert.strictEqual(find('account', '*', CA, 'refund_amount').status, 'match');
 // account US: Amazon has nothing
 assert.strictEqual(find('account', '*', US, 'sales').status, 'sb_only');
 assert.strictEqual(find('account', '*', US, 'units').status, 'sb_only');
-// sessions: reconciled where both sides carry them (A1 CA: mirror 50 vs SB
-// 48 → flag, delta 2 not > max(2, 1%)... 2 == tolerance so match); Z1's
-// mirror sessions are NULL (pre-traffic-writer row) → no row at all.
-{
-  const sess = find('account', '*', CA, 'sessions');
-  assert.strictEqual(sess.amazon_value, 50);
-  assert.strictEqual(sess.sellerboard_value, 48);
-  assert.strictEqual(sess.status, 'match'); // delta 2 == tol max(2, 0.5)
-  assert.strictEqual(find('asin', 'Z1', CA, 'sessions'), undefined); // NULL mirror sessions → no row
-  assert.strictEqual(find('asin', 'A1', CA, 'sessions'), undefined); // asin scope keeps mismatches only (by design)
-  assert.strictEqual(find('brand', 'acure', CA, 'sessions').status, 'match');
-}
+// sessions: never reconciled at any scope — Amazon and Sellerboard count
+// traffic differently, so a sessions row in this ledger is by definition
+// noise (dropped for good, Mike 2026-09-26).
+assert.ok(!rows.some(r => r.metric === 'sessions'), 'no sessions rows in the ledger');
 // brand rows
 assert.strictEqual(find('brand', 'acure', CA, 'sales').status, 'match');
 assert.strictEqual(find('brand', 'acure', CA, 'amazon_fees').amazon_value, 90);

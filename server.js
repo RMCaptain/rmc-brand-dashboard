@@ -152,6 +152,33 @@ app.get('/rmc-logo.png',    (req, res) => res.sendFile(path.join(__dirname, 'pub
 
 app.use(teamAuth.teamAuthGate({ supabase, basicAuthCheck: basicAuthOk, internalToken: INTERNAL_API_TOKEN }));
 
+// ── Admin tier (Mike, 2026-09-26) ─────────────────────────────────────────
+// Structure changes are admin-only once TEAM_ADMIN_EMAILS is set (see
+// portal/teamAuth.isTeamAdmin — unset means everyone on the allowlist stays
+// admin, so deploying this can't lock anyone out). Gated: brand
+// create/rename/delete, ASIN mapping (add/remove/move/bulk-move), ad-spend
+// surgery, and the mapping page itself. Deliberately NOT gated: per-ASIN
+// operational fields (buy cost, lead time, UPC, casepack, supplier…) — the
+// specialists' daily work — and every read.
+const ADMIN_ONLY = [
+  ['GET',    /^\/admin\.html$/],
+  ['POST',   /^\/api\/patch-ad-spend$/],
+  ['POST',   /^\/api\/brands$/],
+  ['PUT',    /^\/api\/brands\/[^/]+$/],
+  ['DELETE', /^\/api\/brands\/[^/]+$/],
+  ['POST',   /^\/api\/brands\/[^/]+\/asins$/],
+  ['DELETE', /^\/api\/brands\/[^/]+\/asins\/[^/]+$/],
+  ['PUT',    /^\/api\/brands\/[^/]+\/asins\/[^/]+\/move$/],
+  ['POST',   /^\/api\/brands\/[^/]+\/asins\/bulk-move$/],
+];
+app.use((req, res, next) => {
+  if (!ADMIN_ONLY.some(([m, re]) => m === req.method && re.test(req.path))) return next();
+  if (teamAuth.isTeamAdmin(req)) return next();
+  console.warn(`[TeamAuth] non-admin ${req.teamUser?.email || '?'} blocked from ${req.method} ${req.path}`);
+  if (req.path.startsWith('/api/')) return res.status(403).json({ error: 'Admin only — ask Mike to add you to TEAM_ADMIN_EMAILS.' });
+  return res.status(403).send('Admin only — ask Mike to add you to TEAM_ADMIN_EMAILS.');
+});
+
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 

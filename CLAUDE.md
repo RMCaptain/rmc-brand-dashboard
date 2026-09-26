@@ -99,6 +99,7 @@ SP_API_SELLER_ID, SP_API_MARKETPLACE_IDS=A2EUQ1WTGCTBG2,ATVPDKIKX0DER
 ADS_CLIENT_ID, ADS_CLIENT_SECRET, ADS_REFRESH_TOKEN, ADS_PROFILE_CA, ADS_PROFILE_US
 SUPABASE_URL, SUPABASE_SERVICE_KEY
 AUTH_USERNAME, AUTH_PASSWORD   # VPS only — unset locally to bypass; quote values with #
+TEAM_ADMIN_EMAILS              # comma-separated; gates brand/ASIN mapping + patch-ad-spend + admin.html. UNSET = everyone on the allowlist is admin
 SLACK_WEBHOOK_URL
 SELLERBOARD_FEED_RMC, SELLERBOARD_FEED_WMCA, SELLERBOARD_FEED_INTL   # Automation CSV links — the URL is the secret
 DASHBOARD_URL=https://dashboard.rockymountainco.ca/brands.html

@@ -29,6 +29,27 @@ function hashToken(raw) { return crypto.createHash('sha256').update(String(raw))
 function googleEnabled() { return !!process.env.GOOGLE_CLIENT_ID; }
 function basicAuthEnabled() { return process.env.TEAM_BASIC_AUTH !== 'off'; }
 
+/**
+ * Admin tier (Mike, 2026-09-26). TEAM_ADMIN_EMAILS (comma-separated) names
+ * which allowlisted accounts may alter structure — brand create/delete,
+ * ASIN mapping, ad-spend surgery, the mapping page. UNSET = everyone on the
+ * allowlist is admin (backwards compatible: setting the env var on Render is
+ * what turns the tier on). Basic Auth and the internal loopback token stay
+ * admin — machines, crons and break-glass must keep working.
+ */
+function adminEmails() {
+  return String(process.env.TEAM_ADMIN_EMAILS || '')
+    .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+}
+function isTeamAdmin(req) {
+  const admins = adminEmails();
+  if (!admins.length) return true;                       // tier not configured
+  const u = req.teamUser;
+  if (!u) return true;                                   // Basic Auth / machine path
+  if (u.email === 'internal@loopback') return true;
+  return admins.includes(String(u.email || '').toLowerCase());
+}
+
 function allowedEmail(email, hd) {
   const domain = (process.env.TEAM_ALLOWED_DOMAIN || 'rockymountainco.ca').toLowerCase();
   const extras = String(process.env.TEAM_ALLOWED_EMAILS || '')
@@ -149,7 +170,8 @@ function mountTeamAuth(app, { supabase, express }) {
     try {
       const session = await getSession(supabase, req);
       res.json(session
-        ? { signedIn: true, email: session.email, name: session.name, picture: session.picture }
+        ? { signedIn: true, email: session.email, name: session.name, picture: session.picture,
+            isAdmin: isTeamAdmin({ teamUser: session }) }
         : { signedIn: false });
     } catch (err) {
       console.warn('[TeamAuth] /me failed:', err.message);
@@ -222,4 +244,4 @@ function teamAuthGate({ supabase, basicAuthCheck, internalToken }) {
   };
 }
 
-module.exports = { mountTeamAuth, teamAuthGate, googleEnabled };
+module.exports = { mountTeamAuth, teamAuthGate, googleEnabled, isTeamAdmin };

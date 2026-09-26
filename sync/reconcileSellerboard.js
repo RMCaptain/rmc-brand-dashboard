@@ -24,8 +24,11 @@
  *   the same per-order basis; reimbursements, storage, inbound and removal are
  *   excluded on both sides (verified 2026-09-10: CA -5%, US -1.4% over 7 days).
  *
- * Sessions are not reconciled: traffic is Amazon-first by design and
- * Sellerboard's sessions lag and count differently (~10% low, verified 2026-09-09).
+ * Sessions are NOT reconciled: traffic is Amazon-first by design and
+ * Sellerboard counts differently (~10% low CA, ~40% apart US, verified
+ * 2026-09-09/26). They were briefly re-added and flagged every night —
+ * pure noise that buried the money flags. Dropped for good (Mike,
+ * 2026-09-26): red in this ledger must mean a money problem.
  *
  * Tolerance (Mike, 2026-09-09): money max($25, 1%), counts max(2, 1%) for
  * units / sales / ad_spend, which share a basis with Amazon and match to the
@@ -48,7 +51,7 @@ const { pstDateStr, pstSubtractDays } = require('./dateUtils');
 
 const MONEY_METRICS = new Set(['sales', 'ad_spend', 'refund_amount', 'amazon_fees']);
 const LAGGED_METRICS = new Set(['amazon_fees', 'refunds', 'refund_amount']); // order-day vs posted-day basis
-const METRICS = ['units', 'sales', 'ad_spend', 'refunds', 'refund_amount', 'amazon_fees', 'sessions'];
+const METRICS = ['units', 'sales', 'ad_spend', 'refunds', 'refund_amount', 'amazon_fees'];
 const TOL = { moneyAbs: 25, countAbs: 2, pct: 0.01, laggedPct: 0.10 };
 const ASIN_DAYS = 7;
 
@@ -115,10 +118,7 @@ function reconcileRows({ sbRows, mpRows, feeAsinRows, feeMpRows, asinBrand, yest
   for (const r of mpRows) {
     if (r.date < from || r.date > yesterday) continue;
     const b = brandOf(r.asin);
-    for (const [metric, v] of [['units', r.units], ['sales', r.revenue], ['ad_spend', r.ad_spend], ['sessions', r.sessions]]) {
-      // sessions is NULL on mirror rows predating the traffic writer
-      // (2026-09-10) — absent, not zero; a null bump would fake sb_only rows.
-      if (metric === 'sessions' && v == null) continue;
+    for (const [metric, v] of [['units', r.units], ['sales', r.revenue], ['ad_spend', r.ad_spend]]) {
       bump(A, r.date, r.mp_id, 'account', '*', metric, v);
       bump(A, r.date, r.mp_id, 'brand', b, metric, v);
       if (r.date >= asinFrom) bump(A, r.date, r.mp_id, 'asin', r.asin, metric, v);
@@ -143,8 +143,7 @@ function reconcileRows({ sbRows, mpRows, feeAsinRows, feeMpRows, asinBrand, yest
   for (const r of sbRows) {
     if (r.date < from || r.date > yesterday) continue;
     const b = brandOf(r.asin);
-    for (const [metric, v] of [['units', r.units], ['sales', r.sales], ['ad_spend', r.ad_spend_sp], ['refunds', r.refunds], ['refund_amount', r.refund_amount], ['amazon_fees', r.order_fees], ['sessions', r.sessions]]) {
-      if (metric === 'sessions' && v == null) continue;
+    for (const [metric, v] of [['units', r.units], ['sales', r.sales], ['ad_spend', r.ad_spend_sp], ['refunds', r.refunds], ['refund_amount', r.refund_amount], ['amazon_fees', r.order_fees]]) {
       bump(S, r.date, r.mp_id, 'account', '*', metric, v);
       bump(S, r.date, r.mp_id, 'brand', b, metric, v);
       if (r.date >= asinFrom) bump(S, r.date, r.mp_id, 'asin', r.asin, metric, v);
@@ -227,8 +226,8 @@ async function reconcileSellerboard({ supabase, loadBrands, days = 30, fetchAll 
   for (const b of brands || []) for (const a of (b.asins || [])) asinBrand[a] = b.id;
 
   const [sbRows, mpRows, feeAsinRows, feeMpRows] = await Promise.all([
-    fetchAll(supabase, 'sellerboard_daily', 'date,mp_id,asin,units,sales,ad_spend_sp,refunds,refund_amount,order_fees,sessions', from, yesterday, ['date', 'mp_id', 'sku']),
-    fetchAll(supabase, 'daily_metrics_mp', 'date,mp_id,asin,units,revenue,ad_spend,sessions', from, yesterday, ['date', 'asin', 'mp_id']),
+    fetchAll(supabase, 'sellerboard_daily', 'date,mp_id,asin,units,sales,ad_spend_sp,refunds,refund_amount,order_fees', from, yesterday, ['date', 'mp_id', 'sku']),
+    fetchAll(supabase, 'daily_metrics_mp', 'date,mp_id,asin,units,revenue,ad_spend', from, yesterday, ['date', 'asin', 'mp_id']),
     fetchAll(supabase, 'daily_fees_asin', 'date,mp_id,asin,fees,refund_amount,refund_count', from, yesterday, ['date', 'asin', 'mp_id']),
     fetchAll(supabase, 'daily_fees_mp', 'date,mp_id,fees,refund_amount,refund_count', from, yesterday, ['date', 'mp_id']),
   ]);
