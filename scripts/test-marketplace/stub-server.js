@@ -62,8 +62,12 @@ const T = {
 function makeBuilder(table) {
   const rows = T[table] || [];
   const filters = []; let single = false, maybe = false, rangeArg = null; const orders = [];
+  let proj = null;   // column list from select('a,b,c') — honored like PostgREST, so a narrowed select that misses a consumed column fails the suite
   const b = {
-    select() { return b; }, order(col, o) { orders.push([col, o?.ascending !== false]); return b; },
+    select(cols) {
+      if (cols && cols !== '*' && !/[()]/.test(cols)) proj = cols.split(',').map(s => s.trim());
+      return b;
+    }, order(col, o) { orders.push([col, o?.ascending !== false]); return b; },
     eq(c, v) { filters.push(r => r[c] === v); return b; }, neq(c, v) { filters.push(r => r[c] !== v); return b; },
     gte(c, v) { filters.push(r => r[c] >= v); return b; }, lte(c, v) { filters.push(r => r[c] <= v); return b; },
     gt(c, v) { filters.push(r => r[c] > v); return b; },  lt(c, v) { filters.push(r => r[c] < v); return b; },
@@ -77,6 +81,7 @@ function makeBuilder(table) {
       let out = rows.filter(r => filters.every(f => f(r)));
       for (const [col, asc] of orders.reverse()) out = [...out].sort((p, q) => (p[col] < q[col] ? -1 : p[col] > q[col] ? 1 : 0) * (asc ? 1 : -1));
       if (rangeArg) out = out.slice(rangeArg[0], rangeArg[1] + 1);
+      if (proj) out = out.map(r => Object.fromEntries(proj.filter(c => c in r).map(c => [c, r[c]])));
       if (single) return resolve(out.length ? { data: out[0], error: null } : { data: null, error: { message: 'no rows' } });
       if (maybe) return resolve({ data: out[0] || null, error: null });
       return resolve({ data: out, error: null });

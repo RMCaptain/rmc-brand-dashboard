@@ -159,13 +159,33 @@ require('./portal/routes').mountAdmin(app, {
 
 // --- Data helpers (Supabase) ---
 
-async function loadBrands() {
+// ── Blob cache ──────────────────────────────────────────────────────────────
+// brands and preset_metrics are single-row JSON blobs (the presets one runs
+// to megabytes) that were re-fetched from Supabase on EVERY request — the
+// presets blob alone was pulled by /api/preset-metrics, every range build,
+// and both live endpoints. That pattern, times three dashboards and the
+// crons, is what blew the September egress quota (project restricted
+// 2026-09-26). Same-process writes invalidate immediately; the TTL only
+// bounds staleness from out-of-band writers (one-off scripts), which these
+// blobs tolerate. Every hit hands back a CLONE: callers mutate these blobs
+// in place (mutateBrands, preset rebuilds) and must never share an object.
+const BLOB_TTL_MS = 60 * 1000;
+const blobCache = { brands: null, presets: null };   // { data, rev, at }
+
+async function loadBrands({ fresh = false } = {}) {
+  const c = blobCache.brands;
+  if (!fresh && c && Date.now() - c.at < BLOB_TTL_MS) {
+    const out = structuredClone(c.data);
+    Object.defineProperty(out, '_rev', { value: c.rev, enumerable: false, configurable: true });
+    return out;
+  }
   const { data, error } = await supabase
     .from('brands')
     .select('data,updated_at')
     .eq('id', 'main')
     .single();
   if (error || !data?.data?.brands) return { brands: [] };
+  blobCache.brands = { data: structuredClone(data.data), rev: data.updated_at, at: Date.now() };
   const out = data.data;
   // Revision marker for optimistic locking (non-enumerable: never serialized
   // back into the blob, invisible to JSON.stringify and Object.keys).
@@ -183,7 +203,9 @@ async function loadBrands() {
  */
 async function mutateBrands(mutator, { retries = 3, tag = 'mutateBrands' } = {}) {
   for (let attempt = 0; ; attempt++) {
-    const data = await loadBrands();
+    // Fresh read: the optimistic lock needs the LIVE updated_at, never a
+    // cached revision.
+    const data = await loadBrands({ fresh: true });
     const result = await mutator(data);
     if (!result) return { saved: false, result };
     const saved = await saveBrands(data);
@@ -206,16 +228,20 @@ async function saveBrands(payload) {
   if (error) throw new Error(`saveBrands: ${error.message}`);
   if (payload._rev && (!data || !data.length)) return false;
   if (data?.[0]?.updated_at) Object.defineProperty(payload, '_rev', { value: data[0].updated_at, enumerable: false, configurable: true });
+  blobCache.brands = null;   // written — next read refetches
   return true;
 }
 
 async function loadPresetMetrics() {
+  const c = blobCache.presets;
+  if (c && Date.now() - c.at < BLOB_TTL_MS) return structuredClone(c.data);
   const { data, error } = await supabase
     .from('preset_metrics')
     .select('data')
     .eq('id', 'main')
     .single();
   if (error || !data?.data) return { lastSync: null, presets: {} };
+  blobCache.presets = { data: structuredClone(data.data), at: Date.now() };
   return data.data;
 }
 
@@ -224,6 +250,7 @@ async function savePresetMetrics(payload) {
     .from('preset_metrics')
     .update({ data: payload, updated_at: new Date().toISOString() })
     .eq('id', 'main');
+  blobCache.presets = null;   // written — next read refetches
 }
 
 // Reload the latest brands from Supabase and merge only what the sync produced.
@@ -2491,7 +2518,7 @@ app.get('/api/metrics/yesterday', async (req, res) => {
     for (let off = 0; ; off += 1000) {
       const { data, error } = await supabase
         .from('daily_metrics')
-        .select('*')
+        .select(DM_RANGE_COLS)
         .eq('date', yest)
         .order('asin', { ascending: true })
         .range(off, off + 999);
@@ -3803,6 +3830,23 @@ app.post('/api/backfill', async (req, res) => {
 // 2026-05 backfill). Before this, 7d columns are NULL and reads fall back 14d.
 const AD_ATTR_7D_SINCE = '2026-05-08';
 
+// Every daily_metrics column the range builder, the resolver's wide-row
+// parts, and the Yesterday endpoint actually read — the exhaustive union as
+// of 2026-09-26. select('*') pulled the full row width on every range scan
+// (10k+ rows per 30-day view), a steady egress leak on top of the blob one.
+// Adding a consumer of a NEW column? Add it here — the stub Supabase honors
+// select lists, so the marketplace suite fails loudly if you forget.
+const DM_RANGE_COLS = [
+  'asin', 'date', 'brand_id',
+  'units', 'units_ca', 'units_us', 'revenue_cad', 'revenue_usd',
+  'spend_cad', 'spend_usd', 'attributed_sales_cad', 'attributed_sales_usd',
+  'attributed_sales_7d_cad', 'attributed_sales_7d_usd',
+  'ad_clicks', 'ad_impressions', 'ad_orders', 'ad_orders_7d',
+  'refunded_units', 'refund_amount_cad', 'refund_amount_usd', 'refund_count',
+  'sessions', 'page_views', 'buy_box_pct',
+  'inventory_on_hand', 'inventory_inbound', 'inventory_reserved', 'inventory_unfulfillable',
+].join(',');
+
 async function buildBrandMetricsForRange(from, to, presetKey = null) {
   const { brands } = await loadBrands();
   const pm = await loadPresetMetrics();
@@ -3818,7 +3862,7 @@ async function buildBrandMetricsForRange(from, to, presetKey = null) {
     while (true) {
       const { data, error } = await supabase
         .from('daily_metrics')
-        .select('*')
+        .select(DM_RANGE_COLS)
         .gte('date', from)
         .lte('date', to)
         .order('date', { ascending: true })
