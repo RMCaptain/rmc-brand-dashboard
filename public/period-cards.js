@@ -25,11 +25,14 @@
     lastMonth: 'Last month', last7d: '7 days', last14d: '14 days', last30d: '30 days',
     last60d: '60 days', last90d: '90 days', ytd: 'Year to date', custom: 'Custom range',
   };
-  // Header band colors: RMC brand-green ramp (light → deep) by position,
-  // anchored on --brand #537D30 (Mike, 2026-09-26 — app palette, not SB's
-  // blue→green sweep). Light text rides on every band.
-  const BAND = ['#6FA845', '#5E9539', '#537D30', '#456928', '#385621'];
-  const BAND_TEXT = '#F0F4FF', BAND_SUB = 'rgba(240,244,255,0.66)';
+  // Card chrome follows the app's own design language (Mike, 2026-09-26:
+  // the solid green ramp read as mud — nothing else in the app uses filled
+  // color bands). Headers are a subtle brand-tint strip on the dark card
+  // with a single --brand top accent, same as the nav's active pill; the
+  // active tile wears a brighter brand-family ring so it still pops.
+  const HEADER_BG = 'var(--brand-tint, rgba(83,125,48,0.11))';
+  const ACCENT = 'var(--brand, #537D30)';
+  const ACTIVE_RING = '#8CBF5A';
   // Interactive text on dark surfaces — --brand itself is too dark there.
   const LINK = '#8CBF5A';
 
@@ -159,19 +162,22 @@
 
   function cardHtml(key, met, dates, idx, note, opts = {}) {
     const M = window.MpScope;
-    const band = BAND[idx % BAND.length];
     const label = PERIOD_LABEL[key] || key;
-    // Selectable cards (dashboard) drive the table below; the active one gets
-    // a band-colored ring (the custom card is ringed but not clickable).
-    // Forecast is a projection with no product rows, so it never selects.
-    const ring = opts.active ? ` style="box-shadow:0 0 0 2px ${band}"` : '';
+    // Selectable cards (dashboard) drive the table below; the active one
+    // wears the bright brand-family ring (the custom card is ringed but not
+    // clickable). Forecast is a projection with no product rows — never
+    // selectable. Every card carries the same --brand top accent.
+    const shellStyle = ` style="border-top:3px solid ${ACCENT}${opts.active ? `;box-shadow:0 0 0 2px ${ACTIVE_RING}` : ''}"`;
     const shell = opts.selectable
-      ? `class="rmc-card overflow-hidden flex flex-col cursor-pointer" data-pc-card="${key}"${ring} title="Show ${label} in the table below"`
-      : `class="rmc-card overflow-hidden flex flex-col"${ring}${opts.inPicker ? ` data-pc-card="${key}" title="No product-level data for a forecast — tiles only"` : ''}`;
+      ? `class="rmc-card overflow-hidden flex flex-col cursor-pointer" data-pc-card="${key}"${shellStyle} title="Show ${label} in the table below"`
+      : `class="rmc-card overflow-hidden flex flex-col"${shellStyle}${opts.inPicker ? ` data-pc-card="${key}" title="No product-level data for a forecast — tiles only"` : ''}`;
+    const header = `<div class="px-4 py-3" style="background:${HEADER_BG};border-bottom:1px solid var(--border,#1f2937)">
+        <p class="font-semibold" style="color:var(--text)">${label}</p>
+        <p class="text-xs" style="color:var(--text-3)">${dates || ''}</p>
+      </div>`;
     if (!met) {
       return `<div ${shell}>
-        <div class="px-4 py-3" style="background:${band}"><p class="font-semibold" style="color:${BAND_TEXT}">${label}</p>
-          <p class="text-xs" style="color:${BAND_SUB}">${dates || ''}</p></div>
+        ${header}
         <div class="p-4 flex-1 flex items-center justify-center text-xs" style="color:var(--text-3)">${note || 'no data'}</div>
       </div>`;
     }
@@ -192,10 +198,7 @@
         ${row('ROI', roi)}
       </div>` : '';
     return `<div ${shell}>
-      <div class="px-4 py-3" style="background:${band}">
-        <p class="font-semibold" style="color:${BAND_TEXT}">${label}</p>
-        <p class="text-xs" style="color:${BAND_SUB}">${dates || ''}</p>
-      </div>
+      ${header}
       <div class="p-4 flex-1 flex flex-col gap-3">
         <div>
           <p class="text-xs" style="color:var(--text-3)">Sales</p>
