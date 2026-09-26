@@ -12,6 +12,14 @@
 
 const MAX_ALERT_CHARS = 600;
 
+// Repeat throttle: a persistent failure (Supabase egress restriction,
+// 2026-09-26: the same daily_metrics alert every 15 minutes for hours) fires
+// its alert on every cron tick. Identical titles post once per window; when
+// the window rolls over, the next post says how many were swallowed.
+// In-memory — a restart re-alerts once, which is fine.
+const REPEAT_WINDOW_MS = 6 * 60 * 60 * 1000;
+const recentAlerts = new Map(); // title → { at, suppressed }
+
 function sanitize(text) {
   return String(text ?? '')
     .replace(/<[^>]*>/g, ' ')   // strip any markup (mrkdwn *bold*/`code` survive)
@@ -41,7 +49,19 @@ async function postDataIntegrityAlert(title, detail = null) {
 async function postTo(webhook, title, detail) {
   if (!webhook) return { posted: false, reason: 'no_webhook' };
 
-  let text = String(title ?? '').trim();
+  const key = String(title ?? '').trim();
+  const seen = recentAlerts.get(key);
+  const now = Date.now();
+  let repeatNote = '';
+  if (seen && now - seen.at < REPEAT_WINDOW_MS) {
+    seen.suppressed++;
+    return { posted: false, reason: 'throttled', suppressed: seen.suppressed };
+  }
+  if (seen?.suppressed) repeatNote = `\n_repeated ${seen.suppressed}× in the last ${Math.round((now - seen.at) / 3600000)}h — still failing_`;
+  recentAlerts.set(key, { at: now, suppressed: 0 });
+  if (recentAlerts.size > 200) recentAlerts.delete(recentAlerts.keys().next().value);
+
+  let text = String(title ?? '').trim() + repeatNote;
   if (detail != null) {
     const clean = sanitize(detail);
     const capped = clean.length > MAX_ALERT_CHARS ? clean.slice(0, MAX_ALERT_CHARS) + '…' : clean;
