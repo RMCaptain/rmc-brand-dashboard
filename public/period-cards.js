@@ -25,8 +25,13 @@
     lastMonth: 'Last month', last7d: '7 days', last14d: '14 days', last30d: '30 days',
     last60d: '60 days', last90d: '90 days', ytd: 'Year to date', custom: 'Custom range',
   };
-  // Header band colors, SB-style blue → green sweep by position.
-  const BAND = ['#5b8def', '#53a8c9', '#3fae9e', '#43ad82', '#55b163'];
+  // Header band colors: RMC brand-green ramp (light → deep) by position,
+  // anchored on --brand #537D30 (Mike, 2026-09-26 — app palette, not SB's
+  // blue→green sweep). Light text rides on every band.
+  const BAND = ['#6FA845', '#5E9539', '#537D30', '#456928', '#385621'];
+  const BAND_TEXT = '#F0F4FF', BAND_SUB = 'rgba(240,244,255,0.66)';
+  // Interactive text on dark surfaces — --brand itself is too dark there.
+  const LINK = '#8CBF5A';
 
   const r2 = v => Math.round(v * 100) / 100;
 
@@ -165,8 +170,8 @@
       : `class="rmc-card overflow-hidden flex flex-col"${ring}${opts.inPicker ? ` data-pc-card="${key}" title="No product-level data for a forecast — tiles only"` : ''}`;
     if (!met) {
       return `<div ${shell}>
-        <div class="px-4 py-3" style="background:${band}"><p class="font-semibold" style="color:#0b1418">${label}</p>
-          <p class="text-xs" style="color:rgba(8,18,24,0.7)">${dates || ''}</p></div>
+        <div class="px-4 py-3" style="background:${band}"><p class="font-semibold" style="color:${BAND_TEXT}">${label}</p>
+          <p class="text-xs" style="color:${BAND_SUB}">${dates || ''}</p></div>
         <div class="p-4 flex-1 flex items-center justify-center text-xs" style="color:var(--text-3)">${note || 'no data'}</div>
       </div>`;
     }
@@ -188,8 +193,8 @@
       </div>` : '';
     return `<div ${shell}>
       <div class="px-4 py-3" style="background:${band}">
-        <p class="font-semibold" style="color:#0b1418">${label}</p>
-        <p class="text-xs" style="color:rgba(8,18,24,0.7)">${dates || ''}</p>
+        <p class="font-semibold" style="color:${BAND_TEXT}">${label}</p>
+        <p class="text-xs" style="color:${BAND_SUB}">${dates || ''}</p>
       </div>
       <div class="p-4 flex-1 flex flex-col gap-3">
         <div>
@@ -198,7 +203,7 @@
         </div>
         <div class="grid grid-cols-2 gap-x-4">
           ${row('Units', (met.units || 0).toLocaleString())}
-          ${row('Refunds', key === 'today' ? '<span style="color:var(--text-3)">—</span>' : (met.refundUnits || 0).toLocaleString(), met.refundUnits > 0 ? '#60a5fa' : undefined)}
+          ${row('Refunds', key === 'today' ? '<span style="color:var(--text-3)">—</span>' : (met.refundUnits || 0).toLocaleString())}
         </div>
         <div class="grid grid-cols-2 gap-x-4 gap-y-2 pt-2" style="border-top:1px solid var(--border,#1f2937)">
           ${row('Adv. cost', money(met.adSpend, { signCost: true }), met.adSpend > 0 ? '#f87171' : undefined)}
@@ -209,7 +214,7 @@
         ${more}
         <div class="mt-auto pt-1 text-center">
           ${[note, met.note].filter(Boolean).length ? `<p class="text-[10px] mb-1" style="color:var(--text-3)">${[note, met.note].filter(Boolean).join(' · ')}</p>` : ''}
-          <button class="text-xs font-medium pc-more" data-key="${key}" style="color:#60a5fa">${open ? 'Less' : 'More'}</button>
+          <button class="text-xs font-medium pc-more" data-key="${key}" style="color:${LINK}">${open ? 'Less' : 'More'}</button>
         </div>
       </div>
     </div>`;

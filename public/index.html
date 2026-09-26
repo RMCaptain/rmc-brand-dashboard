@@ -537,7 +537,7 @@
       menu.style.cssText = `position:fixed;top:${r.bottom + 6}px;right:${Math.max(8, window.innerWidth - r.right)}px;width:600px;max-width:92vw;z-index:1000;background:#0e1524;border:1px solid #1f2937;box-shadow:0 8px 30px rgba(0,0,0,0.6)`;
       menu.innerHTML = `<p class="text-xs px-3 py-2 font-semibold" style="color:var(--text-3)">Personalized tiles</p>` +
         PeriodCards.TILE_SETS.map(s => `
-          <button class="pp-set w-full text-left px-3 py-2 text-sm rounded hover:bg-white/5" data-id="${s.id}" style="color:${s.id === sel.id ? '#60a5fa' : 'var(--text)'}">
+          <button class="pp-set w-full text-left px-3 py-2 text-sm rounded hover:bg-white/5" data-id="${s.id}" style="color:${s.id === sel.id ? '#8CBF5A' : 'var(--text)'}">
             ${s.id === sel.id ? '✓ ' : ''}${s.label}
           </button>`).join('') + `
         <div class="my-1" style="border-top:1px solid #1f2937"></div>

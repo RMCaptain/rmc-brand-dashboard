@@ -440,7 +440,7 @@
         return a.name.localeCompare(b.name);
       });
       menu.innerHTML = list.map(b => `
-        <a href="/brand.html?id=${encodeURIComponent(b.id)}" class="flex items-center gap-2 px-3 py-2 text-sm rounded hover:bg-white/5" style="color:${b.id === brandId ? '#60a5fa' : 'var(--text)'}">
+        <a href="/brand.html?id=${encodeURIComponent(b.id)}" class="flex items-center gap-2 px-3 py-2 text-sm rounded hover:bg-white/5" style="color:${b.id === brandId ? '#8CBF5A' : 'var(--text)'}">
           <span class="w-2.5 h-2.5 rounded-full" style="background:${b.color || '#64748b'};flex-shrink:0"></span>
           <span class="truncate">${b.id === brandId ? '✓ ' : ''}${b.name}</span>
         </a>`).join('');
@@ -459,7 +459,7 @@
       const menu = document.getElementById('periodMenu');
       if (!menu) return;
       menu.innerHTML = PERIOD_ITEMS.map(([k, label]) =>
-        `<button class="w-full text-left px-3 py-2 text-sm rounded hover:bg-white/5" onclick="pickPeriod('${k}')" style="color:${k === activePreset ? '#60a5fa' : 'var(--text)'}">${k === activePreset ? '✓ ' : ''}${label}</button>`
+        `<button class="w-full text-left px-3 py-2 text-sm rounded hover:bg-white/5" onclick="pickPeriod('${k}')" style="color:${k === activePreset ? '#8CBF5A' : 'var(--text)'}">${k === activePreset ? '✓ ' : ''}${label}</button>`
       ).join('');
       const lbl = document.getElementById('periodBtnLabel');
       if (lbl) lbl.textContent = periodLabelOf(activePreset);
