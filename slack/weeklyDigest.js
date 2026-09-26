@@ -64,6 +64,32 @@ function brandTotals(payload, fx) {
   return out;
 }
 
+// ── Missing-cost worklist ───────────────────────────────────────────────────
+// ASIN/marketplace slices that SOLD in the window but have no Sellerboard
+// unit cost (brand.cogsSb[asin][code].unit) — the rows behind every profit
+// guardrail ("excl. N unpriced ASINs", nulled cards). Entering the cost in
+// Sellerboard → Products self-heals the app on the next feed sync. Ranked
+// by revenue so the team fixes what matters first.
+function cogsGaps(payload, brands, fx) {
+  const toCad = (v, cur) => (v || 0) * (fx?.toCad?.[cur] ?? (cur === 'USD' ? fx?.usdToCad ?? 1.38 : 1));
+  const out = [];
+  for (const brand of brands || []) {
+    if (brand.id === 'unknown-brand') continue;
+    for (const sku of payload?.brands?.[brand.id]?.skus || []) {
+      for (const m of Object.values(sku.byMp || {})) {
+        if (!(m.units > 0)) continue;
+        if (brand.cogsSb?.[sku.asin]?.[m.code]?.unit != null) continue;
+        out.push({
+          brandId: brand.id, brandName: brand.name, asin: sku.asin, mp: m.code,
+          title: sku.title || brand.asinTitles?.[sku.asin] || sku.asin,
+          units: m.units, revenueCad: Math.round(toCad(m.sales, m.currency)),
+        });
+      }
+    }
+  }
+  return out.sort((a, b) => b.revenueCad - a.revenueCad);
+}
+
 const money = v => 'CA$' + Math.round(v).toLocaleString('en-CA');
 function wow(cur, prev) {
   if (!prev) return cur > 0 ? 'new' : '—';
@@ -77,7 +103,8 @@ function fmtRange(from, to) {
 
 // curPayload/prevPayload: buildBrandMetricsForRange outputs for the two weeks.
 // brands: loadBrands() list (names + order). fx: fetchFxRate() result.
-function buildWeeklyDigest({ curPayload, prevPayload, brands, fx, range, dashboardUrl }) {
+// gaps: optional cogsGaps() rows (trailing-30d) — rendered as a worklist nudge.
+function buildWeeklyDigest({ curPayload, prevPayload, brands, fx, range, dashboardUrl, gaps }) {
   const cur = brandTotals(curPayload, fx);
   const prev = brandTotals(prevPayload, fx);
 
@@ -117,6 +144,12 @@ function buildWeeklyDigest({ curPayload, prevPayload, brands, fx, range, dashboa
     // Slack caps a section at 3000 chars — chunk brand lines defensively.
     ...chunk(lines, 3000).map(text => ({ type: 'section', text: { type: 'mrkdwn', text } })),
   ];
+  if (gaps?.length) {
+    const top = gaps.slice(0, 3).map(g => `${g.asin} ${g.mp} (${g.brandName})`).join(', ');
+    const rev = money(gaps.reduce((s, g) => s + g.revenueCad, 0));
+    blocks.push({ type: 'section', text: { type: 'mrkdwn', text:
+      `*${gaps.length} ASIN${gaps.length > 1 ? 's' : ''} missing Sellerboard costs* — ${rev} of trailing-30d sales unpriced. Top: ${top}. Enter unit costs in Sellerboard → Products; the app picks them up on the next feed sync.` } });
+  }
   if (dashboardUrl) blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: `vs ${fmtRange(range.prev.from, range.prev.to)} · <${dashboardUrl}|open dashboard>` }] });
 
   const fallback = `RMC weekly: ${money(tot.sales)} sales (${wow(tot.sales, tot.prevSales)}), ${rows.length} brands.`;
@@ -134,4 +167,4 @@ function chunk(lines, max) {
   return out.length ? out : ['_No brand activity either week._'];
 }
 
-module.exports = { weekRanges, brandTotals, buildWeeklyDigest };
+module.exports = { weekRanges, brandTotals, buildWeeklyDigest, cogsGaps };

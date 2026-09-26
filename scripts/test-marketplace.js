@@ -41,6 +41,7 @@ function run(label, file, args = []) {
     ['sellerboard cogs',        'cogs-sb.test.js'],
     ['period-card forecast',    'forecast.test.js'],
     ['weekly digest',           'weekly-digest.test.js'],
+    ['margin guard + cogs gaps', 'margin-guard.test.js'],
   ]) if (!run(label, path.join(DIR, file))) failures++;
 
   // Stub server for the API + page checks

@@ -55,6 +55,9 @@ POST /api/brands/:id/asins/bulk-move
 POST /api/patch-ad-spend
 POST /api/sellerboard/sync          fetch Sellerboard feed CSVs + reconcile (cron 10:45/12:45 UTC)
 GET  /api/reconciliation            Amazon vs Sellerboard ledger (?from&to&scope&mp&status)
+POST /api/digest/weekly             WoW per-brand Slack digest (cron Mon 13:00 UTC; ?dry=1 previews)
+POST /api/digest/margin-guard       7d vs prior-28d margin/TACOS anomaly check (cron daily 13:30 UTC, posts only on anomalies; ?dry=1; MG_* env tunes thresholds)
+GET  /api/cogs-gaps                 missing-Sellerboard-cost worklist, 30d revenue-ranked (admin.html section + weekly digest footer)
 ```
 
 ## Sellerboard (external reference)

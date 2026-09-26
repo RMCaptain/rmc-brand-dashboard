@@ -6373,16 +6373,18 @@ app.post('/api/health/digest', async (req, res) => {
 // per brand, to Slack. ?dry=1 returns the lines without posting (preview).
 // Cron fires Monday 13:00 UTC (6am PT); this endpoint is the manual trigger.
 async function runWeeklyDigest({ dry = false } = {}) {
-  const { weekRanges, buildWeeklyDigest } = require('./slack/weeklyDigest');
+  const { weekRanges, buildWeeklyDigest, cogsGaps } = require('./slack/weeklyDigest');
   const range = weekRanges();
-  const [curPayload, prevPayload, { brands }, fx] = await Promise.all([
+  const [curPayload, prevPayload, { brands }, fx, pm] = await Promise.all([
     buildBrandMetricsForRange(range.cur.from, range.cur.to),
     buildBrandMetricsForRange(range.prev.from, range.prev.to),
     loadBrands(),
     fetchFxRate(),
+    loadPresetMetrics(),
   ]);
   const digest = buildWeeklyDigest({
     curPayload, prevPayload, brands, fx, range,
+    gaps: cogsGaps(pm.presets?.last30d, brands, fx),
     dashboardUrl: process.env.DASHBOARD_URL || 'http://localhost:3000/brands.html',
   });
   if (dry) return { posted: false, dry: true, range, fallback: digest.fallback, lines: digest.lines };
@@ -6399,6 +6401,66 @@ app.post('/api/digest/weekly', async (req, res) => {
     res.json(await runWeeklyDigest({ dry: req.query.dry === '1' }));
   } catch (err) {
     console.error('[digest/weekly]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Missing-Sellerboard-cost worklist (admin page): every ASIN/marketplace
+// that sold in the trailing 30d without a Sellerboard unit cost, ranked by
+// revenue. These rows are what trips the profit guardrails; the fix is
+// entering the cost in Sellerboard → Products (self-heals on the next feed).
+app.get('/api/cogs-gaps', async (req, res) => {
+  try {
+    const [{ brands }, pm, fx] = await Promise.all([loadBrands(), loadPresetMetrics(), fetchFxRate()]);
+    const preset = pm.presets?.last30d;
+    const { cogsGaps } = require('./slack/weeklyDigest');
+    const gaps = cogsGaps(preset, brands, fx);
+    res.json({
+      window: preset ? { from: preset.startDate, to: preset.endDate } : null,
+      gaps,
+      totalRevenueCad: gaps.reduce((s, g) => s + g.revenueCad, 0),
+    });
+  } catch (err) {
+    console.error('[cogs-gaps]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Margin guard — daily anomaly check (slack/marginGuard.js): trailing 7 full
+// days vs the prior 28 per brand; posts to Slack ONLY when something is off
+// baseline. ?dry=1 evaluates without posting. Cron: 13:30 UTC daily, after
+// the Sellerboard feed crons, gated like the other digests.
+async function runMarginGuard({ dry = false } = {}) {
+  const { checkAnomalies, buildGuardMessage } = require('./slack/marginGuard');
+  const to7 = pstSubtractDays(pstDateStr(), 1), from7 = pstSubtractDays(to7, 6);
+  const toB = pstSubtractDays(from7, 1), fromB = pstSubtractDays(toB, 27);
+  const [curPayload, basePayload, { brands }, fx] = await Promise.all([
+    buildBrandMetricsForRange(from7, to7),
+    buildBrandMetricsForRange(fromB, toB),
+    loadBrands(),
+    fetchFxRate(),
+  ]);
+  const opts = {};
+  for (const [env, key] of [['MG_MIN_SALES7', 'minSales7'], ['MG_MIN_ADSPEND7', 'minAdSpend7'], ['MG_MARGIN_DROP_PTS', 'marginDropPts'], ['MG_TACOS_RISE_PTS', 'tacosRisePts']]) {
+    if (process.env[env] != null && process.env[env] !== '') opts[key] = Number(process.env[env]);
+  }
+  const anomalies = checkAnomalies({ curPayload, basePayload, brands, fx, opts });
+  const ranges = { cur: { from: from7, to: to7 }, base: { from: fromB, to: toB } };
+  if (!anomalies.length) return { posted: false, clean: true, ranges, anomalies };
+  if (dry) return { posted: false, dry: true, ranges, anomalies };
+  const { postBlocks } = require('./slack/digest');
+  const result = await postBlocks(buildGuardMessage(anomalies, ranges));
+  return { ...result, ranges, anomalies };
+}
+
+app.post('/api/digest/margin-guard', async (req, res) => {
+  if (process.env.SLACK_DIGEST_ENABLED !== 'true' && req.query.dry !== '1') {
+    return res.status(403).json({ error: 'Slack digest is disabled. Set SLACK_DIGEST_ENABLED=true to enable.' });
+  }
+  try {
+    res.json(await runMarginGuard({ dry: req.query.dry === '1' }));
+  } catch (err) {
+    console.error('[digest/margin-guard]', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -7313,6 +7375,19 @@ function scheduleDailySync() {
       }
     });
     console.log('[AutoSync] Weekly performance digest enabled — Mondays 13:00 UTC');
+
+    // Margin guard — daily 13:30 UTC, after the Sellerboard feeds, so the
+    // trailing-7d window is fully covered. Posts only on anomalies.
+    cron.schedule('30 13 * * *', async () => {
+      console.log('[MarginGuard] 13:30 UTC cron fired');
+      try {
+        const r = await runMarginGuard();
+        if (r.clean) console.log('[MarginGuard] all brands within baseline');
+      } catch (err) {
+        console.error('[MarginGuard] cron error:', err.message);
+      }
+    });
+    console.log('[AutoSync] Margin guard enabled — daily 13:30 UTC, alerts only on anomalies');
   }
 
   // Orders poller: every 15 min for intraday revenue/units (~15 min lag)

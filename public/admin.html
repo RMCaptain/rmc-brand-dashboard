@@ -59,6 +59,20 @@
       <button onclick="openAddBrand()" class="text-sm font-medium text-indigo-400 hover:text-indigo-300">Add your first brand →</button>
     </div>
 
+    <!-- Missing Sellerboard costs (Mike, 2026-09-26): the worklist behind the
+         profit guardrails. Fix = enter unit costs in Sellerboard → Products;
+         the app self-heals on the next feed sync. -->
+    <div class="rmc-card mt-8 overflow-hidden">
+      <div class="px-5 py-4" style="border-bottom:1px solid var(--border)">
+        <h2 class="text-sm font-semibold text-white">Missing Sellerboard costs</h2>
+        <p class="text-xs mt-0.5" style="color:var(--text-3)">
+          ASINs that sold in the last 30 days without a unit cost in Sellerboard — their profit is excluded or estimated until the cost is entered
+          (Sellerboard → Products; picked up automatically on the next feed sync).
+        </p>
+      </div>
+      <div id="cogsGaps" class="px-5 py-4 text-sm" style="color:var(--text-3)">Loading…</div>
+    </div>
+
   </div>
 
   <!-- Add Brand Modal -->
@@ -543,6 +557,40 @@
     document.getElementById('renameInput').addEventListener('keydown', e => { if (e.key === 'Enter') saveRename(); });
 
     loadBrands();
+
+    // Missing-cost worklist — /api/cogs-gaps, ranked by 30d revenue.
+    (async function loadCogsGaps() {
+      const el = document.getElementById('cogsGaps');
+      try {
+        const d = await fetch('/api/cogs-gaps').then(r => r.json());
+        if (d.error) throw new Error(d.error);
+        if (!d.gaps.length) {
+          el.innerHTML = '<span class="text-emerald-400">All clear — every ASIN that sold in the last 30 days has a Sellerboard cost.</span>';
+          return;
+        }
+        const fmt = v => 'CA$' + Math.round(v).toLocaleString('en-CA');
+        el.innerHTML = `
+          <p class="text-xs mb-3" style="color:var(--text-2)">${d.gaps.length} ASIN${d.gaps.length > 1 ? 's' : ''} · ${fmt(d.totalRevenueCad)} of 30-day sales unpriced${d.window ? ` (${d.window.from} – ${d.window.to})` : ''}</p>
+          <table class="w-full text-xs">
+            <thead><tr style="color:var(--text-3)">
+              <th class="text-left pb-2">Brand</th><th class="text-left pb-2">ASIN</th><th class="text-left pb-2">Product</th>
+              <th class="text-left pb-2">MP</th><th class="text-right pb-2">30d units</th><th class="text-right pb-2">30d sales</th>
+            </tr></thead>
+            <tbody>${d.gaps.map(g => `
+              <tr style="border-top:1px solid var(--border)">
+                <td class="py-2 pr-3" style="color:var(--text-2)">${g.brandName}</td>
+                <td class="py-2 pr-3 font-mono" style="color:var(--text-2)">${g.asin}</td>
+                <td class="py-2 pr-3 max-w-xs truncate" style="color:var(--text)">${g.title}</td>
+                <td class="py-2 pr-3" style="color:var(--text-2)">${g.mp}</td>
+                <td class="py-2 text-right" style="color:var(--text-2)">${g.units.toLocaleString()}</td>
+                <td class="py-2 text-right font-medium" style="color:var(--text)">${fmt(g.revenueCad)}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>`;
+      } catch (e) {
+        el.textContent = 'Could not load: ' + e.message;
+      }
+    })();
 
     // ─── Vendor / settings save ───────────────────────────────────────────────
 
