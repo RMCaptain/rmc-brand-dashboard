@@ -6629,7 +6629,7 @@ app.post('/api/bulk-update', async (req, res) => {
 // standing scripts/run-migration.js flow still covers everything else. Only
 // migrations listed here run, and each MUST be safe to re-run on every boot
 // (CREATE TABLE / CREATE INDEX IF NOT EXISTS only — no data rewrites).
-const BOOT_MIGRATIONS = ['sql/daily-fees-asin.sql', 'sql/fx-rates.sql', 'sql/sellerboard-daily.sql', 'sql/metric-reconciliation.sql', 'sql/perf-indexes.sql'];
+const BOOT_MIGRATIONS = ['sql/daily-fees-asin.sql', 'sql/fx-rates.sql', 'sql/sellerboard-daily.sql', 'sql/metric-reconciliation.sql', 'sql/perf-indexes.sql', 'sql/enable-rls.sql'];
 async function ensureBootMigrations() {
   if (!process.env.DATABASE_URL) {
     console.log('[BootMigrate] DATABASE_URL not set — skipped (use scripts/run-migration.js)');
