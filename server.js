@@ -65,6 +65,11 @@ app.use(cors({
            /^http:\/\/localhost(:\d+)?$/, /^http:\/\/127\.0\.0\.1(:\d+)?$/],
 }));
 
+// Gzip every response — the preset-metrics payload alone is megabytes of
+// highly repetitive JSON that shipped uncompressed on every dashboard load
+// (2026-09-26). ~10x smaller over the wire, noticeably faster page loads.
+app.use(require('compression')());
+
 // Baseline security headers. No full CSP yet — the pages use inline scripts
 // throughout; revisit alongside a templating pass.
 app.use((req, res, next) => {
@@ -251,6 +256,7 @@ async function savePresetMetrics(payload) {
     .update({ data: payload, updated_at: new Date().toISOString() })
     .eq('id', 'main');
   blobCache.presets = null;   // written — next read refetches
+  clearRangeCache();          // new day data → cached ranges are stale
 }
 
 // Reload the latest brands from Supabase and merge only what the sync produced.
@@ -3847,7 +3853,30 @@ const DM_RANGE_COLS = [
   'inventory_on_hand', 'inventory_inbound', 'inventory_reserved', 'inventory_unfulfillable',
 ].join(',');
 
-async function buildBrandMetricsForRange(from, to, presetKey = null) {
+// Range-payload cache: the dashboard re-requests the same ranges constantly
+// (every tile click, every reload rebuilds a ~10k-row scan plus Sellerboard
+// and fee reads). Two-minute TTL; sync completion clears it via
+// savePresetMetrics so post-sync reads rebuild, and the preset rebuild
+// itself bypasses with { fresh } so staleness is never baked into the
+// cached presets. Hits return clones — report/digest callers decorate the
+// payload in place.
+const rangeCache = new Map();   // `${from}|${to}|${presetKey}` → { data, at }
+const RANGE_TTL_MS = 2 * 60 * 1000;
+function clearRangeCache() { rangeCache.clear(); }
+
+async function buildBrandMetricsForRange(from, to, presetKey = null, { fresh = false } = {}) {
+  const cacheKey = `${from}|${to}|${presetKey || ''}`;
+  if (!fresh) {
+    const hit = rangeCache.get(cacheKey);
+    if (hit && Date.now() - hit.at < RANGE_TTL_MS) return structuredClone(hit.data);
+  }
+  const built = await buildBrandMetricsForRangeUncached(from, to, presetKey);
+  rangeCache.set(cacheKey, { data: structuredClone(built), at: Date.now() });
+  if (rangeCache.size > 40) rangeCache.delete(rangeCache.keys().next().value);
+  return built;
+}
+
+async function buildBrandMetricsForRangeUncached(from, to, presetKey = null) {
   const { brands } = await loadBrands();
   const pm = await loadPresetMetrics();
   // Per-ASIN posted fees for the range — powers true net margin per product.
@@ -4364,7 +4393,9 @@ async function rebuildPresetSummariesFromDaily(tag = 'PresetRebuild') {
     const from = range.startDate, to = range.endDate;
     console.log(`[${tag}] Rebuilding ${presetKey} (${from} → ${to})...`);
 
-    const built = await buildBrandMetricsForRange(from, to, presetKey);
+    // fresh: the rebuild runs right after sync writes — a cached range here
+    // would bake up-to-2-min-stale data into the presets everyone reads.
+    const built = await buildBrandMetricsForRange(from, to, presetKey, { fresh: true });
     const existingPreset = existingPm.presets?.[presetKey] || { brands: {} };
     const mergedBrands = {};
 
@@ -6509,7 +6540,7 @@ app.post('/api/bulk-update', async (req, res) => {
 // standing scripts/run-migration.js flow still covers everything else. Only
 // migrations listed here run, and each MUST be safe to re-run on every boot
 // (CREATE TABLE / CREATE INDEX IF NOT EXISTS only — no data rewrites).
-const BOOT_MIGRATIONS = ['sql/daily-fees-asin.sql', 'sql/fx-rates.sql', 'sql/sellerboard-daily.sql', 'sql/metric-reconciliation.sql'];
+const BOOT_MIGRATIONS = ['sql/daily-fees-asin.sql', 'sql/fx-rates.sql', 'sql/sellerboard-daily.sql', 'sql/metric-reconciliation.sql', 'sql/perf-indexes.sql'];
 async function ensureBootMigrations() {
   if (!process.env.DATABASE_URL) {
     console.log('[BootMigrate] DATABASE_URL not set — skipped (use scripts/run-migration.js)');
