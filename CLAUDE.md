@@ -88,9 +88,15 @@ converted to native at ingest): `sync/cogsSb.js` refreshes per-ASIN unit
 costs into `brand.cogsSb` after every feed sync; manual entries are
 fallback only. Inbound transportation rides `amazon_fees`, never COGS.
 
-## Cron Schedule (VPS)
-- 6am, 9am, 12pm UTC — full SP-API sync
+## Cron Schedule (in-app, node-cron on Render)
+- 6/9/12 UTC — full SP-API sync
 - 7am UTC — Slack health digest (independent of sync)
+- 10:45/12:45 UTC — Sellerboard feed ingest + reconcile
+- Mon 13:00 UTC — weekly performance digest
+- 13:30 UTC daily — margin guard (posts only on anomalies)
+- 4th of month 13:00 UTC — auto-save monthly brand reports
+- Boot migrations (BOOT_MIGRATIONS in server.js) run idempotently at every
+  Render boot via DATABASE_URL — incl. sql/enable-rls.sql and sql/perf-indexes.sql
 
 ## Environment Variables
 ```
