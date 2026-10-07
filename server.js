@@ -4907,11 +4907,25 @@ async function generateBrandReportPdf({ brandId, period, from, to, compFrom, com
     });
 
     await page.setViewport({ width: 1100, height: 1600, deviceScaleFactor: 2 });
-    await page.goto(url, { waitUntil: 'networkidle0', timeout: 60000 });
+    // domcontentloaded, NOT networkidle0: the page fires its dataset/summary
+    // fetches on load, and a slow query keeps the network busy past the nav
+    // timeout — networkidle0 then throws "Navigation timeout exceeded" before
+    // reportReady ever gets a chance. Readiness is signaled explicitly below.
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
     // Wait until the report HTML JS signals it's done rendering charts +
-    // the executive summary. The brand-report page sets this after init().
-    await page.waitForFunction('window.reportReady === true', { timeout: 90000 });
+    // the executive summary (window.reportReady, set after render()), or the
+    // page itself reports a render failure — surface that message instead of
+    // burning the full timeout on a report that already died.
+    await page.waitForFunction(
+      `window.reportReady === true || (document.getElementById('loading')?.textContent || '').includes('Render failed')`,
+      { timeout: 120000 }
+    );
+    const renderErr = await page.evaluate(() => {
+      if (window.reportReady === true) return null;
+      return (document.getElementById('loading')?.textContent || '').trim();
+    });
+    if (renderErr) throw new Error(`Report page failed to render: ${renderErr}`);
 
     // Tiny extra beat for chart paint animations to settle.
     await new Promise(r => setTimeout(r, 400));
