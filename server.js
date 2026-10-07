@@ -1581,6 +1581,62 @@ async function ensureBrowserInstalled() {
   return _browserInstallPromise;
 }
 
+// Shared headless Chrome for all PDF rendering (brand reports + POs).
+// Launching Chrome costs several seconds on Render's half-CPU Starter
+// instance, so one browser is launched and reused across requests; an idle
+// timer closes it 5 minutes after the last render so Chrome's ~100MB RSS
+// isn't held around the clock on the 512MB plan. Callers get a fresh page
+// per render via withPdfPage and must never close the browser themselves.
+let _sharedBrowser = null;        // Promise<Browser> while launching/launched
+let _activePdfPages = 0;
+let _browserIdleTimer = null;
+const BROWSER_IDLE_MS = 5 * 60 * 1000;
+
+async function getSharedBrowser() {
+  const puppeteer = require('puppeteer');
+  if (_sharedBrowser) {
+    try {
+      const b = await _sharedBrowser;
+      if (b.connected) return b;
+    } catch {}
+    _sharedBrowser = null;   // crashed or failed launch — relaunch below
+  }
+  const execPath = await ensureBrowserInstalled();
+  _sharedBrowser = puppeteer.launch({
+    headless: 'new',
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+    executablePath: execPath || (process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath()),
+  });
+  try { return await _sharedBrowser; }
+  catch (e) { _sharedBrowser = null; throw e; }
+}
+
+// Run fn(page) on the shared browser. Always closes the PAGE (a leaked page
+// used to mean a leaked whole Chrome; now it would pin the shared browser's
+// memory), then arms the idle shutdown once nothing is rendering.
+async function withPdfPage(fn) {
+  const browser = await getSharedBrowser();
+  _activePdfPages++;
+  if (_browserIdleTimer) { clearTimeout(_browserIdleTimer); _browserIdleTimer = null; }
+  let page;
+  try {
+    page = await browser.newPage();
+    return await fn(page);
+  } finally {
+    if (page) { try { await page.close(); } catch {} }
+    _activePdfPages--;
+    if (_activePdfPages <= 0 && !_browserIdleTimer) {
+      _browserIdleTimer = setTimeout(async () => {
+        _browserIdleTimer = null;
+        if (_activePdfPages > 0) return;
+        const b = _sharedBrowser; _sharedBrowser = null;
+        try { (await b)?.close(); } catch {}
+      }, BROWSER_IDLE_MS);
+      if (_browserIdleTimer.unref) _browserIdleTimer.unref();
+    }
+  }
+}
+
 // PO documents are priced in the currency of the brand's PRIMARY marketplace
 // (first code in brand.marketplace). Registry-driven so a UK brand prints GBP.
 function brandPoCurrency(brand) {
@@ -1590,7 +1646,6 @@ function brandPoCurrency(brand) {
 }
 
 async function renderPoPdf({ brand, settings, poNum, lines, status, notes, date, optionalCols }) {
-  const puppeteer = require('puppeteer');
   const poDate = date || pstDateStr(); // PST business day, not server-UTC (POs created evening MT were stamped tomorrow)
     const statusVal = status || 'Working';
     const isSubmitted = statusVal.toLowerCase() === 'submitted';
@@ -1773,18 +1828,7 @@ async function renderPoPdf({ brand, settings, poNum, lines, status, notes, date,
 </body>
 </html>`;
 
-    const execPath = await ensureBrowserInstalled();
-    // finally-close: any throw after launch (OOM on a big PO, protocol timeout)
-    // used to leak a live headless Chrome per retry — a few failed PDFs could
-    // OOM the Render instance and drop the in-memory orders state.
-    let browser;
-    try {
-      browser = await puppeteer.launch({
-        headless: 'new',
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-        executablePath: execPath || (process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath())
-      });
-      const page = await browser.newPage();
+    return withPdfPage(async (page) => {
       // 'load' is enough — HTML has no external resources (logo is inlined base64).
       await page.setContent(html, { waitUntil: 'load' });
       // Measure actual content height so PDF never clips regardless of item count
@@ -1796,9 +1840,7 @@ async function renderPoPdf({ brand, settings, poNum, lines, status, notes, date,
         margin: { top: '0', right: '0', bottom: '0', left: '0' }
       });
       return Buffer.isBuffer(pdfData) ? pdfData : Buffer.from(pdfData);
-    } finally {
-      if (browser) { try { await browser.close(); } catch {} }
-    }
+    });
 }
 
 // Force-save the PO record before returning a generated file. Production guarantee:
@@ -4864,34 +4906,24 @@ async function generateBrandReportPdf({ brandId, period, from, to, compFrom, com
   // so the PDF would quietly cover a different period than what's on screen.
   const effPeriod = (from && to) ? '' : (period || 'last30d');
 
-  const puppeteer = require('puppeteer');
-  let browser;
-  try {
-    // Resolve brand name for the download filename. Don't 404 here — if the
-    // dataset endpoint can render, we should be able to PDF it too.
-    const { brands } = await loadBrands();
-    const brand = brands.find(b => b.id === brandId);
-    const brandName = brand?.name || brandId;
+  // Resolve brand name for the download filename. Don't 404 here — if the
+  // dataset endpoint can render, we should be able to PDF it too.
+  const { brands } = await loadBrands();
+  const brand = brands.find(b => b.id === brandId);
+  const brandName = brand?.name || brandId;
 
-    // Build the in-app URL Puppeteer will navigate to. We hit localhost
-    // (same Node process) so there's no network round-trip; auth bypassed.
-    const port = process.env.PORT || 3000;
-    const params = new URLSearchParams({ brand: brandId, print: '1' });
-    if (effPeriod) params.set('period', effPeriod);
-    if (from)   params.set('from', from);
-    if (to)     params.set('to',   to);
-    if (compFrom) params.set('compFrom', compFrom);
-    if (compTo)   params.set('compTo',   compTo);
-    const url = `http://127.0.0.1:${port}/brand-report.html?${params}`;
+  // Build the in-app URL Puppeteer will navigate to. We hit localhost
+  // (same Node process) so there's no network round-trip; auth bypassed.
+  const port = process.env.PORT || 3000;
+  const params = new URLSearchParams({ brand: brandId, print: '1' });
+  if (effPeriod) params.set('period', effPeriod);
+  if (from)   params.set('from', from);
+  if (to)     params.set('to',   to);
+  if (compFrom) params.set('compFrom', compFrom);
+  if (compTo)   params.set('compTo',   compTo);
+  const url = `http://127.0.0.1:${port}/brand-report.html?${params}`;
 
-    const execPath = await ensureBrowserInstalled();
-    browser = await puppeteer.launch({
-      headless: 'new',
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-      executablePath: execPath || (process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath()),
-    });
-    const page = await browser.newPage();
-
+  const pdfData = await withPdfPage(async (page) => {
     // Attach Basic Auth up front on loopback requests. page.authenticate()
     // waits for a 401 challenge that never comes: since Google sign-in, the
     // team gate 302s unauthenticated HTML navigations to the login page, so
@@ -4930,25 +4962,20 @@ async function generateBrandReportPdf({ brandId, period, from, to, compFrom, com
     // Tiny extra beat for chart paint animations to settle.
     await new Promise(r => setTimeout(r, 400));
 
-    const pdfData = await page.pdf({
+    return page.pdf({
       format: 'Letter',
       printBackground: true,
       margin: { top: '12mm', bottom: '12mm', left: '12mm', right: '12mm' },
     });
-    await browser.close();
-    browser = null;
+  });
 
-    // Real brand name + human period, e.g. "Zellies - July 2026.pdf". Presets
-    // resolve to their concrete dates so "last month" names the month it covered.
-    const range    = (from && to) ? { from, to } : resolveReportPeriod({ period: effPeriod });
-    const safeName = String(brandName).replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, ' ').trim() || brandId;
-    const filename = `${safeName} - ${reportRangeLabel(range.from, range.to)}.pdf`;
+  // Real brand name + human period, e.g. "Zellies - July 2026.pdf". Presets
+  // resolve to their concrete dates so "last month" names the month it covered.
+  const range    = (from && to) ? { from, to } : resolveReportPeriod({ period: effPeriod });
+  const safeName = String(brandName).replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, ' ').trim() || brandId;
+  const filename = `${safeName} - ${reportRangeLabel(range.from, range.to)}.pdf`;
 
-    return { pdfData: Buffer.isBuffer(pdfData) ? pdfData : Buffer.from(pdfData), filename };
-  } catch (err) {
-    if (browser) { try { await browser.close(); } catch {} }
-    throw err;
-  }
+  return { pdfData: Buffer.isBuffer(pdfData) ? pdfData : Buffer.from(pdfData), filename };
 }
 
 app.get('/api/brand-report-pdf/:brandId', async (req, res) => {
@@ -6860,6 +6887,10 @@ app.listen(PORT, () => {
   console.log(`RMC Brand Dashboard → http://localhost:${PORT}`);
   ensureBootMigrations().then(() => applySellerboardBackfill());
   applyBootAsinMappings().then(() => repairOrphanBrandIds());
+  // Warm the Puppeteer Chrome install at boot: Render doesn't persist the
+  // browser from build to runtime, so without this the FIRST PDF after every
+  // deploy pays a 30-60s runtime install on the user's click.
+  ensureBrowserInstalled().catch(e => console.warn('[Puppeteer] boot warm-install failed (will retry on first PDF):', e.message));
   if (process.env.SYNC_ENABLED === 'true') {
     scheduleDailySync();
   } else {
