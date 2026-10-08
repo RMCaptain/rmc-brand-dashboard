@@ -138,10 +138,15 @@ const near = (a, b, what) => assert.ok(Math.abs(a - b) <= 0.01, `${what}: ${a} v
     vm.createContext(w);
     vm.runInContext(fs.readFileSync(`${ROOT}/public/report-render.js`, 'utf8'), w, { filename: 'report-render.js' });
     const zb = data.brands.zellies;
-    const d = { summary: zb.summary, summaryPrev: null, products: zb.skus, orders: null, coverage: {}, period: { from, to }, snsSubs: 0, repeatPurchase: null };
+    const d = { summary: zb.summary, summaryPrev: null, products: zb.skus, orders: null, coverage: {}, period: { from, to }, snsSubs: 0, repeatPurchase: null, fx };
     const tiles = vm.runInContext('SHARED_RENDERERS.headline_tiles', w)(d);
     assert.ok(tiles.includes('Amazon.co.uk (£)') && tiles.includes('£40'), `report tiles: ${tiles.match(/Revenue — [^<]+/g)}`);
     assert.ok(tiles.includes('Amazon.com (US$)') && tiles.includes('Amazon.ca (CA$)'), 'report CA/US tiles');
+    // Combined like-currency tile: CA 30 + US 120×usd + UK 40×gbp, in CAD.
+    const combined = 30 + 120 * usd + 40 * gbp;
+    assert.ok(tiles.includes('All Marketplaces (CA$)'), 'combined tile present');
+    assert.ok(tiles.includes('CA$' + Math.round(combined).toLocaleString('en-US')), `combined value ${combined}: ${tiles.match(/CA\$[\d,.]+/g)}`);
+    assert.ok(tiles.includes('converted to CAD'), 'conversion is labelled');
     const top = vm.runInContext('SHARED_RENDERERS.top_sellers', w)(d);
     assert.ok(top.includes('Rev UK £') && top.includes('Rev CA CA$') && top.includes('Rev US US$'), `report columns: ${top.match(/Rev [^<]+/g)}`);
     console.log('report-render.js: OK');

@@ -430,6 +430,18 @@ const SHARED_RENDERERS = {
       tile(mp.label, fmtC(mp.cur, mp.sym), pct(mp.cur, mp.prev), 'Prior: ' + fmtC(mp.prev, mp.sym))
     ).join('');
 
+    // Combined like-currency revenue (Mike, 2026-10-08): multi-marketplace
+    // brands get one CAD figure so performance can be discussed in a single
+    // currency. Converted at the FX frozen into the dataset at generation
+    // time (saved reports keep their rate); native tiles stay untouched.
+    const fxToCad = c => d.fx?.toCad?.[c] ?? (c === 'USD' ? (d.fx?.usdToCad ?? 1.38) : 1);
+    const combine = by => Object.values(by || {}).reduce((t, m) => t + (m.sales || 0) * fxToCad(m.currency), 0);
+    const combinedTile = (s.byMp && marketplaces.length > 1 && d.fx)
+      ? tile('Revenue — All Marketplaces (CA$)', fmtC(combine(s.byMp), 'CA$'),
+             pct(combine(s.byMp), combine(sp.byMp)),
+             'Prior: ' + fmtC(combine(sp.byMp), 'CA$') + ' · all channels converted to CAD')
+      : '';
+
     // S&S subs (seller-scoped, live count) and repeat customers (Brand
     // Analytics, last full month, brand-wide for the brand's own marketplaces).
     // Rendered only when the data exists — never estimated, never conflated.
@@ -446,6 +458,7 @@ const SHARED_RENDERERS = {
       : '';
 
     return `<div class="tiles">
+      ${combinedTile}
       ${revTiles}
       ${tile('Units Sold', fmtN(s.units), pct(s.units, sp.units), 'Prior: ' + fmtN(sp.units))}
       ${tile('Sessions', fmtN(s.sessions), null, null)}

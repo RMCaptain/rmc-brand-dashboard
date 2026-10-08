@@ -5185,10 +5185,21 @@ function buildSummaryPrompt(dataset) {
   const s   = dataset.summary || {};
   const sp  = dataset.summaryPrev || {};
   const ad  = s.adSummary || {};
-  const products = (dataset.products || []).filter(p => (p.revenueCad + p.revenueUsd) > 0);
 
-  // Top product by combined revenue.
-  const top = [...products].sort((a, b) => (b.revenueCad + b.revenueUsd) - (a.revenueCad + a.revenueUsd))[0];
+  // Combined figures are CAD-converted so the summary's totals and growth
+  // match the report's combined tile; per-marketplace facts stay native.
+  // Until 2026-10-08 this read only the legacy CAD/USD fields, so a UK (or
+  // any non-CA/US) slice never reached the model — the summary literally
+  // could not mention a marketplace the tiles were showing.
+  const toCad = (v, cur) => (v || 0) * (dataset.fx?.toCad?.[cur] ?? (cur === 'USD' ? (dataset.fx?.usdToCad ?? 1.38) : 1));
+  const mpRevCad = by => Object.values(by || {}).reduce((t, m) => t + toCad(m.sales, m.currency), 0);
+  const prodRevCad = p => (p.byMp && Object.keys(p.byMp).length)
+    ? mpRevCad(p.byMp)
+    : toCad(p.revenueCad, 'CAD') + toCad(p.revenueUsd, 'USD');
+  const products = (dataset.products || []).filter(p => prodRevCad(p) > 0);
+
+  // Top product by combined (CAD-converted) revenue — all marketplaces.
+  const top = [...products].sort((a, b) => prodRevCad(b) - prodRevCad(a))[0];
 
   // Best mover by unit growth vs prior period (require both non-zero to avoid div/0).
   const movers = products
@@ -5198,20 +5209,36 @@ function buildSummaryPrompt(dataset) {
   const mover = movers[0]?.p;
   const moverGrowth = movers[0] ? Math.round(movers[0].growth * 1000) / 10 : null;
 
-  // Period deltas
+  // Period deltas — growth computed on CAD-converted combined revenue so the
+  // percentage agrees with the report's combined tile.
   const pct = (curr, prev) => (!prev || prev === 0) ? null : Math.round((curr - prev) / prev * 1000) / 10;
-  const totalRev = (s.revenueCad || 0) + (s.revenueUsd || 0);
-  const totalPrev = (sp.revenueCad || 0) + (sp.revenueUsd || 0);
+  const hasBy = s.byMp && Object.keys(s.byMp).length;
+  const totalRev  = hasBy ? mpRevCad(s.byMp)  : toCad(s.revenueCad, 'CAD') + toCad(s.revenueUsd, 'USD');
+  const totalPrev = (sp.byMp && Object.keys(sp.byMp).length) ? mpRevCad(sp.byMp) : toCad(sp.revenueCad, 'CAD') + toCad(sp.revenueUsd, 'USD');
   const revGrowth   = pct(totalRev, totalPrev);
   const unitsGrowth = pct(s.units,  sp.units);
   const cvr = s.sessions ? Math.round(s.units / s.sessions * 1000) / 10 : null;
+  const growthStr = revGrowth != null ? (revGrowth >= 0 ? '+' : '') + revGrowth + '%' : 'no prior comparison';
+
+  // Revenue facts: combined CAD headline, then one native-currency line per
+  // marketplace with sales — the model must see (and may name) every channel.
+  const MP_NAME = { CA: 'Amazon.ca', US: 'Amazon.com', UK: 'Amazon.co.uk', WMCA: 'Walmart.ca' };
+  const revFacts = hasBy
+    ? [
+        `Revenue (all marketplaces combined, in CAD): $${Math.round(totalRev).toLocaleString()} CAD (${growthStr} vs prior period)`,
+        ...Object.values(s.byMp)
+          .filter(m => (m.sales || 0) > 0)
+          .sort((a, b) => toCad(b.sales, b.currency) - toCad(a.sales, a.currency))
+          .map(m => `  - ${MP_NAME[m.code] || m.code}: ${Math.round(m.sales).toLocaleString()} ${m.currency}`),
+      ]
+    : [`Revenue: $${Math.round(s.revenueCad || 0).toLocaleString()} CAD${s.revenueUsd ? ` and $${Math.round(s.revenueUsd).toLocaleString()} USD` : ''} (${growthStr} vs prior period)`];
 
   const facts = [
     `Brand: ${dataset.brand.name}`,
     `Period: ${dataset.period.label}`,
     `Comparison period: ${dataset.comparison.label}`,
     ``,
-    `Revenue: $${Math.round(s.revenueCad || 0).toLocaleString()} CAD${s.revenueUsd ? ` and $${Math.round(s.revenueUsd).toLocaleString()} USD` : ''} (${revGrowth != null ? (revGrowth >= 0 ? '+' : '') + revGrowth + '%' : 'no prior comparison'} vs prior period)`,
+    ...revFacts,
     `Units sold: ${(s.units || 0).toLocaleString()} (${unitsGrowth != null ? (unitsGrowth >= 0 ? '+' : '') + unitsGrowth + '%' : 'no prior comparison'})`,
     `Sessions: ${(s.sessions || 0).toLocaleString()}, conversion rate ${cvr != null ? cvr + '%' : 'n/a'}`,
     `Buy Box %: ${s.buyBox != null ? s.buyBox.toFixed(1) + '%' : 'n/a'}`,
@@ -5225,8 +5252,7 @@ function buildSummaryPrompt(dataset) {
 
   if (top) {
     facts.push(``);
-    const topRev = (top.revenueCad || 0) + (top.revenueUsd || 0);
-    facts.push(`Top product: ${top.title || top.asin} — $${Math.round(topRev).toLocaleString()} from ${(top.units || 0).toLocaleString()} units, CVR ${top.cvr != null ? top.cvr + '%' : 'n/a'}, Buy Box ${top.buyBox != null ? top.buyBox + '%' : 'n/a'}`);
+    facts.push(`Top product: ${top.title || top.asin} — $${Math.round(prodRevCad(top)).toLocaleString()} CAD (all marketplaces) from ${(top.units || 0).toLocaleString()} units, CVR ${top.cvr != null ? top.cvr + '%' : 'n/a'}, Buy Box ${top.buyBox != null ? top.buyBox + '%' : 'n/a'}`);
   }
   if (mover && mover !== top && moverGrowth != null) {
     facts.push(`Notable mover: ${mover.title || mover.asin} — ${moverGrowth >= 0 ? '+' : ''}${moverGrowth}% unit growth vs prior period (${mover.prev.units} → ${mover.units} units)`);
@@ -5333,6 +5359,10 @@ app.post('/api/brand-report-summary/:brandId', async (req, res) => {
     if (dataset.error) throw new Error(dataset.error);
 
     const prompt = buildSummaryPrompt(dataset);
+    // ?dry=1 — return the built fact sheet without calling Claude or touching
+    // the cache. For inspecting what the model will see (voice tuning, and
+    // catching gaps like the 2026-10-08 missing-UK one).
+    if (req.query.dry === '1') return res.json({ brand_id: brandId, period_from: from, period_to: to, dry: true, prompt });
     const text   = await callClaudeForSummary(prompt);
     const now    = new Date().toISOString();
 
@@ -5608,6 +5638,11 @@ async function buildBrandReportDataset(brandId, query = {}) {
     // ── 6. Assemble
     return {
       brand: { id: brand.id, name: brand.name, marketplace: brand.marketplace || 'CA' },
+      // FX at generation time — frozen into saved snapshots with the rest of
+      // the dataset. Powers the combined like-currency revenue (tile + AI
+      // summary): per-marketplace figures stay native, the combined view is
+      // CAD (Mike, 2026-10-08).
+      fx: await fetchFxRate(),
       // Subscribe & Save (seller-scoped, current) and repeat purchase (Brand
       // Analytics, last full month, marketplace-scoped — null when the brand
       // has no BA coverage). Distinct metrics: never derive one from the other.
