@@ -432,7 +432,8 @@
       if (!opening) return;
       if (menu.parentElement !== document.body) document.body.appendChild(menu);
       const r = document.getElementById('brandSwitchBtn').getBoundingClientRect();
-      menu.style.left = r.left + 'px';
+      // Clamp into the viewport — a left-anchored 260px panel can hang off a phone.
+      menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 260 - 8)) + 'px';
       menu.style.top = (r.bottom + 4) + 'px';
       const list = (allBrandsData || []).slice().sort((a, b) => {
         if (a.id === 'unknown-brand') return 1;
@@ -477,7 +478,8 @@
         if (menu.parentElement !== document.body) document.body.appendChild(menu);
         const r = document.getElementById('periodBtn').getBoundingClientRect();
         menu.style.position = 'fixed';
-        menu.style.left = r.left + 'px';
+        // Clamp into the viewport — a left-anchored 230px panel can hang off a phone.
+        menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 230 - 8)) + 'px';
         menu.style.top = (r.bottom + 4) + 'px';
         menu.style.width = '230px';
         menu.style.zIndex = '1000';

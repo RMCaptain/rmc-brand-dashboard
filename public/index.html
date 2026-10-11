@@ -534,7 +534,13 @@
       const menu = document.createElement('div');
       menu.className = 'p-1 rounded-lg';
       const r = btn.getBoundingClientRect();
-      menu.style.cssText = `position:fixed;top:${r.bottom + 6}px;right:${Math.max(8, window.innerWidth - r.right)}px;width:600px;max-width:92vw;z-index:1000;background:#0e1524;border:1px solid #1f2937;box-shadow:0 8px 30px rgba(0,0,0,0.6)`;
+      // Clamp into the viewport: right-aligned under the button where there's
+      // room (desktop), pinned inside the screen on phones — right-anchoring
+      // a 600px menu to a left-side button shoved it off-screen on mobile
+      // (2026-10-11 screenshots).
+      const mw = Math.min(600, window.innerWidth - 16);
+      const ml = Math.max(8, Math.min(r.right - mw, window.innerWidth - mw - 8));
+      menu.style.cssText = `position:fixed;top:${r.bottom + 6}px;left:${ml}px;width:${mw}px;z-index:1000;background:#0e1524;border:1px solid #1f2937;box-shadow:0 8px 30px rgba(0,0,0,0.6)`;
       menu.innerHTML = `<p class="text-xs px-3 py-2 font-semibold" style="color:var(--text-3)">Personalized tiles</p>` +
         PeriodCards.TILE_SETS.map(s => `
           <button class="pp-set w-full text-left px-3 py-2 text-sm rounded hover:bg-white/5" data-id="${s.id}" style="color:${s.id === sel.id ? '#8CBF5A' : 'var(--text)'}">
@@ -542,10 +548,10 @@
           </button>`).join('') + `
         <div class="my-1" style="border-top:1px solid #1f2937"></div>
         <p class="text-xs px-3 py-2 font-semibold" style="color:var(--text-3)">Custom range (table below)</p>
-        <div class="flex items-center gap-2 px-3 pb-3">
-          <input type="date" id="customFrom" class="rmc-input" style="padding:4px 8px;font-size:11px;width:132px;color-scheme:dark" value="${customFrom || ''}" />
+        <div class="flex items-center gap-2 px-3 pb-3" style="flex-wrap:wrap">
+          <input type="date" id="customFrom" class="rmc-input" style="padding:4px 8px;font-size:11px;flex:1 1 120px;min-width:110px;width:auto;color-scheme:dark" value="${customFrom || ''}" />
           <span style="color:var(--text-3);font-size:11px">–</span>
-          <input type="date" id="customTo" class="rmc-input" style="padding:4px 8px;font-size:11px;width:132px;color-scheme:dark" value="${customTo || ''}" />
+          <input type="date" id="customTo" class="rmc-input" style="padding:4px 8px;font-size:11px;flex:1 1 120px;min-width:110px;width:auto;color-scheme:dark" value="${customTo || ''}" />
           <button onclick="applyCustomRange()" class="preset-btn active">Apply</button>
         </div>`;
       menu.addEventListener('click', ev => ev.stopPropagation());   // keep open while typing dates
@@ -1382,6 +1388,10 @@
     function syncMpOptions() {
       const sel = document.getElementById('mpSwitch');
       if (!sel) return;
+      // Phones: the full "All marketplaces" label clipped mid-word in the
+      // wrapped nav row — shorten it (the globe carries the meaning).
+      const allOpt = Array.from(sel.options || []).find(o => o.value === 'all');
+      if (allOpt && window.matchMedia && matchMedia('(max-width: 640px)').matches) allOpt.textContent = '🌐 All';
       const present = new Set();
       for (const d of [customTableData, ...Object.values(rangeTableData), ...Object.values(presetMetrics.presets || {})]) {
         for (const m of (d?.marketplaces || [])) present.add(m.code);

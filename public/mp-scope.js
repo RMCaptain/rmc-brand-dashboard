@@ -163,7 +163,9 @@
     sel.style.cssText = 'width:auto;color-scheme:dark;font-size:12px;padding:6px 10px';
     sel.title = 'Marketplace';
     const all = document.createElement('option');
-    all.value = 'all'; all.textContent = '🌐 All marketplaces';
+    // Phones: the full label clipped mid-word in the wrapped nav row.
+    all.value = 'all';
+    all.textContent = (window.matchMedia && matchMedia('(max-width: 640px)').matches) ? '🌐 All' : '🌐 All marketplaces';
     sel.appendChild(all);
     sel.addEventListener('change', () => setFilter(sel.value));
     tog.parentNode.insertBefore(sel, tog);

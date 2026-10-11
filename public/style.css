@@ -417,6 +417,20 @@ input[type=number] { -moz-appearance: textfield; }
   .rmc-nav > div > div { min-width: 0; position: static; }
   .nav-logo img { height: 40px; }
 
+  /* Controls row (period picker, marketplace, CAD/USD, sync, hamburger):
+     one rigid row clipped the marketplace select mid-word and pushed Sync
+     off-screen (2026-10-11 screenshots). Let the bar and the controls group
+     wrap instead — controls drop to their own full-width line(s) under the
+     logo and stay tappable. The marketplace select gets a width cap so it
+     shares the line instead of hogging it. */
+  .rmc-nav > div { flex-wrap: wrap; }
+  .rmc-nav > div > div:last-child { flex: 1 1 100%; flex-wrap: wrap; row-gap: 8px; }
+  #mpSwitch { max-width: 44vw; }
+  /* The hamburger lives inside the controls group in the DOM, but visually it
+     belongs beside the logo — absolute to the sticky nav keeps it top-right
+     instead of orphaned at the end of the wrapped controls line. */
+  .nav-hamburger { position: absolute; top: 12px; right: 14px; }
+
   /* Hamburger button (injected by mobile-nav.js) */
   .nav-hamburger {
     display: inline-flex; flex-direction: column; justify-content: center;
