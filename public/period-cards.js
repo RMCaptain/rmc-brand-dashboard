@@ -206,7 +206,9 @@
         </div>
         <div class="grid grid-cols-2 gap-x-4">
           ${row('Units', (met.units || 0).toLocaleString())}
-          ${row('Refunds', key === 'today' ? '<span style="color:var(--text-3)">—</span>' : (met.refundUnits || 0).toLocaleString())}
+          ${row('Refunds', key === 'today' ? '<span style="color:var(--text-3)">—</span>'
+            : (met.refundUnits || 0).toLocaleString()
+              + ((met.units || 0) > 0 ? ` <span class="text-xs" style="color:var(--text-3)">· ${((met.refundUnits || 0) / met.units * 100).toFixed(1)}%</span>` : ''))}
         </div>
         <div class="grid grid-cols-2 gap-x-4 gap-y-2 pt-2" style="border-top:1px solid var(--border,#1f2937)">
           ${row('Adv. cost', money(met.adSpend, { signCost: true }), met.adSpend > 0 ? '#f87171' : undefined)}
