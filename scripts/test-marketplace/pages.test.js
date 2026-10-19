@@ -142,6 +142,33 @@ const near = (a, b, what) => assert.ok(Math.abs(a - b) <= 0.01, `${what}: ${a} v
     console.log('brand.html: OK (all/CA/US/UK + period cards)');
   }
 
+  // ── /api/fees — fee breakdown + Sellerboard-vs-Amazon recon source ──
+  {
+    const acct = await fetch(`${BASE}/api/fees?from=${from}&to=${to}`).then(r => r.json());
+    const ca = acct.sb.byMp.CA;
+    near(ca.types.commission, -49, 'fees acct: SB commission');
+    near(ca.types.fbaperunitfulfillmentfee, -33, 'fees acct: SB FBA per-unit');
+    near(ca.types.reversal_reimbursement, 2, 'fees acct: SB reimbursement kept positive');
+    near(ca.amazonFees, 82, 'fees acct: SB netted fees');
+    near(ca.adSplit.sp, 7, 'fees acct: SB ad split');
+    near(acct.sb.byMp.UK.types.amazonfees, -12, 'fees acct: condensed UK aggregate');
+    assert.strictEqual(acct.amz.scope, 'account');
+    near(acct.amz.byMp.CA.fees, 77, 'fees acct: AMZ per-item fees');
+    near(acct.amz.byMp.CA.serviceFees, 27, 'fees acct: AMZ service fees');
+    near(acct.amz.byMp.CA.groups['Referral Fee'], 47, 'fees acct: AMZ referral group');
+    near(acct.amz.byMp.CA.groups.Storage, 9, 'fees acct: AMZ storage group');
+    near(acct.amz.byMp.US.fees, 30, 'fees acct: AMZ US fees');
+
+    const brand = await fetch(`${BASE}/api/fees?from=${from}&to=${to}&brandId=acure`).then(r => r.json());
+    assert.strictEqual(brand.amz.scope, 'brand');
+    near(brand.sb.byMp.CA.types.commission, -44, 'fees brand: SB commission acure only');
+    near(brand.amz.byMp.CA.fees, 68, 'fees brand: AMZ A1 fees only');
+    near(brand.amz.byMp.CA.groups['Referral Fee'], 42, 'fees brand: AMZ referral group');
+    assert.strictEqual(brand.amz.byMp.CA.serviceFees, null, 'fees brand: service fees are account-level');
+    assert.ok(!brand.sb.byMp.UK, 'fees brand: zellies UK rows excluded from acure');
+    console.log('/api/fees: OK (account + brand scope)');
+  }
+
   // ── report-render.js ──
   {
     const w = makeWindow({});

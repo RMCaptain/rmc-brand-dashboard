@@ -45,6 +45,15 @@ assert.strictEqual(t1.sessions, 45);
 assert.strictEqual(t1.unit_session_pct, 13.33);
 assert.strictEqual(t1.raw['SponsoredВrands'], '-1.50', 'raw keeps the original header');
 
+// fee_detail: per-type granularity, Sellerboard's sign, zeros dropped
+assert.deepStrictEqual(t1.fee_detail, {
+  commission: -22.5, fbaperunitfulfillmentfee: -30, fbastoragefee: -0.4,
+  reversal_reimbursement: 5,
+  'refund commission': 3.75, 'refund principal': -25, 'refund refundcommission': -0.75,
+  'value of returned items': 8,
+  'productcost sales': -48,
+});
+
 const t1b = rows.find(r => r.sku === 'T1-CAD-2');
 assert.strictEqual(t1b.asin, 'B0TEST0001');
 assert.strictEqual(t1b.sessions, null, 'blank sessions → null, not 0');
@@ -94,6 +103,8 @@ assert.strictEqual(c1.amazon_fees, 67.06); assert.strictEqual(c1.net_profit, 28.
 assert.strictEqual(c1.units, 6, 'counts untouched');
 assert.strictEqual(c1.fx_rate, 1.4); assert.strictEqual(c1.fx_source, 'daily');
 assert.strictEqual(c1.raw.SalesOrganic, '100.00', 'raw stays in feed currency');
+assert.strictEqual(c1.fee_detail.commission, -31.5, 'fee_detail converted USD → CAD at 1.4');
+assert.strictEqual(c1.fee_detail.reversal_reimbursement, 7);
 assert.strictEqual(c2.sales, 80, 'US row already native'); assert.strictEqual(c2.fx_source, 'same');
 assert.strictEqual(cuk.sales, 48, 'UK row USD → GBP at 0.8');
 assert.deepStrictEqual(stats, { daily: 3 });
@@ -144,6 +155,7 @@ assert.strictEqual(cu.refund_costs, 0.7, 'RefundCost 1.20 net of returned-items 
 assert.strictEqual(cu.refund_amount, 0, 'no refund principal column in condensed layout');
 assert.strictEqual(cu.net_profit, 4.19);
 assert.strictEqual(cu.sessions, 12);
+assert.deepStrictEqual(cu.fee_detail, { amazonfees: -8.45, refundcost: -1.2, 'cost of goods': -10.38 }, 'condensed layout: aggregate fee_detail');
 // reimbursement day: positive AmazonFees (money in)
 const cr2 = sb.parseFeed(condensedCsv.replace('"-8.45"', '"3.10"'), { account: 'INTL' }).rows[0];
 assert.strictEqual(cr2.amazon_fees, -3.1);

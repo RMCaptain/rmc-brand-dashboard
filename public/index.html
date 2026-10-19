@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="/style.css" />
   <script src="/mp-scope.js"></script>
   <script src="/period-cards.js"></script>
+  <script src="/fee-breakdown.js"></script>
   <script src="/mobile-nav.js" defer></script>
 </head>
 <body class="min-h-screen">
@@ -133,6 +134,10 @@
         <div id="brandPagination"></div>
       </div>
     </div>
+
+    <!-- Fee breakdown + Sellerboard-vs-Amazon recon, account-wide, follows the
+         selected period (Mike, 2026-10-19) -->
+    <div id="feeBreakdown" class="mt-8"></div>
 
   </div>
 
@@ -1204,7 +1209,23 @@
       }
     }
 
+    // Account-wide fee breakdown + recon for the selected period. Called from
+    // renderBrandTable (the choke point every data/scope/currency change hits);
+    // FeeBreakdown caches per range so repeat calls don't refetch.
+    function renderFeeSection() {
+      const el = document.getElementById('feeBreakdown');
+      if (!el || !window.FeeBreakdown) return;
+      const key = activeBrandPreset;
+      let range = null;
+      if (key === 'custom') range = (customFrom && customTo) ? { from: customFrom, to: customTo } : null;
+      else if (key === 'today') { const t = pstDateStr(); range = { from: t, to: t }; }
+      else if (key === 'yesterday') { const y = pstSubtractDays(pstDateStr(), 1); range = { from: y, to: y }; }
+      else range = getPresetRange(key);
+      FeeBreakdown.render(el, range || {});
+    }
+
     function renderBrandTable() {
+      renderFeeSection();
       const preset = getActiveTableData();
       const tbody = document.getElementById('brandTableBody');
 

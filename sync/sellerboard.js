@@ -138,6 +138,13 @@ const PRODUCT_COST_COLS = [
   'productcost sales', 'productcost non-amazon', 'productcost multichannelcosts',
   'productcost missingfrominbound', 'productcost costofmissingreturns',
 ];
+// Per-type granularity kept in fee_detail (sql/sellerboard-fee-detail.sql):
+// every fee / refund-cost / product-cost column, SELLERBOARD'S SIGN (costs
+// negative, reimbursements positive), converted to native currency by
+// convertRows like everything else. Condensed-layout accounts only have the
+// aggregates.
+const DETAIL_COLS = [...FEE_COLS, ...REFUND_COST_COLS, ...PRODUCT_COST_COLS];
+const CONDENSED_DETAIL_COLS = ['amazonfees', 'refundcost', 'cost of goods'];
 const REQUIRED = ['date', 'marketplace', 'asin', 'sku'];
 
 /**
@@ -244,6 +251,14 @@ function parseFeed(text, { account = null, asinBrand = {}, feedCurrency = null }
       // from a real 0% (all returns unsellable).
       sellable_returns_pct: get(r, 'sellable returns %') === '' ? null : num(get(r, 'sellable returns %')),
       unit_session_pct: uspRaw === '' ? null : num(uspRaw),
+      fee_detail: (() => {
+        const d = {};
+        for (const c of (condensed ? CONDENSED_DETAIL_COLS : DETAIL_COLS)) {
+          const v = num(get(r, c));
+          if (v !== 0) d[c] = money(v);
+        }
+        return d;
+      })(),
       raw,
       fetched_at: fetchedAt,
     });
@@ -269,6 +284,7 @@ function convertRows(rows, { rateFor, implied = {} } = {}) {
     else if (rateFor) ({ rate, source } = rateFor(r.date, r.feed_currency, r.currency));
     else { rate = 1; source = 'none'; }
     for (const c of MONEY_COLS) if (r[c] != null) r[c] = money(r[c] * rate);
+    if (r.fee_detail) for (const k of Object.keys(r.fee_detail)) r.fee_detail[k] = money(r.fee_detail[k] * rate);
     r.fx_rate = rate; r.fx_source = source;
     stats[source] = (stats[source] || 0) + 1;
   }
@@ -446,4 +462,4 @@ async function syncSellerboardFeeds({ supabase, loadBrands, label = 'Sellerboard
   return out;
 }
 
-module.exports = { FEEDS, MONEY_COLS, IMPLIED, parseCsv, parseFeed, parseSbDate, normHeader, fetchFeed, convertRows, impliedRates, loadAmazonMpDay, syncSellerboardFeeds, upsertRows, FEE_COLS, REFUND_COST_COLS, PRODUCT_COST_COLS };
+module.exports = { FEEDS, MONEY_COLS, IMPLIED, parseCsv, parseFeed, parseSbDate, normHeader, fetchFeed, convertRows, impliedRates, loadAmazonMpDay, syncSellerboardFeeds, upsertRows, FEE_COLS, REFUND_COST_COLS, PRODUCT_COST_COLS, DETAIL_COLS, CONDENSED_DETAIL_COLS };

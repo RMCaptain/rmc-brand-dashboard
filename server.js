@@ -6300,6 +6300,71 @@ app.get('/api/reconciliation', async (req, res) => {
   }
 });
 
+// ── Fee breakdown + Sellerboard-vs-Amazon fee recon ─────────────────────────
+// GET /api/fees?from&to[&brandId] — per-marketplace native-currency slices:
+// Sellerboard per-fee-type granularity (sellerboard_daily.fee_detail) beside
+// Amazon's Finances-walk fee groups. Brand scope compares per-item fees via
+// daily_fees_asin; account scope uses daily_fees_mp (adds storage/inbound/
+// removal service fees). Aggregation lives in sync/feeBreakdown.js; the
+// client converts to display currency and lays out the recon.
+const feeCache = new Map();   // `${from}|${to}|${brandId}` → { data, at }
+const FEE_CACHE_MS = 2 * 60 * 1000;
+app.get('/api/fees', async (req, res) => {
+  try {
+    const { aggSellerboard, aggAmazonAsin, aggAmazonMp } = require('./sync/feeBreakdown');
+    const to = req.query.to || pstSubtractDays(pstDateStr(), 1);
+    const from = req.query.from || pstSubtractDays(to, 29);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) {
+      return res.status(400).json({ error: 'from/to must be YYYY-MM-DD with from <= to' });
+    }
+    const brandId = req.query.brandId || null;
+    const key = `${from}|${to}|${brandId || ''}`;
+    const hit = feeCache.get(key);
+    if (hit && Date.now() - hit.at < FEE_CACHE_MS) return res.json(hit.data);
+
+    const fetchAll = async (table, select, decorate) => {
+      const out = [];
+      for (let off = 0; ; off += 1000) {
+        let q = supabase.from(table).select(select).gte('date', from).lte('date', to)
+          .order('date', { ascending: true }).range(off, off + 999);
+        if (decorate) q = decorate(q);
+        const { data, error } = await q;
+        if (error) throw new Error(`${table} read failed: ${error.message}`);
+        out.push(...(data || []));
+        if (!data || data.length < 1000) break;
+      }
+      return out;
+    };
+
+    const sbRows = await fetchAll('sellerboard_daily',
+      'date,mp_id,currency,sales,units,refunds,refund_amount,promo_value,ad_spend,ad_spend_sp,ad_spend_sb,ad_spend_sbv,ad_spend_sd,amazon_fees,fee_charges,reimbursements,product_costs,fee_detail',
+      brandId ? q => q.eq('brand_id', brandId) : null);
+
+    let amzByMp, amzScope;
+    if (brandId) {
+      const { brands } = await loadBrands();
+      const brand = (brands || []).find(b => b.id === brandId);
+      if (!brand) return res.status(404).json({ error: `unknown brand ${brandId}` });
+      const asinSet = new Set(brand.asins || []);
+      const rows = await fetchAll('daily_fees_asin', 'date,asin,mp_id,currency,fees,refund_amount,refund_fees,refund_count,breakdown');
+      amzByMp = aggAmazonAsin(rows, asinSet);
+      amzScope = 'brand';   // per-item fees only — storage/inbound/removal are account-level
+    } else {
+      const rows = await fetchAll('daily_fees_mp', 'date,mp_id,currency,fees,service_fees,refund_amount,refund_fees,refund_count,breakdown');
+      amzByMp = aggAmazonMp(rows);
+      amzScope = 'account';
+    }
+
+    const data = { from, to, brandId, sb: { byMp: aggSellerboard(sbRows) }, amz: { scope: amzScope, byMp: amzByMp } };
+    feeCache.set(key, { data, at: Date.now() });
+    if (feeCache.size > 50) { const oldest = [...feeCache.entries()].sort((a, b) => a[1].at - b[1].at)[0]; feeCache.delete(oldest[0]); }
+    res.json(data);
+  } catch (err) {
+    console.error('[fees]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // On-demand run of the nightly data-integrity checks (see sync/integrityCheck).
 // Read-only by default — the cron owns alerting. ?post=1 additionally sends
 // the result to the integrity Slack channel (webhook wiring test / manual ping).
@@ -6705,7 +6770,7 @@ app.post('/api/bulk-update', async (req, res) => {
 // standing scripts/run-migration.js flow still covers everything else. Only
 // migrations listed here run, and each MUST be safe to re-run on every boot
 // (CREATE TABLE / CREATE INDEX IF NOT EXISTS only — no data rewrites).
-const BOOT_MIGRATIONS = ['sql/daily-fees-asin.sql', 'sql/fx-rates.sql', 'sql/sellerboard-daily.sql', 'sql/metric-reconciliation.sql', 'sql/perf-indexes.sql', 'sql/enable-rls.sql'];
+const BOOT_MIGRATIONS = ['sql/daily-fees-asin.sql', 'sql/fx-rates.sql', 'sql/sellerboard-daily.sql', 'sql/metric-reconciliation.sql', 'sql/perf-indexes.sql', 'sql/enable-rls.sql', 'sql/sellerboard-fee-detail.sql'];
 async function ensureBootMigrations() {
   if (!process.env.DATABASE_URL) {
     console.log('[BootMigrate] DATABASE_URL not set — skipped (use scripts/run-migration.js)');

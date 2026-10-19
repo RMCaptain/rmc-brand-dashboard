@@ -11,6 +11,7 @@
   <script src="/mobile-nav.js" defer></script>
   <script src="/mp-scope.js"></script>
   <script src="/period-cards.js"></script>
+  <script src="/fee-breakdown.js"></script>
   <style>
     #salesPopup, #inventoryPopup { pointer-events: none; transition: opacity 0.1s ease; }
     .asin-remove-btn { opacity: 0; transition: opacity 0.15s ease; }
@@ -516,6 +517,17 @@
         .then(d => { customData = d; if (brandCache) renderBrand({ ...brandCache, metrics: customData.brands?.[brandCache.id] || null }); });
     }
 
+    // Current selection as {from,to} (PST calendar days) — feeds /api/fees.
+    function selectedRange() {
+      if (activePreset === 'custom') return (customFrom && customTo) ? { from: customFrom, to: customTo } : null;
+      if (activePreset === 'today') {
+        const t = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date());
+        return { from: t, to: t };
+      }
+      const p = presetMetrics.presets?.[activePreset];
+      return p ? { from: p.startDate, to: p.endDate } : null;
+    }
+
     function setPreset(key) {
       activePreset = key;
       localStorage.setItem('brandPreset', key);
@@ -749,6 +761,20 @@
           </div>`;
       } else if (existingAdCard) {
         existingAdCard.style.display = 'none';
+      }
+
+      // Fee breakdown + Sellerboard-vs-Amazon recon, scoped to this brand and
+      // the selected period (Mike, 2026-10-19).
+      if (window.FeeBreakdown) {
+        const feeEl = document.getElementById('feeBreakdownCard') || (() => {
+          const el = document.createElement('div');
+          el.id = 'feeBreakdownCard';
+          el.className = 'mb-6';
+          const anchor = document.getElementById('adMetricsCard') || document.getElementById('summaryTiles');
+          anchor.insertAdjacentElement('afterend', el);
+          return el;
+        })();
+        FeeBreakdown.render(feeEl, { ...selectedRange() || {}, brandId: brand.id });
       }
 
       // Alerts
