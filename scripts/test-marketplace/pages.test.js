@@ -61,6 +61,7 @@ const near = (a, b, what) => assert.ok(Math.abs(a - b) <= 0.01, `${what}: ${a} v
       const html = w.document.getElementById('brandsGrid').innerHTML;
       assert.ok(html.includes('Zellies') && html.includes('Acure'), `brands ${f}: cards rendered`);
       assert.ok(html.includes('>Profit<') && html.includes('>Margin<'), `brands ${f}: profit/margin cells`);
+      assert.ok(html.includes('>Returns<') && html.includes('>Return Rate<'), `brands ${f}: returns cells`);
       assert.ok(!html.includes('NaN'), `brands ${f}: no NaN in cards`);
       if (f === 'UK') { assert.ok(html.includes('CA$' + (40 * gbp).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })), `brands UK in CAD: ${html.match(/CA\$[\d.,]+/g)}`); assert.ok(!html.includes('£'), 'no native currency'); }
       if (f === 'CA') { assert.ok(html.includes('CA$380.00') && html.includes('CA$30.00'), 'brands CA revenue'); assert.ok(!html.includes('⚑') && !html.includes('Sellerboard'), 'reconciliation is not user-facing'); }
