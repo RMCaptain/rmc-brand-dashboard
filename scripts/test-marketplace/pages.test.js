@@ -112,24 +112,31 @@ const near = (a, b, what) => assert.ok(Math.abs(a - b) <= 0.01, `${what}: ${a} v
       if (f === 'UK') { const v = 'CA$' + (40 * gbp).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); assert.ok(rows.includes(v), 'brand UK row'); assert.ok(!rows.includes('⚑'), 'no badges'); }
       if (f === 'all') {
         assert.ok(rows.includes('UK') && rows.includes('US') && rows.includes('CA'), 'brand all badges');
-        // Sellerboard-style period cards from the stub presets (zellies CA):
-        // MTD sales 1,000 exact SB net 200; last month 3,000; forecast =
-        // 1000 + (700/7) × remaining days of the mtd month, when ≥3 days in.
-        assert.ok(cards.includes('Month to date') && cards.includes('CA$1,000.00'), `mtd card: ${cards.match(/CA\$[\d.,]+/g)}`);
-        assert.ok(cards.includes('Last month') && cards.includes('CA$3,000.00'), 'last month card');
-        assert.ok(cards.includes('This month (forecast)'), 'forecast card present');
+        // Tiles follow the Period selection: with a custom range active they
+        // collapse to the one ringed custom card (same model as the dashboard).
+        assert.ok(cards.includes('Custom range'), `custom collapse card: ${cards.slice(0, 200)}`);
+        assert.ok(!cards.includes('Month to date'), 'tile set hidden under custom');
+        // Switch to an in-set preset: tile set returns, selected tile ringed.
+        // Stub presets (zellies CA): MTD sales 1,000 exact SB net 200; last
+        // month 3,000; forecast = 1000 + (700/7) × remaining days when ≥3 in.
+        vm.runInContext(`activePreset = 'mtd'; renderBrand({ ...brandCache, metrics: presetMetrics.presets.mtd.brands[brandCache.id] })`, w);
+        const tcards = w.document.getElementById('brandPeriodCards').innerHTML;
+        assert.ok(tcards.includes('Month to date') && tcards.includes('CA$1,000.00'), `mtd card: ${tcards.match(/CA\$[\d.,]+/g)}`);
+        assert.ok(tcards.includes('Last month') && tcards.includes('CA$3,000.00'), 'last month card');
+        assert.ok(tcards.includes('This month (forecast)'), 'forecast card present');
+        assert.ok(tcards.includes('box-shadow'), 'selected preset tile is ringed');
         const end = presets.presets.mtd.endDate;
         const elapsed = Number(end.slice(8, 10));
         if (elapsed >= 3) {
           const dim = new Date(Number(end.slice(0, 4)), Number(end.slice(5, 7)), 0).getDate();
           const fSales = 1000 + 100 * (dim - elapsed);
-          assert.ok(cards.includes('CA$' + fSales.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })), `forecast sales ${fSales}: ${cards.match(/CA\$[\d.,]+/g)}`);
-          assert.ok(cards.includes('last 7d avg'), 'forecast basis note');
+          assert.ok(tcards.includes('CA$' + fSales.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })), `forecast sales ${fSales}: ${tcards.match(/CA\$[\d.,]+/g)}`);
+          assert.ok(tcards.includes('last 7d avg'), 'forecast basis note');
         } else {
-          assert.ok(cards.includes('needs 3+'), 'forecast guardrail note');
+          assert.ok(tcards.includes('needs 3+'), 'forecast guardrail note');
         }
-        assert.ok(cards.includes('Today') && cards.includes('loading…'), 'today card placeholder without live data');
-        assert.ok(cards.includes('Margin') === false || true, 'cards render');
+        assert.ok(tcards.includes('Today') && tcards.includes('loading…'), 'today card placeholder without live data');
+        vm.runInContext(`activePreset = 'custom'`, w);
       }
     }
     console.log('brand.html: OK (all/CA/US/UK + period cards)');

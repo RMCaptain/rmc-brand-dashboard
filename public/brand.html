@@ -508,6 +508,7 @@
       localStorage.setItem('customTo', to);
       activePreset = 'custom';
       localStorage.setItem('brandPreset', 'custom');
+      buildPeriodMenu();
       const fmtLabel = d => new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
       document.getElementById('dateRangeLabel').textContent = from === to ? fmtLabel(from) : `${fmtLabel(from)} – ${fmtLabel(to)}`;
       fetch(`/api/metrics?from=${from}&to=${to}`)
@@ -677,10 +678,10 @@
           ${sub ? `<p class="text-xs mt-0.5" style="color:var(--text-3)">${sub}</p>` : ''}
         </div>`;
 
-      // ── Sellerboard-style period cards (Mike, 2026-09-22): Today /
-      // Yesterday / MTD / Forecast / Last month columns, brand-scoped, from
-      // the shared PeriodCards module. The ops row (traffic/Buy Box/S&S)
-      // rides below; the period dropdown drives the ASIN table only.
+      // ── Sellerboard-style period cards (Mike, 2026-09-22): brand-scoped
+      // tile set from the shared PeriodCards module, ops row (traffic/Buy
+      // Box/S&S) below. Tiles and the Period dropdown are two handles on the
+      // same selection (see pcCtx below).
       const RED = '#f87171', GREEN = '#34d399';
       const totalSns = Object.values(brand.asinSns || {}).reduce((a, b) => a + b, 0);
       const opsTiles = [
@@ -692,11 +693,31 @@
         `<div id="brandPeriodCards" class="mb-3"></div>` +
         `<div class="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">${opsTiles.join('')}</div>`;
       if (window.PeriodCards) {
+        // Tiles follow the page's Period selection (Mike, 2026-10-19): the
+        // selected period's tile wears the ring and clicking a tile switches
+        // the period; a selection that isn't one of the tiles (custom range,
+        // or an out-of-set preset like last60d) collapses the row to ONE card
+        // for that range — same model as the dashboard.
         const pcCtx = {
           presets: () => presetMetrics.presets || {},
           today: () => todayData,
           brands: () => [brand],
           scopeBrandId: brand.id,
+          activeKey: () => activePreset,
+          onSelect: key => { if (key !== activePreset) setPreset(key); },
+          custom: () => {
+            const sel = PeriodCards.selection();
+            if (activePreset !== 'custom' && sel.tiles.includes(activePreset)) return null;
+            if (activePreset === 'custom') {
+              return (customFrom && customTo) ? { from: customFrom, to: customTo, payload: customData } : null;
+            }
+            if (activePreset === 'today') {
+              const t = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+              return todayData ? { key: 'today', from: t, to: t, payload: todayData } : null;
+            }
+            const p = presetMetrics.presets?.[activePreset];
+            return p ? { key: activePreset, from: p.startDate, to: p.endDate, payload: p } : null;
+          },
         };
         PeriodCards.render(document.getElementById('brandPeriodCards'), pcCtx);
       }

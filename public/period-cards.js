@@ -246,8 +246,10 @@
     if (pickable && ctx.custom) {
       const c = ctx.custom();
       if (c) {
+        // c.key lets a preset that isn't one of the tiles (brand page's
+        // dropdown can pick e.g. last60d) collapse under its own label.
         const met = c.payload ? aggregate(c.payload, brandsMeta, ctx.scopeBrandId) : null;
-        el.innerHTML = grid(cardHtml('custom', met, fmtRange(c.from, c.to), 0, met ? null : 'loading…', { active: true }));
+        el.innerHTML = grid(cardHtml(c.key || 'custom', met, fmtRange(c.from, c.to), 0, met ? null : 'loading…', { active: true }));
         bindMore();
         return;
       }
