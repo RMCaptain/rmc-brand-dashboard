@@ -778,7 +778,7 @@
       }
 
       // Alerts
-      if (m && (m.alerts.suppressedListings > 0 || m.alerts.lostBuyBox > 0)) {
+      if (m && m.alerts && (m.alerts.suppressedListings > 0 || m.alerts.lostBuyBox > 0)) {
         const row = document.getElementById('alertsRow');
         row.classList.remove('hidden');
         const scBase = MpScope.sellerCentralFor((brand.marketplace || 'CA').split(',')[0].trim());

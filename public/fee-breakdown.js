@@ -38,30 +38,73 @@ window.FeeBreakdown = (() => {
   const COST_KEYS = ['productcost sales', 'productcost non-amazon', 'productcost multichannelcosts',
     'productcost missingfrominbound', 'productcost costofmissingreturns', 'cost of goods'];
 
-  const cache = new Map();
+  // Shared /api/fees fetch cache — the big card and the period-card
+  // drill-downs (period-cards.js) ride the same data.
+  const cache = new Map();     // key → resolved data
+  const pending = new Map();   // key → in-flight promise
+  const feeKey = (from, to, brandId) => `${from}|${to}|${brandId || ''}`;
+  function peekFees(from, to, brandId) { return cache.get(feeKey(from, to, brandId)) || null; }
+  function fetchFees(from, to, brandId) {
+    const key = feeKey(from, to, brandId);
+    if (cache.has(key)) return Promise.resolve(cache.get(key));
+    if (pending.has(key)) return pending.get(key);
+    const p = fetch(`/api/fees?from=${from}&to=${to}${brandId ? `&brandId=${encodeURIComponent(brandId)}` : ''}`)
+      .then(async res => {
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        cache.set(key, data);
+        if (cache.size > 20) cache.delete(cache.keys().next().value);
+        return data;
+      })
+      .finally(() => pending.delete(key));
+    pending.set(key, p);
+    return p;
+  }
+
   let seq = 0;
 
   async function render(el, opts = {}) {
     if (!el) return;
     if (!opts.from || !opts.to) { el.innerHTML = ''; return; }
-    const key = `${opts.from}|${opts.to}|${opts.brandId || ''}`;
     const my = ++seq;
-    let data = cache.get(key);
+    let data = peekFees(opts.from, opts.to, opts.brandId);
     if (!data) {
       el.innerHTML = shell('<p class="text-xs py-4" style="color:var(--text-3)">loading fee data…</p>', opts);
       try {
-        const res = await fetch(`/api/fees?from=${opts.from}&to=${opts.to}${opts.brandId ? `&brandId=${encodeURIComponent(opts.brandId)}` : ''}`);
-        data = await res.json();
-        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        data = await fetchFees(opts.from, opts.to, opts.brandId);
       } catch (e) {
         if (seq === my) el.innerHTML = shell(`<p class="text-xs py-4" style="color:#f87171">Fee data unavailable: ${e.message}</p>`, opts);
         return;
       }
-      cache.set(key, data);
-      if (cache.size > 20) cache.delete(cache.keys().next().value);
     }
     if (seq !== my) return;
     el.innerHTML = shell(body(data), opts);
+  }
+
+  // Scoped, display-currency section rows for drill-downs elsewhere (period
+  // cards): { ads, fees, refunds, cogs: [{label, v}], hasSb }. Values keep
+  // Sellerboard's sign (costs negative).
+  function sections(data) {
+    const M = window.MpScope;
+    const sb = Object.values(data?.sb?.byMp || {}).filter(s => !M.scoped() || s.code === M.filter());
+    const conv = (v, cur) => M.toDisplay(v || 0, cur);
+    const typeVal = k => sb.reduce((t, s) => t + conv(s.types?.[k], s.currency), 0);
+    const rows = keys => keys
+      .map(k => ({ label: LABELS[k] || k, v: typeVal(k) }))
+      .filter(r => Math.abs(r.v) >= 0.005)
+      .sort((a, b) => Math.abs(b.v) - Math.abs(a.v));
+    const ads = [['Sponsored Products', 'sp'], ['Sponsored Brands Video', 'sbv'], ['Sponsored Brands', 'sb'], ['Sponsored Display', 'sd']]
+      .map(([label, k]) => ({ label, v: -sb.reduce((t, s) => t + conv(s.adSplit?.[k], s.currency), 0) }))
+      .filter(r => Math.abs(r.v) >= 0.005)
+      .sort((a, b) => Math.abs(b.v) - Math.abs(a.v));
+    return { ads, fees: rows(FEE_KEYS), refunds: rows(REFUND_KEYS), cogs: rows(COST_KEYS), hasSb: sb.length > 0 };
+  }
+
+  function fmtSigned(v) {
+    const M = window.MpScope;
+    if (v == null || Math.abs(v) < 0.005) return `<span style="color:var(--text-3)">${M.fmt(0)}</span>`;
+    const color = v < 0 ? '#f87171' : '#34d399';
+    return `<span style="color:${color}">${v < 0 ? '-' : ''}${M.fmt(Math.abs(v))}</span>`;
   }
 
   function shell(inner, opts) {
@@ -195,5 +238,5 @@ window.FeeBreakdown = (() => {
     </div>`;
   }
 
-  return { render, _cache: cache };
+  return { render, fetchFees, peekFees, sections, fmtSigned, _cache: cache };
 })();

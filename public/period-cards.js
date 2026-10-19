@@ -149,6 +149,12 @@
 
   // ── Card rendering ──────────────────────────────────────────────────────────
   const expandState = {};
+  // Sellerboard-style per-type drill-downs on cost rows (Mike, 2026-10-19):
+  // `${cardKey}:${group}` → open. Data rides FeeBreakdown's /api/fees cache,
+  // fetched lazily per card range on first expand.
+  const feeSubState = {};
+  let lastRender = null;
+  const rerenderLast = () => { if (lastRender) render(lastRender.el, lastRender.ctx); };
   function money(v, { signCost = false } = {}) {
     const M = window.MpScope;
     if (v == null) return '<span style="color:var(--text-3)">—</span>';
@@ -183,6 +189,41 @@
     }
     const est = met.estimated ? '~' : '';
     const ev = v => v == null ? money(v) : est + money(v);   // no tilde on a dash
+
+    // Expandable cost rows: chevron → the Sellerboard per-type split for this
+    // card's own range (ads / fees / refunds / cogs), like Sellerboard's
+    // dashboard panel. Plain rows when FeeBreakdown isn't loaded or the card
+    // has no range (forecast).
+    const feeable = !!(window.FeeBreakdown && opts.feeRange && key !== 'forecast');
+    const feeSubHtml = group => {
+      const FB = window.FeeBreakdown;
+      const d = FB.peekFees(opts.feeRange.from, opts.feeRange.to, opts.brandId);
+      let inner;
+      if (!d) {
+        FB.fetchFees(opts.feeRange.from, opts.feeRange.to, opts.brandId).then(rerenderLast).catch(rerenderLast);
+        inner = '<p class="text-[10px] py-1" style="color:var(--text-3)">loading…</p>';
+      } else {
+        const secs = FB.sections(d);
+        const rows = secs[group] || [];
+        inner = !secs.hasSb
+          ? '<p class="text-[10px] py-1" style="color:var(--text-3)">no Sellerboard rows for this range yet</p>'
+          : !rows.length
+            ? '<p class="text-[10px] py-1" style="color:var(--text-3)">nothing in this range</p>'
+            : rows.map(r => `<div class="flex items-center justify-between gap-2 py-0.5">
+                <span class="text-[11px]" style="color:var(--text-2)">${r.label}</span>
+                <span class="text-[11px] font-medium">${FB.fmtSigned(r.v)}</span>
+              </div>`).join('');
+      }
+      return `<div class="col-span-2 pl-3" style="border-left:2px solid var(--border,#1f2937)">${inner}</div>`;
+    };
+    const feeRow = (group, lbl, valHtml, color) => {
+      if (!feeable) return row(lbl, valHtml, color);
+      const openSub = !!feeSubState[`${key}:${group}`];
+      return `<div><button class="pc-fee-toggle w-full text-left" data-key="${key}" data-group="${group}" title="Sellerboard per-type split for this period">
+          <p class="text-xs flex items-center gap-1" style="color:var(--text-3)">${lbl}<span style="font-size:8px">${openSub ? '▾' : '▸'}</span></p>
+          <p class="text-sm font-semibold" style="color:${color || 'var(--text)'}">${valHtml}</p>
+        </button></div>${openSub ? feeSubHtml(group) : ''}`;
+    };
     const payout = met.fees != null ? met.sales - met.fees - met.refundAmount - met.adSpend - (met.promo || 0) : null;
     const npColor = met.netProfit == null ? undefined : met.netProfit >= 0 ? '#34d399' : '#f87171';
     const margin = met.netProfit != null && met.sales > 0 ? (met.netProfit / met.sales * 100).toFixed(1) + '%' : '—';
@@ -190,10 +231,10 @@
     const open = !!expandState[key];
     const more = open ? `
       <div class="grid grid-cols-2 gap-x-4 gap-y-2 pt-2" style="border-top:1px solid var(--border,#1f2937)">
-        ${row('Amazon fees', met.fees == null ? money(null) : est + money(met.fees, { signCost: true }), met.fees > 0 ? '#f87171' : undefined)}
-        ${row('Cost of goods', money(met.cogs, { signCost: true }) + (met.cogsOk ? '' : '<span class="text-xs" style="color:var(--text-3)"> ?</span>'), met.cogs > 0 ? '#f87171' : undefined)}
+        ${feeRow('fees', 'Amazon fees', met.fees == null ? money(null) : est + money(met.fees, { signCost: true }), met.fees > 0 ? '#f87171' : undefined)}
+        ${feeRow('cogs', 'Cost of goods', money(met.cogs, { signCost: true }) + (met.cogsOk ? '' : '<span class="text-xs" style="color:var(--text-3)"> ?</span>'), met.cogs > 0 ? '#f87171' : undefined)}
         ${row('Promo', money(met.promo || 0, { signCost: true }), met.promo > 0 ? '#f87171' : undefined)}
-        ${row('Refund value', money(met.refundAmount, { signCost: true }), met.refundAmount > 0 ? '#f87171' : undefined)}
+        ${feeRow('refunds', 'Refund value', money(met.refundAmount, { signCost: true }), met.refundAmount > 0 ? '#f87171' : undefined)}
         ${row('Margin', margin)}
         ${row('ROI', roi)}
       </div>` : '';
@@ -211,7 +252,7 @@
               + ((met.units || 0) > 0 ? ` <span class="text-xs" style="color:var(--text-3)">· ${((met.refundUnits || 0) / met.units * 100).toFixed(1)}%</span>` : ''))}
         </div>
         <div class="grid grid-cols-2 gap-x-4 gap-y-2 pt-2" style="border-top:1px solid var(--border,#1f2937)">
-          ${row('Adv. cost', money(met.adSpend, { signCost: true }), met.adSpend > 0 ? '#f87171' : undefined)}
+          ${feeRow('ads', 'Adv. cost', money(met.adSpend, { signCost: true }), met.adSpend > 0 ? '#f87171' : undefined)}
           ${row('Est. payout', ev(payout))}
           ${row('Gross profit', ev(met.netProfit), npColor)}
           ${row('Net profit', ev(met.netProfit), npColor)}
@@ -231,15 +272,31 @@
   // them: clicking one calls back with its key, activeKey() marks the ring.
   function render(el, ctx) {
     if (!el) return;
+    lastRender = { el, ctx };
     const sel = selection();
     const presets = ctx.presets() || {};
     const brandsMeta = ctx.brands() || [];
     const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
     const pickable = typeof ctx.onSelect === 'function';
     const activeKey = pickable && ctx.activeKey ? ctx.activeKey() : null;
-    const opts = key => ({ selectable: pickable && key !== 'forecast', active: key === activeKey, inPicker: pickable });
+    const brandId = ctx.scopeBrandId || null;
+    const rangeOf = key => {
+      if (key === 'today') return { from: todayStr, to: todayStr };
+      if (key === 'forecast') return null;
+      const p = presets[key];
+      return p ? { from: p.startDate, to: p.endDate } : null;
+    };
+    const opts = key => ({ selectable: pickable && key !== 'forecast', active: key === activeKey, inPicker: pickable, feeRange: rangeOf(key), brandId });
     const grid = html => `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-${Math.min(sel.tiles.length, 5)} gap-3">${html}</div>`;
-    const bindMore = () => el.querySelectorAll('.pc-more').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); expandState[b.dataset.key] = !expandState[b.dataset.key]; render(el, ctx); }));
+    const bindMore = () => {
+      el.querySelectorAll('.pc-more').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); expandState[b.dataset.key] = !expandState[b.dataset.key]; render(el, ctx); }));
+      el.querySelectorAll('.pc-fee-toggle').forEach(b => b.addEventListener('click', e => {
+        e.stopPropagation();
+        const k = `${b.dataset.key}:${b.dataset.group}`;
+        feeSubState[k] = !feeSubState[k];
+        render(el, ctx);
+      }));
+    };
 
     // Custom range active (Mike, 2026-09-22): the tiles collapse to ONE card
     // — the custom range itself, in the leftmost slot at tile width, ringed
@@ -251,7 +308,7 @@
         // c.key lets a preset that isn't one of the tiles (brand page's
         // dropdown can pick e.g. last60d) collapse under its own label.
         const met = c.payload ? aggregate(c.payload, brandsMeta, ctx.scopeBrandId) : null;
-        el.innerHTML = grid(cardHtml(c.key || 'custom', met, fmtRange(c.from, c.to), 0, met ? null : 'loading…', { active: true }));
+        el.innerHTML = grid(cardHtml(c.key || 'custom', met, fmtRange(c.from, c.to), 0, met ? null : 'loading…', { active: true, feeRange: { from: c.from, to: c.to }, brandId }));
         bindMore();
         return;
       }
