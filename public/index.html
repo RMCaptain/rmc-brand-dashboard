@@ -1119,6 +1119,34 @@
         </tr>`;
       }).join('');
 
+      // Grand Total across ALL product rows in scope (every page).
+      const pt = sorted.reduce((t, s) => {
+        t.units += s.units || 0; t.rev += s.revenue || 0; t.inv += s.inventory || 0;
+        t.cogs += (s.costPerUnit > 0 ? s.totalCogsDisp : 0) || 0;
+        t.ads += s.adSpend || 0;
+        if (s.fees != null) { t.fees = (t.fees ?? 0) + s.fees; if (s.feesEstimated) t.est = true; }
+        if (s.netProfit != null) t.np = (t.np ?? 0) + s.netProfit;
+        else if ((s.revenue || 0) > 0) t.npPartial = true;
+        return t;
+      }, { units: 0, rev: 0, inv: 0, cogs: 0, fees: null, ads: 0, np: null, est: false, npPartial: false });
+      const ptMargin = pt.np != null && pt.rev > 0 ? (pt.np / pt.rev) * 100 : null;
+      const ptTilde = (pt.est || pt.npPartial) ? '~' : '';
+      const ptNpColor = pt.np == null ? 'text-slate-600' : pt.np > 0 ? 'text-emerald-400' : pt.np < 0 ? 'text-red-400' : 'text-slate-400';
+      tbody.innerHTML += `<tr style="border-top:2px solid var(--border-hi,#2a3650)">
+        <td class="px-4 py-3 font-semibold" style="color:var(--text)">Grand Total</td>
+        <td class="px-4 py-3 text-right font-semibold" style="color:var(--text)">${pt.units.toLocaleString()}</td>
+        <td class="px-4 py-3 text-right font-semibold" style="color:var(--text)">${fmtN(pt.rev)}</td>
+        <td class="px-4 py-3 text-right text-slate-600">—</td>
+        <td class="px-4 py-3 text-right text-slate-600">—</td>
+        <td class="px-4 py-3 text-right font-semibold text-slate-300">${pt.inv.toLocaleString()}</td>
+        <td class="px-4 py-3 text-right text-slate-600">—</td>
+        <td class="px-4 py-3 text-right font-semibold ${pt.cogs > 0 ? 'text-slate-300' : 'text-slate-600'}">${pt.cogs > 0 ? fmtN(pt.cogs) : '—'}</td>
+        <td class="px-4 py-3 text-right font-semibold ${pt.fees != null ? 'text-slate-300' : 'text-slate-600'}">${pt.fees != null ? (pt.est ? '~' : '') + fmtN(pt.fees) : '—'}</td>
+        <td class="px-4 py-3 text-right font-semibold ${pt.ads > 0 ? 'text-slate-300' : 'text-slate-600'}">${pt.ads > 0 ? fmtN(pt.ads) : '—'}</td>
+        <td class="px-4 py-3 text-right font-semibold ${ptNpColor}" title="${pt.npPartial ? 'Excludes products without profit data for this period' : ''}">${pt.np != null ? ptTilde + (pt.np < 0 ? '-' : '') + fmtN(pt.np) : '—'}</td>
+        <td class="px-4 py-3 text-right font-semibold ${ptMargin != null ? (ptMargin >= 0 ? 'text-emerald-400' : 'text-red-400') : 'text-slate-600'}">${ptMargin != null ? ptTilde + ptMargin.toFixed(1) + '%' : '—'}</td>
+      </tr>`;
+
       renderPaginationControls('productPagination', productPage, totalPages, 'setProductPage');
       updateSortIndicators();
     }
@@ -1353,6 +1381,36 @@
           <td class="px-4 py-3 text-right ${buyBox >= 90 ? 'text-emerald-400' : buyBox >= 70 ? 'text-amber-400' : buyBox != null ? 'text-red-400' : 'text-slate-600'}">${buyBox != null ? buyBox.toFixed(1) + '%' : '—'}</td>
         </tr>`;
       }).join('');
+
+      // Grand Total across ALL brands in scope (not just the visible page) —
+      // Sellerboard-style footer row (Mike, 2026-10-22). Net profit sums the
+      // brands that have one; '~' + tooltip when some are uncovered.
+      const gt = brandItems.reduce((t, it) => {
+        if (!it.s) return t;
+        t.rev += it.rev || 0; t.units += it.units || 0; t.cogs += it.cogsNum || 0;
+        t.ads += it.adSpend || 0;
+        if (it.fees != null) { t.fees = (t.fees ?? 0) + it.fees; if (it.feesEstimated) t.est = true; }
+        if (it.netProfit != null) t.np = (t.np ?? 0) + it.netProfit;
+        else if ((it.rev || 0) > 0) t.npPartial = true;
+        if (it.sessions != null) t.sessions = (t.sessions ?? 0) + it.sessions;
+        return t;
+      }, { rev: 0, units: 0, cogs: 0, fees: null, ads: 0, np: null, sessions: null, est: false, npPartial: false });
+      const gtMargin = gt.np != null && gt.rev > 0 ? (gt.np / gt.rev) * 100 : null;
+      const gtTilde = (gt.est || gt.npPartial) ? '~' : '';
+      const gtNpColor = gt.np == null ? 'text-slate-600' : gt.np > 0 ? 'text-emerald-400' : gt.np < 0 ? 'text-red-400' : 'text-slate-400';
+      const gtTitle = gt.npPartial ? 'Excludes brands without profit data for this period' : '';
+      tbody.innerHTML += `<tr style="border-top:2px solid var(--border-hi,#2a3650)">
+        <td class="px-5 py-3 font-semibold" style="color:var(--text)">Grand Total</td>
+        <td class="px-4 py-3 text-right font-semibold" style="color:var(--text)">${fmtDisplay(gt.rev)}</td>
+        <td class="px-4 py-3 text-right font-semibold" style="color:var(--text)">${gt.units.toLocaleString()}</td>
+        <td class="px-4 py-3 text-right font-semibold ${gt.cogs > 0 ? 'text-slate-300' : 'text-slate-600'}">${gt.cogs > 0 ? fmtDisplay(gt.cogs) : '—'}</td>
+        <td class="px-4 py-3 text-right font-semibold ${gt.fees != null ? 'text-slate-300' : 'text-slate-600'}">${gt.fees != null ? (gt.est ? '~' : '') + fmtDisplay(gt.fees) : '—'}</td>
+        <td class="px-4 py-3 text-right font-semibold ${gt.ads > 0 ? 'text-slate-300' : 'text-slate-600'}">${gt.ads > 0 ? fmtDisplay(gt.ads) : '—'}</td>
+        <td class="px-4 py-3 text-right font-semibold ${gtNpColor}" title="${gtTitle}">${gt.np != null ? gtTilde + fmtDisplay(gt.np) : '—'}</td>
+        <td class="px-4 py-3 text-right font-semibold ${gtMargin != null ? (gtMargin > 0 ? 'text-emerald-400' : 'text-red-400') : 'text-slate-600'}">${gtMargin != null ? gtTilde + gtMargin.toFixed(1) + '%' : '—'}</td>
+        <td class="px-4 py-3 text-right font-semibold text-slate-300">${gt.sessions != null ? gt.sessions.toLocaleString() : '—'}</td>
+        <td class="px-4 py-3 text-right text-slate-600">—</td>
+      </tr>`;
 
       renderPaginationControls('brandPagination', brandPage, brandTotalPages, 'setBrandPage');
       updateBrandSortIndicators();
