@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PPC — RMC Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" integrity="sha384-e6nUZLBkQ86NJ6TVVKAeSaK8jWa3NhkYWZFomE39AvDbQWeie9PlQqM3pmYW5d1g" crossorigin="anonymous"></script>
+  <script src="/mobile-nav.js" defer></script>
+  <script src="/mp-scope.js"></script>
+</head>
+<body class="min-h-screen">
+
+  <!-- Nav -->
+  <nav class="rmc-nav">
+    <div class="max-w-screen-2xl mx-auto px-8 py-5 flex items-center justify-between">
+      <div class="flex items-center gap-6">
+        <a href="/" class="nav-logo">
+          <img src="/rmc-logo.png" alt="RMC" />
+        </a>
+        <div class="flex gap-1">
+          <a href="/" class="nav-link">Dashboard</a>
+          <a href="/brands.html" class="nav-link">Brands</a>
+          <a href="/products.html" class="nav-link">Products</a>
+          <a href="/ppc.html" class="nav-link active">PPC</a>
+          <a href="/po.html" class="nav-link">PO Builder</a>
+          <a href="/reports.html" class="nav-link">Reporting</a>
+        </div>
+      </div>
+      <div class="flex items-center gap-3">
+        <div class="cur-toggle">
+          <button id="toggleCAD" onclick="setCurrency('CAD')" class="cur-btn">CAD</button>
+          <button id="toggleUSD" onclick="setCurrency('USD')" class="cur-btn">USD</button>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <div class="max-w-screen-2xl mx-auto px-6 py-6">
+
+    <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+      <div>
+        <h1 class="text-lg font-semibold" style="color:var(--text)">PPC Performance</h1>
+        <p class="text-xs mt-0.5" style="color:var(--text-3)">Sponsored Products + Brands + Display across the account. SP sales on the console's 7-day attribution.</p>
+      </div>
+      <div class="flex items-center gap-2 mobile-wrap">
+        <select id="presetSelect" onchange="onPresetChange(this.value)" class="rmc-select" style="width:auto;min-width:140px;color-scheme:dark">
+          <option value="yesterday">Yesterday</option>
+          <option value="last7d">Last 7 Days</option>
+          <option value="last14d">Last 14 Days</option>
+          <option value="last30d">Last 30 Days</option>
+          <option value="last60d">Last 60 Days</option>
+          <option value="last90d">Last 90 Days</option>
+          <option value="mtd">Month to Date</option>
+          <option value="lastMonth">Last Month</option>
+          <option value="ytd">Year to Date</option>
+          <option value="custom">Custom Range…</option>
+        </select>
+        <div id="customDateRow" class="hidden flex items-center gap-2">
+          <input type="date" id="customFrom" class="rmc-input" style="padding:6px 8px;font-size:12px;width:132px;color-scheme:dark" />
+          <span style="color:var(--text-3)">–</span>
+          <input type="date" id="customTo" class="rmc-input" style="padding:6px 8px;font-size:12px;width:132px;color-scheme:dark" />
+          <button onclick="applyCustomRange()" class="preset-btn active">Apply</button>
+        </div>
+        <span id="rangeLabel" class="text-xs" style="color:var(--text-3)"></span>
+      </div>
+    </div>
+
+    <p id="scopeNote" class="hidden text-xs mb-4" style="color:var(--warn,#f59e0b)">Amazon Ads run on the CA and US profiles only — this marketplace has no PPC data.</p>
+
+    <!-- KPI tiles -->
+    <div id="kpiRow" class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6"></div>
+
+    <!-- Charts: one axis each (money bars; ACOS strip below shares the days) -->
+    <div class="rmc-card p-4 mb-3">
+      <p class="text-xs font-semibold mb-2" style="color:var(--text-3)">AD SPEND VS PPC SALES — DAILY</p>
+      <div style="height:240px"><canvas id="spendChart"></canvas></div>
+    </div>
+    <div class="rmc-card p-4 mb-6">
+      <p class="text-xs font-semibold mb-2" style="color:var(--text-3)">ACOS % — DAILY</p>
+      <div style="height:110px"><canvas id="acosChart"></canvas></div>
+    </div>
+
+    <!-- Tables -->
+    <div class="rmc-card overflow-hidden">
+      <div class="px-5 py-4 flex items-center justify-between flex-wrap gap-2" style="border-bottom:1px solid var(--border,#1f2937)">
+        <div class="view-switch">
+          <button onclick="setTab('brands')" id="tab-brands" class="view-tab active">By Brand</button>
+          <button onclick="setTab('campaigns')" id="tab-campaigns" class="view-tab">Campaigns</button>
+        </div>
+        <span id="tableNote" class="text-xs" style="color:var(--text-3)"></span>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-xs" id="ppcTable">
+          <thead id="ppcThead"></thead>
+          <tbody id="ppcTbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    // ── State ────────────────────────────────────────────────────────────────
+    let currency = localStorage.getItem('currency') || 'CAD';
+    let fxRate = { usdToCad: 1.38, cadToUsd: 0.724, toCad: { CAD: 1, USD: 1.38 } };
+    let activePreset = localStorage.getItem('ppcPreset') || 'last30d';
+    let customFrom = localStorage.getItem('customFrom') || '';
+    let customTo = localStorage.getItem('customTo') || '';
+    let activeTab = 'brands';
+    let ppcData = null;          // /api/ppc payload for the active range
+    let campaignData = null;     // /api/ppc/campaigns payload (window-fixed)
+    let brandsData = [];
+    let sortCol = 'spend', sortDir = -1;
+    let campSortCol = 'cost', campSortDir = -1;
+    let spendChart = null, acosChart = null;
+
+    // Validated series colors (dataviz palette check, dark surface #0e1524):
+    // spend #6FA03F (brand family), PPC sales #4F87DE. ACOS strip is a lone
+    // amber line on its own chart — never a second axis on the money chart.
+    const C_SPEND = '#6FA03F', C_SALES = '#4F87DE', C_ACOS = '#d9a23c';
+
+    // ── Date helpers (PST, matching the rest of the app) ─────────────────────
+    function pstDateStr(date = new Date()) {
+      return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(date);
+    }
+    function pstSubtractDays(pstDate, days) {
+      const [y, m, d] = pstDate.split('-').map(Number);
+      return new Date(Date.UTC(y, m - 1, d - days)).toISOString().split('T')[0];
+    }
+    function getPresetRange(key) {
+      const today = pstDateStr();
+      const yest = pstSubtractDays(today, 1);
+      const [ty, tm] = today.split('-').map(Number);
+      switch (key) {
+        case 'yesterday': return { from: yest, to: yest };
+        case 'last7d':    return { from: pstSubtractDays(yest, 6), to: yest };
+        case 'last14d':   return { from: pstSubtractDays(yest, 13), to: yest };
+        case 'last30d':   return { from: pstSubtractDays(yest, 29), to: yest };
+        case 'last60d':   return { from: pstSubtractDays(yest, 59), to: yest };
+        case 'last90d':   return { from: pstSubtractDays(yest, 89), to: yest };
+        case 'mtd':       return { from: `${String(ty).padStart(4, '0')}-${String(tm).padStart(2, '0')}-01`, to: yest };
+        case 'lastMonth': {
+          const lmY = tm === 1 ? ty - 1 : ty, lmM = tm === 1 ? 12 : tm - 1;
+          return { from: `${String(lmY).padStart(4, '0')}-${String(lmM).padStart(2, '0')}-01`, to: pstSubtractDays(`${String(ty).padStart(4, '0')}-${String(tm).padStart(2, '0')}-01`, 1) };
+        }
+        case 'ytd':       return { from: `${String(ty).padStart(4, '0')}-01-01`, to: yest };
+        case 'custom':    return (customFrom && customTo) ? { from: customFrom, to: customTo } : null;
+        default:          return null;
+      }
+    }
+
+    // ── Scope + money (ads live on CA/US only) ───────────────────────────────
+    const mpF = () => MpScope.filter();
+    const adScoped = () => mpF() !== 'all' && mpF() !== 'CA' && mpF() !== 'US';
+    // {xCad, xUsd} pair → display currency under the marketplace filter.
+    function val(cad, usd) {
+      const useCad = mpF() === 'all' || mpF() === 'CA';
+      const useUsd = mpF() === 'all' || mpF() === 'US';
+      return (useCad ? MpScope.toDisplay(cad || 0, 'CAD') : 0) + (useUsd ? MpScope.toDisplay(usd || 0, 'USD') : 0);
+    }
+    const fmt = v => MpScope.fmt(v);
+    const pct = (num, den, digits = 2) => den > 0 ? (num / den * 100).toFixed(digits) + '%' : '—';
+
+    function slotVals(slot) {
+      return { spend: val(slot.spendCad, slot.spendUsd), sales: val(slot.salesCad, slot.salesUsd), clicks: slot.clicks || 0, impressions: slot.impressions || 0, orders: slot.orders || 0 };
+    }
+    function brandRow(b) {
+      const sp = slotVals(b.sp), sb = slotVals(b.sb), sd = slotVals(b.sd);
+      const spend = sp.spend + sb.spend + sd.spend;
+      const sales = sp.sales + sb.sales + sd.sales;
+      const clicks = sp.clicks + sb.clicks + sd.clicks;
+      const impressions = sp.impressions + sb.impressions + sd.impressions;
+      const orders = sp.orders + sb.orders + sd.orders;
+      const rev = val(b.revCad, b.revUsd);
+      return {
+        brandId: b.brandId, spend, sales, clicks, impressions, orders, rev,
+        units: b.ppcUnits || 0,
+        cpc: clicks > 0 ? spend / clicks : null,
+        cpo: orders > 0 ? spend / orders : null,
+        ctr: impressions > 0 ? clicks / impressions * 100 : null,
+        cvr: clicks > 0 ? orders / clicks * 100 : null,
+        acos: sales > 0 ? spend / sales * 100 : null,
+        roas: spend > 0 ? sales / spend : null,
+        tacos: rev > 0 ? spend / rev * 100 : null,
+        spSpend: sp.spend, sbSpend: sb.spend, sdSpend: sd.spend,
+      };
+    }
+
+    // ── Render ───────────────────────────────────────────────────────────────
+    function renderAll() {
+      document.getElementById('scopeNote').classList.toggle('hidden', !adScoped());
+      renderKpis();
+      renderCharts();
+      renderTable();
+    }
+
+    function renderKpis() {
+      const el = document.getElementById('kpiRow');
+      if (!ppcData || adScoped()) { el.innerHTML = ''; return; }
+      const rows = ppcData.brands.map(brandRow);
+      const t = rows.reduce((a, r) => ({
+        spend: a.spend + r.spend, sales: a.sales + r.sales, clicks: a.clicks + r.clicks,
+        impressions: a.impressions + r.impressions, orders: a.orders + r.orders, rev: a.rev + r.rev, units: a.units + r.units,
+        sp: a.sp + r.spSpend, sb: a.sb + r.sbSpend, sd: a.sd + r.sdSpend,
+      }), { spend: 0, sales: 0, clicks: 0, impressions: 0, orders: 0, rev: 0, units: 0, sp: 0, sb: 0, sd: 0 });
+      const tile = (lbl, v, sub, color) => `<div class="rmc-card p-3">
+        <p class="text-xs mb-0.5" style="color:var(--text-3)">${lbl}</p>
+        <p class="text-lg font-bold" style="color:${color || 'var(--text)'}">${v}</p>
+        ${sub ? `<p class="text-[10px] mt-0.5" style="color:var(--text-3)">${sub}</p>` : ''}
+      </div>`;
+      el.innerHTML = [
+        tile('PPC Sales', fmt(t.sales), `${t.orders.toLocaleString()} orders · ${t.units.toLocaleString()} units (SB attr.)`),
+        tile('Ad Spend', fmt(t.spend), `SP ${fmt(t.sp)} · SB ${fmt(t.sb)} · SD ${fmt(t.sd)}`, '#f87171'),
+        tile('ACOS', pct(t.spend, t.sales), `ROAS ${t.spend > 0 ? (t.sales / t.spend).toFixed(2) : '—'}`),
+        tile('TACOS', pct(t.spend, t.rev), `total sales ${fmt(t.rev)}`),
+        tile('CPC', t.clicks > 0 ? fmt(t.spend / t.clicks) : '—', `CTR ${pct(t.clicks, t.impressions)} · CVR ${pct(t.orders, t.clicks, 1)} · ${t.clicks.toLocaleString()} clicks`),
+      ].join('');
+    }
+
+    function renderCharts() {
+      const days = (ppcData?.daily || []);
+      const labels = days.map(d => d.date.slice(5));
+      const spend = days.map(d => val(d.spendCad, d.spendUsd));
+      const sales = days.map(d => val(d.salesCad, d.salesUsd));
+      const acos = days.map((d, i) => sales[i] > 0 ? spend[i] / sales[i] * 100 : null);
+      const gridColor = 'rgba(255,255,255,0.05)';
+      const tickColor = '#7B8FAF';
+      if (spendChart) spendChart.destroy();
+      if (acosChart) acosChart.destroy();
+      if (!window.Chart || !days.length || adScoped()) return;
+      spendChart = new Chart(document.getElementById('spendChart'), {
+        type: 'bar',
+        data: { labels, datasets: [
+          { label: 'Ad spend', data: spend, backgroundColor: C_SPEND, borderRadius: 4, maxBarThickness: 18 },
+          { label: 'PPC sales', data: sales, backgroundColor: C_SALES, borderRadius: 4, maxBarThickness: 18 },
+        ] },
+        options: {
+          responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+          plugins: { legend: { labels: { color: tickColor, boxWidth: 10, boxHeight: 10 } },
+            tooltip: { callbacks: { label: c => `${c.dataset.label}: ${fmt(c.parsed.y)}` } } },
+          scales: {
+            x: { grid: { display: false }, ticks: { color: tickColor, maxTicksLimit: 16 } },
+            y: { grid: { color: gridColor }, ticks: { color: tickColor, callback: v => MpScope.curSym() + v.toLocaleString() } },
+          },
+        },
+      });
+      acosChart = new Chart(document.getElementById('acosChart'), {
+        type: 'line',
+        data: { labels, datasets: [{ label: 'ACOS', data: acos, borderColor: C_ACOS, borderWidth: 2, pointRadius: 2, pointHoverRadius: 5, tension: 0.25, spanGaps: true }] },
+        options: {
+          responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+          plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `ACOS: ${c.parsed.y == null ? '—' : c.parsed.y.toFixed(1) + '%'}` } } },
+          scales: {
+            x: { grid: { display: false }, ticks: { color: tickColor, maxTicksLimit: 16 } },
+            y: { grid: { color: gridColor }, ticks: { color: tickColor, callback: v => v + '%' } },
+          },
+        },
+      });
+    }
+
+    const th = (lbl, col, right = true) => `<th class="sortable-th ${right ? 'text-right' : 'text-left'} cursor-pointer select-none hover:text-white px-3 py-2" onclick="sortBy('${col}')" style="color:var(--text-3)">${lbl}${sortCol === col ? (sortDir < 0 ? ' ↓' : ' ↑') : ''}</th>`;
+    function sortBy(col) { if (activeTab === 'brands') { sortDir = sortCol === col ? -sortDir : -1; sortCol = col; } else { campSortDir = campSortCol === col ? -campSortDir : -1; campSortCol = col; } renderTable(); }
+
+    function renderTable() {
+      if (activeTab === 'brands') renderBrandTable(); else renderCampaignTable();
+    }
+
+    function renderBrandTable() {
+      document.getElementById('tableNote').textContent = '';
+      const thead = document.getElementById('ppcThead'), tbody = document.getElementById('ppcTbody');
+      if (!ppcData || adScoped()) { thead.innerHTML = ''; tbody.innerHTML = '<tr><td class="px-4 py-6 text-center" style="color:var(--text-3)">No PPC data for this scope.</td></tr>'; return; }
+      const nameOf = id => (brandsData.find(b => b.id === id) || {}).name || id;
+      const colorOf = id => (brandsData.find(b => b.id === id) || {}).color || '#64748b';
+      const rows = ppcData.brands.map(brandRow).filter(r => r.spend > 0 || r.sales > 0);
+      rows.sort((a, b) => {
+        if (sortCol === 'name') return sortDir * nameOf(a.brandId).localeCompare(nameOf(b.brandId));
+        const av = a[sortCol] ?? -Infinity, bv = b[sortCol] ?? -Infinity;
+        return sortDir * (av < bv ? -1 : av > bv ? 1 : 0);
+      });
+      thead.innerHTML = `<tr style="border-bottom:1px solid var(--border,#1f2937)">
+        ${th('Brand', 'name', false)}${th('Ad Spend', 'spend')}${th('Clicks', 'clicks')}${th('Impr.', 'impressions')}${th('CTR', 'ctr')}${th('Orders', 'orders')}${th('CVR', 'cvr')}${th('CPC', 'cpc')}${th('Cost/Order', 'cpo')}${th('PPC Sales', 'sales')}${th('PPC Units', 'units')}${th('Total Sales', 'rev')}${th('TACOS', 'tacos')}${th('ACOS', 'acos')}${th('ROAS', 'roas')}
+      </tr>`;
+      const acosColor = v => v == null ? 'var(--text-3)' : v <= 15 ? '#34d399' : v <= 30 ? '#fbbf24' : '#f87171';
+      tbody.innerHTML = rows.map(r => `<tr class="brand-row cursor-pointer" style="border-bottom:1px solid var(--border,#1f2937)" onclick="location.href='/brand.html?id=${r.brandId}'">
+        <td class="px-3 py-2.5"><span class="inline-block w-2 h-2 rounded-full mr-2" style="background:${colorOf(r.brandId)}"></span><span class="font-medium" style="color:var(--text)">${nameOf(r.brandId)}</span></td>
+        <td class="px-3 py-2.5 text-right" style="color:var(--text-2)" title="SP ${fmt(r.spSpend)} · SB ${fmt(r.sbSpend)} · SD ${fmt(r.sdSpend)}">${fmt(r.spend)}</td>
+        <td class="px-3 py-2.5 text-right" style="color:var(--text-2)">${r.clicks.toLocaleString()}</td>
+        <td class="px-3 py-2.5 text-right" style="color:var(--text-2)">${r.impressions.toLocaleString()}</td>
+        <td class="px-3 py-2.5 text-right" style="color:var(--text-2)">${r.ctr != null ? r.ctr.toFixed(2) + '%' : '—'}</td>
+        <td class="px-3 py-2.5 text-right" style="color:var(--text-2)">${r.orders.toLocaleString()}</td>
+        <td class="px-3 py-2.5 text-right" style="color:var(--text-2)">${r.cvr != null ? r.cvr.toFixed(1) + '%' : '—'}</td>
+        <td class="px-3 py-2.5 text-right" style="color:var(--text-2)">${r.cpc != null ? fmt(r.cpc) : '—'}</td>
+        <td class="px-3 py-2.5 text-right" style="color:var(--text-2)">${r.cpo != null ? fmt(r.cpo) : '—'}</td>
+        <td class="px-3 py-2.5 text-right font-medium" style="color:var(--text)">${fmt(r.sales)}</td>
+        <td class="px-3 py-2.5 text-right" style="color:var(--text-2)" title="PPC units per Sellerboard attribution">${r.units.toLocaleString()}</td>
+        <td class="px-3 py-2.5 text-right font-medium" style="color:var(--text)">${fmt(r.rev)}</td>
+        <td class="px-3 py-2.5 text-right" style="color:${acosColor(r.tacos)}">${r.tacos != null ? r.tacos.toFixed(2) + '%' : '—'}</td>
+        <td class="px-3 py-2.5 text-right" style="color:${acosColor(r.acos)}">${r.acos != null ? r.acos.toFixed(2) + '%' : '—'}</td>
+        <td class="px-3 py-2.5 text-right" style="color:var(--text-2)">${r.roas != null ? r.roas.toFixed(2) : '—'}</td>
+      </tr>`).join('');
+      // Grand Total
+      const t = rows.reduce((a, r) => ({ spend: a.spend + r.spend, sales: a.sales + r.sales, clicks: a.clicks + r.clicks, impressions: a.impressions + r.impressions, orders: a.orders + r.orders, rev: a.rev + r.rev, units: a.units + r.units }), { spend: 0, sales: 0, clicks: 0, impressions: 0, orders: 0, rev: 0, units: 0 });
+      tbody.innerHTML += `<tr style="border-top:2px solid var(--border-hi,#2a3650)">
+        <td class="px-3 py-2.5 font-semibold" style="color:var(--text)">Grand Total</td>
+        <td class="px-3 py-2.5 text-right font-semibold" style="color:var(--text)">${fmt(t.spend)}</td>
+        <td class="px-3 py-2.5 text-right font-semibold" style="color:var(--text)">${t.clicks.toLocaleString()}</td>
+        <td class="px-3 py-2.5 text-right font-semibold" style="color:var(--text)">${t.impressions.toLocaleString()}</td>
+        <td class="px-3 py-2.5 text-right font-semibold" style="color:var(--text)">${pct(t.clicks, t.impressions)}</td>
+        <td class="px-3 py-2.5 text-right font-semibold" style="color:var(--text)">${t.orders.toLocaleString()}</td>
+        <td class="px-3 py-2.5 text-right font-semibold" style="color:var(--text)">${pct(t.orders, t.clicks, 1)}</td>
+        <td class="px-3 py-2.5 text-right font-semibold" style="color:var(--text)">${t.clicks > 0 ? fmt(t.spend / t.clicks) : '—'}</td>
+        <td class="px-3 py-2.5 text-right font-semibold" style="color:var(--text)">${t.orders > 0 ? fmt(t.spend / t.orders) : '—'}</td>
+        <td class="px-3 py-2.5 text-right font-semibold" style="color:var(--text)">${fmt(t.sales)}</td>
+        <td class="px-3 py-2.5 text-right font-semibold" style="color:var(--text)">${t.units.toLocaleString()}</td>
+        <td class="px-3 py-2.5 text-right font-semibold" style="color:var(--text)">${fmt(t.rev)}</td>
+        <td class="px-3 py-2.5 text-right font-semibold" style="color:var(--text)">${pct(t.spend, t.rev)}</td>
+        <td class="px-3 py-2.5 text-right font-semibold" style="color:var(--text)">${pct(t.spend, t.sales)}</td>
+        <td class="px-3 py-2.5 text-right font-semibold" style="color:var(--text)">${t.spend > 0 ? (t.sales / t.spend).toFixed(2) : '—'}</td>
+      </tr>`;
+    }
+
+    function renderCampaignTable() {
+      const thead = document.getElementById('ppcThead'), tbody = document.getElementById('ppcTbody');
+      if (!campaignData) { thead.innerHTML = ''; tbody.innerHTML = '<tr><td class="px-4 py-6 text-center" style="color:var(--text-3)">Loading campaigns…</td></tr>'; return; }
+      let rows = campaignData.campaigns || [];
+      if (mpF() === 'CA' || mpF() === 'US') rows = rows.filter(c => c.profile === mpF());
+      else if (adScoped()) rows = [];
+      const w = rows[0]?.window;
+      document.getElementById('tableNote').textContent = w
+        ? `Sponsored Products · fixed trailing window ${w.start} → ${w.end} (search-term report) — not the page's period`
+        : 'Sponsored Products · trailing-30d search-term report window';
+      const cth = (lbl, col, right = true) => `<th class="sortable-th ${right ? 'text-right' : 'text-left'} cursor-pointer select-none hover:text-white px-3 py-2" onclick="sortBy('${col}')" style="color:var(--text-3)">${lbl}${campSortCol === col ? (campSortDir < 0 ? ' ↓' : ' ↑') : ''}</th>`;
+      rows = [...rows].sort((a, b) => {
+        if (campSortCol === 'name') return campSortDir * String(a.name || '').localeCompare(String(b.name || ''));
+        const av = a[campSortCol] ?? -Infinity, bv = b[campSortCol] ?? -Infinity;
+        return campSortDir * (av < bv ? -1 : av > bv ? 1 : 0);
+      });
+      thead.innerHTML = `<tr style="border-bottom:1px solid var(--border,#1f2937)">
+        ${cth('Campaign', 'name', false)}${cth('Profile', 'profile')}${cth('State', 'state', false)}${cth('Budget', 'budget')}${cth('Spend', 'cost')}${cth('Clicks', 'clicks')}${cth('Impr.', 'impressions')}${cth('Orders', 'orders')}${cth('Sales', 'sales')}${cth('ACOS', 'acosV')}${cth('ROAS', 'roasV')}
+      </tr>`;
+      // Spend/sales arrive in the profile's native currency — convert like everything else.
+      const conv = (v, profile) => MpScope.toDisplay(v || 0, profile === 'CA' ? 'CAD' : 'USD');
+      const acosColor = v => v == null ? 'var(--text-3)' : v <= 15 ? '#34d399' : v <= 30 ? '#fbbf24' : '#f87171';
+      for (const c of rows) {
+        c.costDisp = conv(c.cost, c.profile); c.salesDisp = conv(c.sales, c.profile);
+        c.acosV = c.salesDisp > 0 ? c.costDisp / c.salesDisp * 100 : null;
+        c.roasV = c.costDisp > 0 ? c.salesDisp / c.costDisp : null;
+      }
+      tbody.innerHTML = rows.map(c => `<tr style="border-bottom:1px solid var(--border,#1f2937)">
+        <td class="px-3 py-2.5" style="color:var(--text)"><span class="font-medium">${c.name || c.campaignId}</span>${(c.brands || []).length ? `<span class="ml-2 text-[10px]" style="color:var(--text-3)">${c.brands.join(', ')}</span>` : ''}</td>
+        <td class="px-3 py-2.5 text-right" style="color:var(--text-2)">${c.profile || '—'}</td>
+        <td class="px-3 py-2.5 ${c.state === 'enabled' ? 'text-emerald-400' : ''}" style="${c.state === 'enabled' ? '' : 'color:var(--text-3)'}">${c.state || '—'}</td>
+        <td class="px-3 py-2.5 text-right" style="color:var(--text-2)">${c.budget != null ? conv(Number(c.budget), c.profile).toFixed(0) : '—'}</td>
+        <td class="px-3 py-2.5 text-right" style="color:var(--text-2)">${fmt(c.costDisp)}</td>
+        <td class="px-3 py-2.5 text-right" style="color:var(--text-2)">${(c.clicks || 0).toLocaleString()}</td>
+        <td class="px-3 py-2.5 text-right" style="color:var(--text-2)">${(c.impressions || 0).toLocaleString()}</td>
+        <td class="px-3 py-2.5 text-right" style="color:var(--text-2)">${(c.orders || 0).toLocaleString()}</td>
+        <td class="px-3 py-2.5 text-right font-medium" style="color:var(--text)">${fmt(c.salesDisp)}</td>
+        <td class="px-3 py-2.5 text-right" style="color:${acosColor(c.acosV)}">${c.acosV != null ? c.acosV.toFixed(2) + '%' : '—'}</td>
+        <td class="px-3 py-2.5 text-right" style="color:var(--text-2)">${c.roasV != null ? c.roasV.toFixed(2) : '—'}</td>
+      </tr>`).join('') || '<tr><td class="px-4 py-6 text-center" style="color:var(--text-3)">No campaigns for this scope.</td></tr>';
+    }
+
+    function setTab(tab) {
+      activeTab = tab;
+      document.getElementById('tab-brands').classList.toggle('active', tab === 'brands');
+      document.getElementById('tab-campaigns').classList.toggle('active', tab === 'campaigns');
+      if (tab === 'campaigns' && !campaignData) {
+        fetch('/api/ppc/campaigns').then(r => r.json()).then(d => { campaignData = d; renderTable(); }).catch(() => { campaignData = { campaigns: [] }; renderTable(); });
+      }
+      renderTable();
+    }
+
+    // ── Period handling ──────────────────────────────────────────────────────
+    function onPresetChange(key) {
+      document.getElementById('customDateRow').classList.toggle('hidden', key !== 'custom');
+      if (key !== 'custom') setPreset(key);
+    }
+    function applyCustomRange() {
+      const from = document.getElementById('customFrom').value;
+      const to = document.getElementById('customTo').value;
+      if (!from || !to || from > to) return;
+      customFrom = from; customTo = to;
+      localStorage.setItem('customFrom', from); localStorage.setItem('customTo', to);
+      setPreset('custom');
+    }
+    function setPreset(key) {
+      activePreset = key;
+      localStorage.setItem('ppcPreset', key);
+      const sel = document.getElementById('presetSelect');
+      if (sel) sel.value = key;
+      const r = getPresetRange(key);
+      if (!r) return;
+      const fmtLabel = d => new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      document.getElementById('rangeLabel').textContent = r.from === r.to ? fmtLabel(r.from) : `${fmtLabel(r.from)} – ${fmtLabel(r.to)}`;
+      fetch(`/api/ppc?from=${r.from}&to=${r.to}`)
+        .then(res => res.json())
+        .then(d => { ppcData = d; renderAll(); })
+        .catch(e => { console.error(e); ppcData = null; renderAll(); });
+    }
+
+    function updateToggleUI() {
+      document.getElementById('toggleCAD').classList.toggle('active', currency === 'CAD');
+      document.getElementById('toggleUSD').classList.toggle('active', currency === 'USD');
+    }
+    function setCurrency(c) {
+      currency = c;
+      localStorage.setItem('currency', c);
+      updateToggleUI();
+      renderAll();
+    }
+
+    // ── Boot ─────────────────────────────────────────────────────────────────
+    async function load() {
+      const [fxRes, brandsRes, mps] = await Promise.all([
+        fetch('/api/fx').then(r => r.json()).catch(() => fxRate),
+        fetch('/api/brands').then(r => r.json()).catch(() => ({ brands: [] })),
+        fetch('/api/marketplaces').then(r => r.json()).catch(() => null),
+      ]);
+      fxRate = fxRes;
+      MpScope.init({
+        onChange: renderAll,
+        fx: () => fxRate, currency: () => currency,
+        datasets: () => [],
+      });
+      if (mps) MpScope.state.registry = mps;
+      brandsData = brandsRes.brands || [];
+      if (customFrom) document.getElementById('customFrom').value = customFrom;
+      if (customTo) document.getElementById('customTo').value = customTo;
+      if (activePreset === 'custom' && !(customFrom && customTo)) activePreset = 'last30d';
+      document.getElementById('customDateRow').classList.toggle('hidden', activePreset !== 'custom');
+      updateToggleUI();
+      setPreset(activePreset);
+    }
+    load();
+  </script>
+</body>
+</html>

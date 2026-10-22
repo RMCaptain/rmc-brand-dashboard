@@ -169,6 +169,27 @@ const near = (a, b, what) => assert.ok(Math.abs(a - b) <= 0.01, `${what}: ${a} v
     console.log('/api/fees: OK (account + brand scope)');
   }
 
+  // ── /api/ppc — PPC page data (SP from daily_metrics 7d-attr, SB/SD from daily_brand_ads) ──
+  {
+    const ppc = await fetch(`${BASE}/api/ppc?from=${from}&to=${to}`).then(r => r.json());
+    const ac = ppc.brands.find(b => b.brandId === 'acure');
+    near(ac.sp.spendCad, 12, 'ppc: acure SP spend');
+    near(ac.sp.salesCad, 32, 'ppc: acure SP sales (7d attr with 14d fallback)');
+    near(ac.sb.spendCad, 6, 'ppc: acure SB spend');
+    near(ac.sd.salesCad, 8, 'ppc: acure SD sales');
+    near(ac.revCad, 260, 'ppc: acure total revenue');
+    assert.strictEqual(ac.sb.clicks, 10, 'ppc: acure SB clicks');
+    const zl = ppc.brands.find(b => b.brandId === 'zellies');
+    near(zl.sp.spendUsd, 10, 'ppc: zellies US SP spend');
+    near(zl.sp.salesUsd, 40, 'ppc: zellies US SP sales');
+    const d2row = ppc.daily.find(d => d.date === pstSubtractDays(to, 1));
+    near(d2row.spendCad, 9, 'ppc daily: SP + SB spend summed');
+    near(d2row.salesCad, 38, 'ppc daily: SP + SB sales summed');
+    const camps = await fetch(`${BASE}/api/ppc/campaigns`).then(r => r.json());
+    assert.ok(Array.isArray(camps.campaigns), 'ppc campaigns: shape holds without seed data');
+    console.log('/api/ppc: OK');
+  }
+
   // ── report-render.js ──
   {
     const w = makeWindow({});

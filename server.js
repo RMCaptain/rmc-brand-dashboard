@@ -5703,6 +5703,158 @@ async function buildBrandReportDataset(brandId, query = {}) {
 // combined totals and TACOS per marketplace, mirroring the master sheet's
 // "ALL AD TYPES + TACOS" block (total ad spend ÷ total sales revenue).
 // Built for the PPC skills via the MCP get_brand_ads tool.
+// ── PPC performance page (Mike, 2026-10-22) ─────────────────────────────────
+// GET /api/ppc?from&to — daily ad series + per-brand PPC rollups across the
+// whole account, from the tables the existing syncs already fill:
+//   SP (+ total revenue): daily_metrics (7d attribution, console-matching)
+//   SB/SD:                daily_brand_ads
+//   PPC units:            sellerboard_daily.units_ppc
+// CA money rides *_cad, US rides *_usd (ads run on CA/US profiles only); the
+// client scopes/converts like every other page.
+const ppcCache = new Map();
+const PPC_CACHE_MS = 2 * 60 * 1000;
+app.get('/api/ppc', async (req, res) => {
+  try {
+    const to = req.query.to || pstDateStr();
+    const from = req.query.from || pstSubtractDays(to, 29);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) {
+      return res.status(400).json({ error: 'from/to must be YYYY-MM-DD with from <= to' });
+    }
+    const key = `${from}|${to}`;
+    const hit = ppcCache.get(key);
+    if (hit && Date.now() - hit.at < PPC_CACHE_MS) return res.json(hit.data);
+
+    const r2 = v => Math.round(v * 100) / 100;
+    const zero = () => ({ spendCad: 0, spendUsd: 0, salesCad: 0, salesUsd: 0, clicks: 0, impressions: 0, orders: 0 });
+    const dailyMap = {};
+    const dayAt = d => dailyMap[d] || (dailyMap[d] = { date: d, spendCad: 0, spendUsd: 0, salesCad: 0, salesUsd: 0, clicks: 0, orders: 0 });
+    const brandMap = {};
+    const brandAt = id => brandMap[id] || (brandMap[id] = { brandId: id, sp: zero(), sb: zero(), sd: zero(), revCad: 0, revUsd: 0, ppcUnits: 0 });
+
+    // SP + total revenue (paginated — a 30d account window is >1 page)
+    for (let off = 0; ; off += 1000) {
+      const { data, error } = await supabase.from('daily_metrics')
+        .select('date,brand_id,spend_cad,spend_usd,attributed_sales_cad,attributed_sales_usd,attributed_sales_7d_cad,attributed_sales_7d_usd,ad_clicks,ad_impressions,ad_orders,ad_orders_7d,revenue_cad,revenue_usd')
+        .gte('date', from).lte('date', to)
+        .order('date').order('asin').range(off, off + 999);
+      if (error) throw new Error(`daily_metrics read failed: ${error.message}`);
+      for (const r of (data || [])) {
+        const b = brandAt(r.brand_id || 'unknown-brand');
+        const sCad = Number(r.spend_cad || 0), sUsd = Number(r.spend_usd || 0);
+        const aCad = Number(r.attributed_sales_7d_cad ?? r.attributed_sales_cad ?? 0);
+        const aUsd = Number(r.attributed_sales_7d_usd ?? r.attributed_sales_usd ?? 0);
+        b.sp.spendCad += sCad; b.sp.spendUsd += sUsd;
+        b.sp.salesCad += aCad; b.sp.salesUsd += aUsd;
+        b.sp.clicks += Number(r.ad_clicks || 0);
+        b.sp.impressions += Number(r.ad_impressions || 0);
+        b.sp.orders += Number(r.ad_orders_7d ?? r.ad_orders ?? 0);
+        b.revCad += Number(r.revenue_cad || 0); b.revUsd += Number(r.revenue_usd || 0);
+        const d = dayAt(r.date);
+        d.spendCad += sCad; d.spendUsd += sUsd; d.salesCad += aCad; d.salesUsd += aUsd;
+        d.clicks += Number(r.ad_clicks || 0); d.orders += Number(r.ad_orders_7d ?? r.ad_orders ?? 0);
+      }
+      if (!data || data.length < 1000) break;
+    }
+
+    // SB + SD
+    for (let off = 0; ; off += 1000) {
+      const { data, error } = await supabase.from('daily_brand_ads')
+        .select('date,brand_id,ad_product,spend_cad,spend_usd,sales_cad,sales_usd,clicks,impressions,orders')
+        .gte('date', from).lte('date', to)
+        .order('date').order('brand_id').range(off, off + 999);
+      if (error) throw new Error(`daily_brand_ads read failed: ${error.message}`);
+      for (const r of (data || [])) {
+        const slot = r.ad_product === 'SB' ? 'sb' : r.ad_product === 'SD' ? 'sd' : null;
+        if (!slot) continue;
+        const e = brandAt(r.brand_id || 'unknown-brand')[slot];
+        e.spendCad += Number(r.spend_cad || 0); e.spendUsd += Number(r.spend_usd || 0);
+        e.salesCad += Number(r.sales_cad || 0); e.salesUsd += Number(r.sales_usd || 0);
+        e.clicks += Number(r.clicks || 0); e.impressions += Number(r.impressions || 0); e.orders += Number(r.orders || 0);
+        const d = dayAt(r.date);
+        d.spendCad += Number(r.spend_cad || 0); d.spendUsd += Number(r.spend_usd || 0);
+        d.salesCad += Number(r.sales_cad || 0); d.salesUsd += Number(r.sales_usd || 0);
+        d.clicks += Number(r.clicks || 0); d.orders += Number(r.orders || 0);
+      }
+      if (!data || data.length < 1000) break;
+    }
+
+    // PPC units (Sellerboard attribution — labeled as such in the UI)
+    for (let off = 0; ; off += 1000) {
+      const { data, error } = await supabase.from('sellerboard_daily')
+        .select('brand_id,units_ppc')
+        .gte('date', from).lte('date', to).gt('units_ppc', 0)
+        .order('date').order('sku').range(off, off + 999);
+      if (error) throw new Error(`sellerboard_daily read failed: ${error.message}`);
+      for (const r of (data || [])) brandAt(r.brand_id || 'unknown-brand').ppcUnits += Number(r.units_ppc || 0);
+      if (!data || data.length < 1000) break;
+    }
+
+    for (const b of Object.values(brandMap)) {
+      for (const slot of ['sp', 'sb', 'sd']) for (const k of ['spendCad', 'spendUsd', 'salesCad', 'salesUsd']) b[slot][k] = r2(b[slot][k]);
+      b.revCad = r2(b.revCad); b.revUsd = r2(b.revUsd);
+    }
+    const daily = Object.values(dailyMap).sort((a, b) => a.date < b.date ? -1 : 1)
+      .map(d => ({ ...d, spendCad: r2(d.spendCad), spendUsd: r2(d.spendUsd), salesCad: r2(d.salesCad), salesUsd: r2(d.salesUsd) }));
+
+    const data = { from, to, daily, brands: Object.values(brandMap) };
+    ppcCache.set(key, { data, at: Date.now() });
+    if (ppcCache.size > 30) { const oldest = [...ppcCache.entries()].sort((a, b) => a[1].at - b[1].at)[0]; ppcCache.delete(oldest[0]); }
+    res.json(data);
+  } catch (err) {
+    console.error('[ppc]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Campaign-level rollup: ads_search_terms aggregated per campaign (Sponsored
+// Products, the report's rolling ~30-day window — fixed regardless of the
+// page's selected range, and labeled so in the UI), joined with the structure
+// snapshot for state/budget/brands.
+app.get('/api/ppc/campaigns', async (req, res) => {
+  try {
+    const byCampaign = {};
+    for (let off = 0; off < 50000; off += 1000) {
+      const { data, error } = await supabase.from('ads_search_terms')
+        .select('profile,campaign_id,campaign_name,impressions,clicks,cost,orders,sales,report_start,report_end')
+        .order('id', { ascending: true }).range(off, off + 999);
+      if (error) throw new Error(error.message);
+      for (const r of (data || [])) {
+        if (!r.campaign_id) continue;
+        const c = byCampaign[r.campaign_id] || (byCampaign[r.campaign_id] = {
+          campaignId: r.campaign_id, name: r.campaign_name, profile: r.profile,
+          impressions: 0, clicks: 0, cost: 0, orders: 0, sales: 0,
+          window: { start: r.report_start, end: r.report_end },
+        });
+        c.impressions += Number(r.impressions || 0); c.clicks += Number(r.clicks || 0);
+        c.cost += Number(r.cost || 0); c.orders += Number(r.orders || 0); c.sales += Number(r.sales || 0);
+      }
+      if (!data || data.length < 1000) break;
+    }
+    // State/budget/brand mapping from the structure snapshot (best effort).
+    try {
+      const { brands } = await loadBrands();
+      const asinBrand = {};
+      for (const b of brands || []) for (const a of (b.asins || [])) asinBrand[a] = b.id;
+      const snapshots = await loadSnapshots(null);
+      for (const s of snapshots) {
+        const cbMap = campaignBrandMap(s.snapshot, asinBrand);
+        for (const c of (s.snapshot.campaigns || [])) {
+          const e = byCampaign[String(c.campaignId)];
+          if (!e) continue;
+          e.state = c.state; e.budget = c.budget;
+          e.brands = [...(cbMap[String(c.campaignId)] || [])];
+        }
+      }
+    } catch (e) { console.warn('[ppc/campaigns] snapshot join skipped:', e.message); }
+    const campaigns = Object.values(byCampaign).map(c => ({ ...c, cost: Math.round(c.cost * 100) / 100, sales: Math.round(c.sales * 100) / 100 }))
+      .sort((a, b) => b.cost - a.cost);
+    res.json({ count: campaigns.length, campaigns });
+  } catch (err) {
+    console.error('[ppc/campaigns]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/brand-ads/:brandId', async (req, res) => {
   try {
     const { brandId } = req.params;
