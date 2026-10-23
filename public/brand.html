@@ -696,11 +696,13 @@
       // Box/S&S) below. Tiles and the Period dropdown are two handles on the
       // same selection (see pcCtx below).
       const RED = '#f87171', GREEN = '#34d399';
-      const totalSns = Object.values(brand.asinSns || {}).reduce((a, b) => a + b, 0);
+      // Traffic + S&S follow the marketplace picker (2026-10-23).
+      const trf = MpScope.trafficOf(m);
+      const totalSns = MpScope.snsFor(brand);
       const opsTiles = [
-        tile('Sessions', m && !MpScope.scoped() ? (m.sessions || 0).toLocaleString() : '—', m?.avgCvr != null && !MpScope.scoped() ? 'CVR ' + m.avgCvr.toFixed(2) + '% · selected period' : (MpScope.scoped() ? 'not split by marketplace' : 'selected period')),
-        tile('Buy Box', m?.buyBox != null ? m.buyBox.toFixed(1) + '%' : '—', m?.buyBox != null ? 'avg over selected period' : null, m?.buyBox != null ? (m.buyBox >= 90 ? GREEN : m.buyBox >= 70 ? '#fbbf24' : RED) : undefined),
-        tile('S&S Subs', totalSns > 0 ? totalSns.toLocaleString() : '—', totalSns > 0 ? 'active subscribers' : null),
+        tile('Sessions', trf.sessions != null ? trf.sessions.toLocaleString() : '—', trf.cvr != null ? 'CVR ' + trf.cvr.toFixed(2) + '% · selected period' : (MpScope.scoped() && trf.sessions == null ? 'no per-marketplace rows in range' : 'selected period')),
+        tile('Buy Box', trf.buyBox != null ? trf.buyBox.toFixed(1) + '%' : '—', trf.buyBox != null ? 'avg over selected period' : null, trf.buyBox != null ? (trf.buyBox >= 90 ? GREEN : trf.buyBox >= 70 ? '#fbbf24' : RED) : undefined),
+        tile('S&S Subs', totalSns != null && totalSns > 0 ? totalSns.toLocaleString() : totalSns === 0 ? '0' : '—', totalSns > 0 ? 'active subscribers' : null),
       ];
       document.getElementById('summaryTiles').innerHTML =
         `<div id="brandPeriodCards" class="mb-3"></div>` +
@@ -839,7 +841,8 @@
 
       const statusColor = s.status === 'active' ? 'bg-emerald-900/40 text-emerald-400'
         : s.status === 'suppressed' ? 'bg-red-900/40 text-red-400' : 'bg-slate-700 text-slate-400';
-      const bbColor = s.buyBox == null ? 'text-slate-500' : s.buyBox >= 90 ? 'text-emerald-400' : s.buyBox >= 70 ? 'text-amber-400' : 'text-red-400';
+      const strf = MpScope.trafficOf(s);   // scoped Buy Box / CVR per marketplace
+      const bbColor = strf.buyBox == null ? 'text-slate-500' : strf.buyBox >= 90 ? 'text-emerald-400' : strf.buyBox >= 70 ? 'text-amber-400' : 'text-red-400';
 
       const velocity = calcVelocity(s.asin, brand.id);
       const leadTime = brand.leadTimes?.[s.asin] ?? null;
@@ -888,8 +891,8 @@
           : '<span class="text-xs text-slate-600">—</span>') + '</td>' +
         '<td class="px-4 py-3 text-right font-medium text-slate-100 cursor-pointer underline decoration-dotted decoration-slate-600" onmouseenter="showSalesPopup(event, \'' + s.asin + '\')" onmouseleave="hideSalesPopup()">' + MpScope.fmt(skuRev(s)) + '</td>' +
         '<td class="px-4 py-3 text-right text-slate-300">' + skuUnits(s) + '</td>' +
-        '<td class="px-4 py-3 text-right font-medium ' + bbColor + '">' + (s.buyBox != null ? s.buyBox.toFixed(1) + '%' : '—') + '</td>' +
-        '<td class="px-4 py-3 text-right text-slate-300">' + (s.cvr != null ? s.cvr.toFixed(2) + '%' : '—') + '</td>' +
+        '<td class="px-4 py-3 text-right font-medium ' + bbColor + '">' + (strf.buyBox != null ? strf.buyBox.toFixed(1) + '%' : '—') + '</td>' +
+        '<td class="px-4 py-3 text-right text-slate-300">' + (strf.cvr != null ? strf.cvr.toFixed(2) + '%' : '—') + '</td>' +
         (function() {
           const spendVal = skuSpend(s);
           const hasSpend = spendVal > 0;
@@ -932,7 +935,7 @@
           return '<td class="px-4 py-3"><div class="flex gap-1 flex-wrap">' + chips + '</div></td>';
         })() +
         (function() {
-          const subs = brand.asinSns?.[s.asin];
+          const subs = MpScope.snsFor(brand, s.asin);
           return '<td class="px-4 py-3 text-right text-sm font-medium ' + (subs > 0 ? 'text-slate-200' : 'text-slate-600') + '">' + (subs > 0 ? subs.toLocaleString() : '—') + '</td>';
         })() +
         '<td class="px-5 py-3 text-right text-slate-300 font-medium cursor-pointer underline decoration-dotted decoration-slate-600" onmouseenter="showInventoryPopup(event, \'' + s.asin + '\', ' + invJson + ')" onmouseleave="hideInventoryPopup()">' + invTotal + '</td>' +

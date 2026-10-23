@@ -307,6 +307,10 @@ async function saveSyncResults(syncBrands) {
     if (sb.asinPromos) fb.asinPromos = sb.asinPromos;
     if (sb.asinSns)   fb.asinSns   = sb.asinSns;
     if (sb.asinSnsRevenue) fb.asinSnsRevenue = sb.asinSnsRevenue;
+    // Per-marketplace S&S store — computed every sync since 2026-09 but
+    // dropped right here by the whitelist merge, which is why the S&S metric
+    // never reacted to the marketplace picker (found 2026-10-23).
+    if (sb.asinSnsByMp) fb.asinSnsByMp = sb.asinSnsByMp;
     if (sb.repeatPurchase) fb.repeatPurchase = sb.repeatPurchase;
     // SKU + marketplace maps are written by the listings phase of the sync —
     // they were silently dropped here for months (431/431 ASINs had no stored
@@ -3973,6 +3977,46 @@ async function buildBrandMetricsForRangeUncached(from, to, presetKey = null) {
       if (offset > 100000) { console.warn('[Metrics] Pagination safety cap hit'); break; }
     }
 
+    // ── Per-marketplace traffic (Mike, 2026-10-23: Buy Box / sessions / S&S
+    // didn't react to the marketplace picker). daily_metrics_mp carries
+    // sessions / page views / Buy Box as a real marketplace dimension — read
+    // it so byMp slices can carry scoped traffic. Amazon stays the only
+    // traffic source; days before the mp writer shipped simply have no rows,
+    // and the blended wide-row figures below remain the all-marketplaces view.
+    const trafficByAsin = {};   // asin → mp_id → { sessions, anySess, pageViews, bbSum, bbCount }
+    {
+      let off = 0;
+      while (true) {
+        const { data, error } = await supabase
+          .from('daily_metrics_mp')
+          .select('date,asin,mp_id,sessions,page_views,buy_box_pct')
+          .gte('date', from).lte('date', to)
+          .or('sessions.not.is.null,page_views.not.is.null,buy_box_pct.not.is.null')
+          .order('date', { ascending: true }).order('asin', { ascending: true }).order('mp_id', { ascending: true })
+          .range(off, off + PAGE - 1);
+        if (error) { console.warn('[Metrics] daily_metrics_mp traffic read failed (blended traffic only):', error.message); break; }
+        for (const r of (data || [])) {
+          const t = trafficByAsin[r.asin] || (trafficByAsin[r.asin] = {});
+          const e = t[r.mp_id] || (t[r.mp_id] = { sessions: 0, anySess: false, pageViews: 0, bbSum: 0, bbCount: 0 });
+          if (r.sessions != null) { e.sessions += Number(r.sessions) || 0; e.anySess = true; }
+          if (r.page_views != null) e.pageViews += Number(r.page_views) || 0;
+          if (r.buy_box_pct != null) { e.bbSum += Number(r.buy_box_pct) || 0; e.bbCount++; }
+        }
+        if (!data || data.length < PAGE) break;
+        off += PAGE;
+        if (off > 100000) { console.warn('[Metrics] traffic pagination safety cap hit'); break; }
+      }
+    }
+    const mpTrafficOf = (asin, mp) => {
+      const tr = trafficByAsin[asin]?.[mp];
+      if (!tr) return null;
+      return {
+        sessions: tr.anySess ? tr.sessions : null,
+        pageViews: tr.pageViews || null,
+        buyBox: tr.bbCount > 0 ? Math.round(tr.bbSum / tr.bbCount * 100) / 100 : null,
+      };
+    };
+
     // ── Source-of-truth resolution (sync/metricsResolver) ──────────────────
     // Sellerboard first, Amazon otherwise, per marketplace-day. Everything
     // money-shaped below (units/revenue/spend/refunds/fees) comes out of
@@ -4130,18 +4174,37 @@ async function buildBrandMetricsForRangeUncached(from, to, presetKey = null) {
         // Per-marketplace slice in native currency + where it came from.
         // flags: metrics where Amazon and Sellerboard disagree on the days
         // both have data (absent = agree or only one source).
-        byMp: Object.fromEntries(Object.entries(a.mp || {}).map(([mp, m]) => [mp, {
-          code: MPreg.codeOf(mp) || mp, currency: MPreg.currencyOf(mp),
-          units: m.resolved.units, sales: m.resolved.sales, adSpend: m.resolved.adSpend,
-          attributedSales: m.resolved.attributedSales, refunds: m.resolved.refunds,
-          refundAmount: m.resolved.refundAmount, fees: m.sbDays ? m.resolved.fees : null,
-          netProfit: m.sbDays ? m.resolved.netProfit : null, promo: m.sbDays ? m.resolved.promo : null,
-          cogsSb: m.sbDays ? m.resolved.cogsSb : null,
-          sellableReturns: m.resolved.sellableBasis > 0 ? Math.round(m.resolved.sellableReturns * 100) / 100 : null,
-          sellableBasis: m.resolved.sellableBasis || null,
-          sellablePct: m.resolved.sellableBasis > 0 ? Math.round(m.resolved.sellableReturns / m.resolved.sellableBasis * 1000) / 10 : null,
-          source: m.source, sbDays: m.sbDays, flags: m.flags,
-        }])),
+        byMp: (() => {
+          const out = Object.fromEntries(Object.entries(a.mp || {}).map(([mp, m]) => [mp, {
+            code: MPreg.codeOf(mp) || mp, currency: MPreg.currencyOf(mp),
+            units: m.resolved.units, sales: m.resolved.sales, adSpend: m.resolved.adSpend,
+            attributedSales: m.resolved.attributedSales, refunds: m.resolved.refunds,
+            refundAmount: m.resolved.refundAmount, fees: m.sbDays ? m.resolved.fees : null,
+            netProfit: m.sbDays ? m.resolved.netProfit : null, promo: m.sbDays ? m.resolved.promo : null,
+            cogsSb: m.sbDays ? m.resolved.cogsSb : null,
+            sellableReturns: m.resolved.sellableBasis > 0 ? Math.round(m.resolved.sellableReturns * 100) / 100 : null,
+            sellableBasis: m.resolved.sellableBasis || null,
+            sellablePct: m.resolved.sellableBasis > 0 ? Math.round(m.resolved.sellableReturns / m.resolved.sellableBasis * 1000) / 10 : null,
+            source: m.source, sbDays: m.sbDays, flags: m.flags,
+          }]));
+          // Marketplace-scoped traffic rides the slice (Amazon-only data). A
+          // marketplace with sessions but no sales still gets a slice — zero
+          // money, so activeSlice/profit math ignores it.
+          for (const [mp, tr] of Object.entries(trafficByAsin[asin] || {})) {
+            const t = mpTrafficOf(asin, mp);
+            if (!t || (t.sessions == null && t.buyBox == null && !t.pageViews)) continue;
+            const e = out[mp] || (out[mp] = {
+              code: MPreg.codeOf(mp) || mp, currency: MPreg.currencyOf(mp),
+              units: 0, sales: 0, adSpend: 0, attributedSales: 0, refunds: 0, refundAmount: 0,
+              fees: null, netProfit: null, promo: null, cogsSb: null,
+              sellableReturns: null, sellableBasis: null, sellablePct: null,
+              source: 'amazon', sbDays: 0, flags: {},
+            });
+            e.sessions = t.sessions; e.pageViews = t.pageViews; e.buyBox = t.buyBox;
+            e.cvr = (e.units && t.sessions) ? Math.round(e.units / t.sessions * 10000) / 100 : null;
+          }
+          return out;
+        })(),
         source: sourceOf(asin),
         flagged: Object.values(a.mp || {}).some(m => Object.keys(m.flags || {}).length > 0),
       };
@@ -4201,6 +4264,33 @@ async function buildBrandMetricsForRangeUncached(from, to, presetKey = null) {
         : null;
       const stSummary = pm.presets?.yesterday?.brands?.[brand.id]?.summary || {};
 
+      // Brand-level per-marketplace traffic: sessions summed, Buy Box = mean
+      // of the brand's per-ASIN averages (same convention as blended
+      // avgBuyBox). Merged into the summary byMp so the marketplace picker
+      // scopes traffic like everything else.
+      const summaryByMp = brandByMp(brandSlots);
+      {
+        const bMpTraffic = {};
+        for (const sku of skus) for (const [mpKey, m] of Object.entries(sku.byMp || {})) {
+          if (m.sessions == null && m.buyBox == null) continue;
+          const e = bMpTraffic[mpKey] || (bMpTraffic[mpKey] = { sessions: 0, anySess: false, bb: [] });
+          if (m.sessions != null) { e.sessions += m.sessions; e.anySess = true; }
+          if (m.buyBox != null) e.bb.push(m.buyBox);
+        }
+        for (const [mpKey, t] of Object.entries(bMpTraffic)) {
+          const e = summaryByMp[mpKey] || (summaryByMp[mpKey] = {
+            code: MPreg.codeOf(mpKey) || mpKey, currency: MPreg.currencyOf(mpKey),
+            units: 0, sales: 0, adSpend: 0, attributedSales: 0, refunds: 0, refundAmount: 0,
+            fees: null, netProfit: null, promo: null, cogsSb: null,
+            sellableReturns: null, sellableBasis: null, sellablePct: null,
+            source: 'amazon', sbDays: 0, flags: {},
+          });
+          e.sessions = t.anySess ? t.sessions : null;
+          e.buyBox = t.bb.length ? Math.round(t.bb.reduce((s, v) => s + v, 0) / t.bb.length * 100) / 100 : null;
+          e.avgCvr = (e.units && e.sessions) ? Math.round(e.units / e.sessions * 10000) / 100 : null;
+        }
+      }
+
       resultBrands[brand.id] = {
         summary: {
           units:    bUnits,
@@ -4241,7 +4331,7 @@ async function buildBrandMetricsForRangeUncached(from, to, presetKey = null) {
             };
           })() : null,
           alerts: stSummary.alerts || {},
-          byMp: brandByMp(brandSlots),
+          byMp: summaryByMp,
         },
         skus,
       };

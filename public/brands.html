@@ -404,7 +404,10 @@
           : 'Estimated from components (COGS, fees, ads, refunds)';
         const retUnits = agg ? (agg.refundUnits || 0) : null;
         const retPct = (retUnits != null && agg.units > 0) ? (retUnits / agg.units * 100).toFixed(1) + '%' : '—';
-        const buyBox = m?.buyBox;
+        // Traffic + S&S follow the marketplace picker (2026-10-23).
+        const trf = MpScope.trafficOf(m);
+        const buyBox = trf.buyBox;
+        const snsCount = MpScope.snsFor(brand);
         const buyBoxColor = buyBox == null ? 'bg-slate-600' : buyBox >= 90 ? 'bg-emerald-500' : buyBox >= 70 ? 'bg-amber-500' : 'bg-red-500';
         const alerts = m?.alerts;
         const alertBadges = alerts ? [
@@ -432,8 +435,8 @@
                 <div><p class="text-xs mb-0.5" style="color:var(--text-3)">Margin</p><p class="text-lg font-bold" style="color:${npColor}"${npTitle ? ` title="${npTitle}"` : ''}>${marginStr}</p></div>
                 <div><p class="text-xs mb-0.5" style="color:var(--text-3)">Returns</p><p class="text-lg font-bold" style="color:var(--text)" title="Refunded units in this period">${retUnits != null ? retUnits.toLocaleString() : '—'}</p></div>
                 <div><p class="text-xs mb-0.5" style="color:var(--text-3)">Return Rate</p><p class="text-lg font-bold" style="color:var(--text)" title="Refunded units ÷ units sold">${retPct}</p></div>
-                <div><p class="text-xs mb-0.5" style="color:var(--text-3)">Sessions</p><p class="text-lg font-bold" style="color:var(--text)">${MpScope.scoped() ? '—' : (m.sessions != null ? (m.sessions).toLocaleString() : '—')}</p></div>
-                <div><p class="text-xs mb-0.5" style="color:var(--text-3)">S&amp;S Subs</p><p class="text-lg font-bold" style="color:var(--text)">${(() => { const n = Object.values(brand.asinSns || {}).reduce((a, x) => a + x, 0); return n > 0 ? n.toLocaleString() : '—'; })()}</p></div>
+                <div><p class="text-xs mb-0.5" style="color:var(--text-3)">Sessions</p><p class="text-lg font-bold" style="color:var(--text)">${trf.sessions != null ? trf.sessions.toLocaleString() : '—'}</p></div>
+                <div><p class="text-xs mb-0.5" style="color:var(--text-3)">S&amp;S Subs</p><p class="text-lg font-bold" style="color:var(--text)">${snsCount != null && snsCount > 0 ? snsCount.toLocaleString() : snsCount === 0 ? '0' : '—'}</p></div>
               </div>
               <div>
                 <div class="flex items-center justify-between mb-1">

@@ -10,7 +10,9 @@ const D1 = d(2), D2 = d(1), D3 = d(0);
 const T = {
   brands: [{ id: 'main', data: { brands: [
     { id: 'acure',   name: 'Acure',   marketplace: 'CA', color: '#111', asins: ['A1', 'A2'], asinTitles: { A1: 'Acure One' }, cogs: { A1: 2 } },
-    { id: 'zellies', name: 'Zellies', marketplace: 'CA,US', color: '#222', asins: ['Z1'], cogsPerMarketplace: { Z1: { CA: 3, US: 2.5, UK: 2 } } },
+    { id: 'zellies', name: 'Zellies', marketplace: 'CA,US', color: '#222', asins: ['Z1'], cogsPerMarketplace: { Z1: { CA: 3, US: 2.5, UK: 2 } },
+      asinSns: { Z1: 12 },
+      asinSnsByMp: { A2EUQ1WTGCTBG2: { subs: { Z1: 5 }, revenue: {}, isCA: true }, ATVPDKIKX0DER: { subs: { Z1: 7 }, revenue: {} } } },
   ] } }],
   preset_metrics: [{ id: 'main', data: { presets: (() => {
     // Minimal cached presets for the PeriodCards row: one Sellerboard-covered
@@ -50,6 +52,14 @@ const T = {
   daily_brand_ads: [
     { date: D2, brand_id: 'acure', ad_product: 'SB', spend_cad: 6, spend_usd: 0, sales_cad: 24, sales_usd: 0, clicks: 10, impressions: 500, orders: 2 },
     { date: D3, brand_id: 'acure', ad_product: 'SD', spend_cad: 2, spend_usd: 0, sales_cad: 8,  sales_usd: 0, clicks: 4,  impressions: 300, orders: 1 },
+  ],
+  daily_metrics_mp: [
+    // Per-marketplace traffic rows (sessions / page views / Buy Box).
+    { date: D1, asin: 'A1', mp_id: CA, currency: 'CAD', sessions: 50, page_views: 60, buy_box_pct: 90 },
+    { date: D2, asin: 'A1', mp_id: CA, currency: 'CAD', sessions: 40, page_views: 45, buy_box_pct: 95 },
+    { date: D3, asin: 'A1', mp_id: CA, currency: 'CAD', sessions: 45, page_views: 50, buy_box_pct: 92 },
+    { date: D3, asin: 'Z1', mp_id: CA, currency: 'CAD', sessions: 10, page_views: 11, buy_box_pct: 80 },
+    { date: D3, asin: 'Z1', mp_id: US, currency: 'USD', sessions: 20, page_views: 22, buy_box_pct: 85 },
   ],
   daily_fees_asin: [
     { date: D1, asin: 'A1', mp_id: CA, currency: 'CAD', fees: 25, refund_amount: 10, refund_fees: 1, refund_count: 1, breakdown: { 'Referral Fee': 15, 'FBA Fulfillment': 10 } },

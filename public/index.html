@@ -865,8 +865,13 @@
                 status: sku.status,
                 units: m.units || 0,
                 revenueCad: mp === 'CA' ? m.sales : 0, revenueUsd: mp === 'US' ? m.sales : 0, revenue: rev,
-                sessions: sku.sessions || 0,
-                buyBox: sku.buyBox ?? null, cvr: sku.cvr ?? null,
+                // Per-marketplace traffic off the slice (2026-10-23). A sku
+                // on a single marketplace keeps the blended figure as
+                // fallback (identical by construction); multi-marketplace
+                // rows without per-mp rows show — rather than a blended lie.
+                sessions: m.sessions ?? (Object.keys(sku.byMp).length === 1 ? (sku.sessions || 0) : 0),
+                buyBox: m.buyBox ?? (Object.keys(sku.byMp).length === 1 ? (sku.buyBox ?? null) : null),
+                cvr: m.cvr ?? (Object.keys(sku.byMp).length === 1 ? (sku.cvr ?? null) : null),
                 inventory, costPerUnit, totalCogs,
                 costPerUnitDisp: disp(costPerUnit), totalCogsDisp: cogsDisp,
                 fees, feesEstimated: !!sku.feesEstimated, adSpend, refunds, netProfit, margin,
@@ -1295,8 +1300,16 @@
             ? rows.reduce((t, r) => t + r.netProfit, 0)
             : ((cogsNum > 0 && fees != null) ? rev - cogsNum - fees - adSpend - refunds : null);
           margin = netProfit != null && rev > 0 ? (netProfit / rev) * 100 : null;
-          sessions = mpScoped() ? null : (s.sessions || 0);
-          buyBox = s.buyBox ?? null;
+          // Traffic follows the marketplace picker (2026-10-23) — local
+          // helpers, not MpScope: this inline script stays harness-independent.
+          if (mpScoped()) {
+            const t = scopedMps(s.byMp).find(mm => mm.sessions != null || mm.buyBox != null);
+            sessions = t ? (t.sessions ?? null) : null;
+            buyBox = t ? (t.buyBox ?? null) : null;
+          } else {
+            sessions = s.sessions || 0;
+            buyBox = s.buyBox ?? null;
+          }
           flags = scopedFlags(s.byMp);
           const set = new Set(scopedMps(s.byMp).map(m => m.source));
           source = set.size === 1 ? [...set][0] : set.size ? 'mixed' : null;

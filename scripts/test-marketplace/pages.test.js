@@ -169,6 +169,45 @@ const near = (a, b, what) => assert.ok(Math.abs(a - b) <= 0.01, `${what}: ${a} v
     console.log('/api/fees: OK (account + brand scope)');
   }
 
+  // ── Per-marketplace traffic + S&S scoping (Mike, 2026-10-23) ──
+  {
+    const CAid = 'A2EUQ1WTGCTBG2', USid = 'ATVPDKIKX0DER';
+    const z = data.brands.zellies;
+    assert.strictEqual(z.summary.byMp[CAid].sessions, 10, 'zellies CA summary sessions');
+    near(z.summary.byMp[CAid].buyBox, 80, 'zellies CA summary buy box');
+    assert.strictEqual(z.summary.byMp[USid].sessions, 20, 'zellies US summary sessions');
+    const z1 = z.skus.find(s => s.asin === 'Z1');
+    assert.strictEqual(z1.byMp[CAid].sessions, 10, 'Z1 CA slice sessions');
+    near(z1.byMp[USid].buyBox, 85, 'Z1 US slice buy box');
+    const a = data.brands.acure;
+    near(a.summary.byMp[CAid].buyBox, (90 + 95 + 92) / 3, 'acure CA summary buy box avg');
+    assert.strictEqual(a.summary.byMp[CAid].sessions, 135, 'acure CA summary sessions');
+
+    // Client scoping helpers against the same payload shapes.
+    const store = { currency: 'CAD' };
+    const w = makeWindow(store);
+    vm.createContext(w);
+    vm.runInContext(mpScopeSrc, w, { filename: 'mp-scope.js' });
+    w.MpScope.state.registry = mps;
+    w.MpScope.state.fx = () => fx; w.MpScope.state.currency = () => 'CAD';
+    const zBrand = brandsRes.brands.find(b => b.id === 'zellies');
+    w.MpScope.state.filter = 'all';
+    assert.strictEqual(w.MpScope.snsFor(zBrand), 12, 'S&S all = summed view');
+    assert.strictEqual(w.MpScope.trafficOf(z.summary).sessions, z.summary.sessions ?? null, 'traffic all = blended');
+    w.MpScope.state.filter = 'CA';
+    assert.strictEqual(w.MpScope.snsFor(zBrand), 5, 'S&S CA scoped');
+    assert.strictEqual(w.MpScope.snsFor(zBrand, 'Z1'), 5, 'S&S CA per-ASIN');
+    assert.strictEqual(w.MpScope.trafficOf(z.summary).sessions, 10, 'traffic CA sessions');
+    near(w.MpScope.trafficOf(z.summary).buyBox, 80, 'traffic CA buy box');
+    w.MpScope.state.filter = 'US';
+    assert.strictEqual(w.MpScope.snsFor(zBrand), 7, 'S&S US scoped');
+    near(w.MpScope.trafficOf(z1).buyBox, 85, 'sku traffic US buy box');
+    w.MpScope.state.filter = 'UK';
+    assert.strictEqual(w.MpScope.snsFor(zBrand), null, 'S&S UK: no store → dash, never blended');
+    assert.strictEqual(w.MpScope.trafficOf(z.summary).sessions, null, 'traffic UK: no rows → dash');
+    console.log('per-marketplace traffic + S&S: OK');
+  }
+
   // ── /api/ppc — PPC page data (SP from daily_metrics 7d-attr, SB/SD from daily_brand_ads) ──
   {
     const ppc = await fetch(`${BASE}/api/ppc?from=${from}&to=${to}`).then(r => r.json());

@@ -151,6 +151,42 @@
     return Object.values(byMp || {}).filter(activeSlice).map(m => m.code);
   }
 
+  // Subscribe & Save under the current scope (2026-10-23: S&S ignored the
+  // marketplace picker). Per-marketplace counts live in brand.asinSnsByMp
+  // (persisted by saveSyncResults from the same date — a blob written before
+  // the next sync lacks it, so scoped reads return null = an honest dash).
+  // The summed asinSns view serves 'all'.
+  function snsFor(brand, asin = null) {
+    if (!brand) return null;
+    if (!scoped()) {
+      const src = brand.asinSns || {};
+      if (asin != null) return src[asin] ?? null;
+      const n = Object.values(src).reduce((a, x) => a + x, 0);
+      return n || null;
+    }
+    const mp = byCode(state.filter);
+    const store = mp && brand.asinSnsByMp ? brand.asinSnsByMp[mp.id] : null;
+    if (!store) return null;
+    if (asin != null) return store.subs?.[asin] ?? 0;
+    return Object.values(store.subs || {}).reduce((a, x) => a + x, 0);
+  }
+
+  // Traffic (sessions / page views / Buy Box / CVR) under the current scope.
+  // byMp slices carry per-marketplace traffic (daily_metrics_mp) since
+  // 2026-10-23; the blended summary numbers serve 'all'. Scoped with no
+  // per-marketplace rows in the range → nulls (dashes), never a blended
+  // number passed off as a marketplace's.
+  function trafficOf(obj) {
+    const none = { sessions: null, pageViews: null, buyBox: null, cvr: null };
+    if (!obj) return none;
+    if (!scoped()) {
+      return { sessions: obj.sessions ?? null, pageViews: obj.pageViews ?? null, buyBox: obj.buyBox ?? null, cvr: obj.avgCvr ?? obj.cvr ?? null };
+    }
+    const s = scopedMps(obj.byMp).find(m => m.sessions != null || m.buyBox != null || m.pageViews != null);
+    if (!s) return none;
+    return { sessions: s.sessions ?? null, pageViews: s.pageViews ?? null, buyBox: s.buyBox ?? null, cvr: s.avgCvr ?? s.cvr ?? null };
+  }
+
   // ── Picker UI ──
   function ensureSelect() {
     let sel = document.getElementById('mpSwitch');
@@ -275,7 +311,7 @@
     filter: () => state.filter, scoped, byCode, displayCurrency, nativeCurrencyOf, curSym, locale,
     toCadRate, toDisplay, legacyNum, fmt, fmtIn,
     scopedMps, sumMp, scopedFlags, sourceOf, flagBadge, sourceBadge, mpBadge,
-    storefrontFor, sellerCentralFor, labelFor, cogsFor, cogsSourceFor, activeCodes, activeSlice, skuNet,
+    storefrontFor, sellerCentralFor, labelFor, cogsFor, cogsSourceFor, activeCodes, activeSlice, skuNet, snsFor, trafficOf,
     CUR_SYM, CUR_LOCALE, MP_BADGE,
   };
 })();
