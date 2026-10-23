@@ -275,7 +275,13 @@
       if (!ppcData || adScoped()) { thead.innerHTML = ''; tbody.innerHTML = '<tr><td class="px-4 py-6 text-center" style="color:var(--text-3)">No PPC data for this scope.</td></tr>'; return; }
       const nameOf = id => (brandsData.find(b => b.id === id) || {}).name || id;
       const colorOf = id => (brandsData.find(b => b.id === id) || {}).color || '#64748b';
-      const rows = ppcData.brands.map(brandRow).filter(r => r.spend > 0 || r.sales > 0);
+      const all = ppcData.brands.map(brandRow);
+      const rows = all.filter(r => r.spend > 0 || r.sales > 0);
+      // Brands with sales but no PPC still belong in the TACOS base — fold
+      // them into one muted row so the Grand Total reconciles with the KPI
+      // tile (true account TACOS = spend / ALL sales).
+      const rest = all.filter(r => !(r.spend > 0 || r.sales > 0) && r.rev > 0);
+      const restRev = rest.reduce((t, r) => t + r.rev, 0);
       rows.sort((a, b) => {
         if (sortCol === 'name') return sortDir * nameOf(a.brandId).localeCompare(nameOf(b.brandId));
         const av = a[sortCol] ?? -Infinity, bv = b[sortCol] ?? -Infinity;
@@ -302,8 +308,18 @@
         <td class="px-3 py-2.5 text-right" style="color:${acosColor(r.acos)}">${r.acos != null ? r.acos.toFixed(2) + '%' : '—'}</td>
         <td class="px-3 py-2.5 text-right" style="color:var(--text-2)">${r.roas != null ? r.roas.toFixed(2) : '—'}</td>
       </tr>`).join('');
-      // Grand Total
-      const t = rows.reduce((a, r) => ({ spend: a.spend + r.spend, sales: a.sales + r.sales, clicks: a.clicks + r.clicks, impressions: a.impressions + r.impressions, orders: a.orders + r.orders, rev: a.rev + r.rev, units: a.units + r.units }), { spend: 0, sales: 0, clicks: 0, impressions: 0, orders: 0, rev: 0, units: 0 });
+      if (restRev > 0.005) {
+        tbody.innerHTML += `<tr style="border-bottom:1px solid var(--border,#1f2937)">
+          <td class="px-3 py-2.5" style="color:var(--text-3)" title="${rest.map(r => nameOf(r.brandId)).join(', ')}">No PPC activity (${rest.length} brand${rest.length === 1 ? '' : 's'})</td>
+          <td class="px-3 py-2.5 text-right" style="color:var(--text-3)">—</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+          <td class="px-3 py-2.5 text-right" style="color:var(--text-3)">—</td><td></td>
+          <td class="px-3 py-2.5 text-right" style="color:var(--text-2)">${fmt(restRev)}</td>
+          <td></td><td></td><td></td>
+        </tr>`;
+      }
+      // Grand Total — includes the no-PPC brands' sales so TACOS here equals
+      // the KPI tile's account TACOS.
+      const t = rows.reduce((a, r) => ({ spend: a.spend + r.spend, sales: a.sales + r.sales, clicks: a.clicks + r.clicks, impressions: a.impressions + r.impressions, orders: a.orders + r.orders, rev: a.rev + r.rev, units: a.units + r.units }), { spend: 0, sales: 0, clicks: 0, impressions: 0, orders: 0, rev: restRev, units: 0 });
       tbody.innerHTML += `<tr style="border-top:2px solid var(--border-hi,#2a3650)">
         <td class="px-3 py-2.5 font-semibold" style="color:var(--text)">Grand Total</td>
         <td class="px-3 py-2.5 text-right font-semibold" style="color:var(--text)">${fmt(t.spend)}</td>
