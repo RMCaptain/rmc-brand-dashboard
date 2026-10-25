@@ -82,9 +82,16 @@
       <p class="text-xs font-semibold mb-2" style="color:var(--text-3)">AD SPEND VS PPC SALES — DAILY <span class="font-normal">· ACOS % line on the right axis</span></p>
       <div style="height:240px"><canvas id="spendChart"></canvas></div>
     </div>
-    <div class="rmc-card p-4 mb-6">
+    <div class="rmc-card p-4 mb-3">
       <p class="text-xs font-semibold mb-2" style="color:var(--text-3)">TACOS % — DAILY <span class="font-normal">· ad spend ÷ total sales</span></p>
       <div style="height:110px"><canvas id="acosChart"></canvas></div>
+    </div>
+    <div class="rmc-card p-4 mb-6" id="splitCard">
+      <p class="text-xs font-semibold mb-2" style="color:var(--text-3)">AD SPEND BY PRODUCT <span class="font-normal">· SP / SB / SD share of the period</span></p>
+      <div class="flex items-center gap-8 flex-wrap">
+        <div style="height:190px;width:190px;position:relative"><canvas id="splitChart"></canvas></div>
+        <div id="splitLegend" class="text-sm"></div>
+      </div>
     </div>
 
     <!-- Tables -->
@@ -120,12 +127,14 @@
     let brandsData = [];
     let sortCol = 'spend', sortDir = -1;
     let campSortCol = 'cost', campSortDir = -1;
-    let spendChart = null, acosChart = null;
+    let spendChart = null, acosChart = null, splitChart = null;
 
     // Validated series colors (dataviz palette check, dark surface #0e1524):
     // spend #6FA03F (brand family), PPC sales #4F87DE. ACOS strip is a lone
     // amber line on its own chart — never a second axis on the money chart.
     const C_SPEND = '#6FA03F', C_SALES = '#4F87DE', C_ACOS = '#d9a23c';
+    // Ad-product slices (palette-validated triple on the card surface).
+    const C_SPLIT = { SP: '#6FA03F', SB: '#4F87DE', SD: '#b8862e' };
 
     // ── Date helpers (PST, matching the rest of the app) ─────────────────────
     function pstDateStr(date = new Date()) {
@@ -234,9 +243,54 @@
       const tacos = days.map((d, i) => { const rev = val(d.revCad, d.revUsd); return rev > 0 ? spend[i] / rev * 100 : null; });
       const gridColor = 'rgba(255,255,255,0.05)';
       const tickColor = '#7B8FAF';
-      if (spendChart) spendChart.destroy();
-      if (acosChart) acosChart.destroy();
+      if (spendChart) spendChart.destroy(); spendChart = null;
+      if (acosChart) acosChart.destroy(); acosChart = null;
+      if (splitChart) splitChart.destroy(); splitChart = null;
+      document.getElementById('splitCard').classList.toggle('hidden', !days.length || adScoped());
       if (!window.Chart || !days.length || adScoped()) return;
+
+      // Doughnut: SP / SB / SD share of ad spend for the period, scoped like
+      // the KPIs. 2px surface-gap borders between slices; legend carries the
+      // amounts so identity is never color-alone.
+      {
+        const rows = (ppcData.brands || []).map(brandRow);
+        const split = [
+          { key: 'SP', label: 'Sponsored Products', v: rows.reduce((t, r) => t + r.spSpend, 0) },
+          { key: 'SB', label: 'Sponsored Brands', v: rows.reduce((t, r) => t + r.sbSpend, 0) },
+          { key: 'SD', label: 'Sponsored Display', v: rows.reduce((t, r) => t + r.sdSpend, 0) },
+        ].filter(s => s.v > 0.005);
+        const total = split.reduce((t, s) => t + s.v, 0);
+        const legendEl = document.getElementById('splitLegend');
+        if (!split.length) {
+          legendEl.innerHTML = '<p class="text-xs" style="color:var(--text-3)">No ad spend in this period.</p>';
+        } else {
+          legendEl.innerHTML = split.map(s => `
+            <div class="flex items-center gap-2 py-1">
+              <span class="inline-block w-2.5 h-2.5 rounded-sm" style="background:${C_SPLIT[s.key]}"></span>
+              <span style="color:var(--text-2)">${s.label}</span>
+              <span class="font-semibold" style="color:var(--text)">${fmt(s.v)}</span>
+              <span class="text-xs" style="color:var(--text-3)">${(s.v / total * 100).toFixed(1)}%</span>
+            </div>`).join('')
+            + `<div class="flex items-center gap-2 py-1 mt-1" style="border-top:1px solid var(--border,#1f2937)">
+              <span class="inline-block w-2.5 h-2.5"></span>
+              <span style="color:var(--text-2)">Total</span>
+              <span class="font-semibold" style="color:var(--text)">${fmt(total)}</span>
+            </div>`;
+          splitChart = new Chart(document.getElementById('splitChart'), {
+            type: 'doughnut',
+            data: { labels: split.map(s => s.label), datasets: [{
+              data: split.map(s => s.v),
+              backgroundColor: split.map(s => C_SPLIT[s.key]),
+              borderColor: '#0e1524', borderWidth: 2, hoverOffset: 6,
+            }] },
+            options: {
+              responsive: true, maintainAspectRatio: false, cutout: '58%',
+              plugins: { legend: { display: false },
+                tooltip: { callbacks: { label: c => `${c.label}: ${fmt(c.parsed)} · ${(c.parsed / total * 100).toFixed(1)}%` } } },
+            },
+          });
+        }
+      }
       spendChart = new Chart(document.getElementById('spendChart'), {
         type: 'bar',
         data: { labels, datasets: [
