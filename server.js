@@ -771,6 +771,36 @@ app.put('/api/brands/:id/asins/:asin/buy-cost', async (req, res) => {
   res.json({ success: true });
 });
 
+// Per-brand PPC meta — TACOS target (%) and a free-text note, edited inline
+// on the PPC page's By Brand table (Mike, 2026-10-25). Operational fields,
+// deliberately open like the other per-ASIN inputs.
+app.put('/api/brands/:id/ppc-meta', async (req, res) => {
+  try {
+    const { tacosTarget, note } = req.body || {};
+    if (tacosTarget !== undefined && tacosTarget !== null && (isNaN(tacosTarget) || Number(tacosTarget) < 0 || Number(tacosTarget) > 100)) {
+      return res.status(400).json({ error: 'tacosTarget must be a percentage 0–100, or null to clear' });
+    }
+    const { result } = await mutateBrands(data => {
+      const brand = data.brands.find(b => b.id === req.params.id);
+      if (!brand) return null;
+      if (tacosTarget !== undefined) {
+        if (tacosTarget === null) delete brand.tacosTarget;
+        else brand.tacosTarget = Math.round(Number(tacosTarget) * 100) / 100;
+      }
+      if (note !== undefined) {
+        const n = String(note || '').slice(0, 500);
+        if (n) brand.ppcNote = n; else delete brand.ppcNote;
+      }
+      return { tacosTarget: brand.tacosTarget ?? null, ppcNote: brand.ppcNote ?? '' };
+    }, { tag: 'ppc-meta' });
+    if (!result) return res.status(404).json({ error: 'Brand not found' });
+    res.json({ success: true, ...result });
+  } catch (e) {
+    console.error('[ppc-meta]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // PUT set lead time for an ASIN
 app.put('/api/brands/:id/asins/:asin/leadtime', async (req, res) => {
   const { days } = req.body;

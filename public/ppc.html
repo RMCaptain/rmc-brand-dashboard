@@ -103,6 +103,7 @@
         </div>
         <div class="flex items-center gap-3 flex-wrap">
           <span id="tableNote" class="text-xs" style="color:var(--text-3)"></span>
+          <button id="showAllBtn" onclick="toggleShowAll()" class="rmc-select" style="width:auto;font-size:12px;padding:5px 10px;cursor:pointer" title="Include brands with sales but no ad spend as full rows"></button>
           <button id="colBtn" onclick="toggleColMenu(event)" class="rmc-select" style="width:auto;font-size:12px;padding:5px 10px;cursor:pointer" title="Show/hide columns — drag headers to reorder">Columns ▾</button>
         </div>
       </div>
@@ -129,6 +130,7 @@
     let campaignData = null;     // /api/ppc/campaigns payload (window-fixed)
     let brandsData = [];
     let sortCol = 'spend', sortDir = -1;
+    let showAllBrands = localStorage.getItem('ppcShowAll') === '1';
     let campSortCol = 'cost', campSortDir = -1;
     let spendChart = null, acosChart = null, splitChart = null;
 
@@ -197,6 +199,7 @@
         units: b.ppcUnits || 0,
         cpc: clicks > 0 ? spend / clicks : null,
         cpo: orders > 0 ? spend / orders : null,
+        adShare: rev > 0 ? sales / rev * 100 : null,
         ctr: impressions > 0 ? clicks / impressions * 100 : null,
         cvr: clicks > 0 ? orders / clicks * 100 : null,
         acos: sales > 0 ? spend / sales * 100 : null,
@@ -340,10 +343,12 @@
       { id: 'spend', label: 'Ad Spend' }, { id: 'clicks', label: 'Clicks' },
       { id: 'impressions', label: 'Impr.' }, { id: 'ctr', label: 'CTR' },
       { id: 'orders', label: 'Orders' }, { id: 'cvr', label: 'CVR' },
-      { id: 'cpc', label: 'CPC' }, { id: 'cpo', label: 'Cost/Order' },
+      { id: 'cpc', label: 'CPC' }, { id: 'cpo', label: 'CAC' },
       { id: 'sales', label: 'PPC Sales' }, { id: 'units', label: 'PPC Units' },
-      { id: 'rev', label: 'Total Sales' }, { id: 'tacos', label: 'TACOS' },
+      { id: 'rev', label: 'Total Sales' }, { id: 'adShare', label: 'Ad Sales %' },
+      { id: 'tacos', label: 'TACOS' }, { id: 'target', label: 'TACOS Target' },
       { id: 'acos', label: 'ACOS' }, { id: 'roas', label: 'ROAS' },
+      { id: 'notes', label: 'Notes', left: true },
     ];
     const CAMPAIGN_COLS = [
       { id: 'name', label: 'Campaign', left: true, locked: true },
@@ -443,14 +448,19 @@
       const nameOf = id => (brandsData.find(b => b.id === id) || {}).name || id;
       const colorOf = id => (brandsData.find(b => b.id === id) || {}).color || '#64748b';
       const all = ppcData.brands.map(brandRow);
-      const rows = all.filter(r => r.spend > 0 || r.sales > 0);
-      // Brands with sales but no PPC still belong in the TACOS base — fold
-      // them into one muted row so the Grand Total reconciles with the KPI
-      // tile (true account TACOS = spend / ALL sales).
-      const rest = all.filter(r => !(r.spend > 0 || r.sales > 0) && r.rev > 0);
+      // Show-all: no-PPC brands become full rows (their non-ad metrics show);
+      // otherwise they fold into one muted row. Either way their sales stay
+      // in the Grand Total so TACOS matches the KPI tile.
+      const rows = showAllBrands
+        ? all.filter(r => r.spend > 0 || r.sales > 0 || r.rev > 0)
+        : all.filter(r => r.spend > 0 || r.sales > 0);
+      const rest = showAllBrands ? [] : all.filter(r => !(r.spend > 0 || r.sales > 0) && r.rev > 0);
       const restRev = rest.reduce((t, r) => t + r.rev, 0);
+      const metaOf = id => brandsData.find(b => b.id === id) || {};
       rows.sort((a, b) => {
         if (sortCol === 'name') return sortDir * nameOf(a.brandId).localeCompare(nameOf(b.brandId));
+        if (sortCol === 'target') { const av = metaOf(a.brandId).tacosTarget ?? -Infinity, bv = metaOf(b.brandId).tacosTarget ?? -Infinity; return sortDir * (av < bv ? -1 : av > bv ? 1 : 0); }
+        if (sortCol === 'notes') return sortDir * String(metaOf(a.brandId).ppcNote || '').localeCompare(String(metaOf(b.brandId).ppcNote || ''));
         const av = a[sortCol] ?? -Infinity, bv = b[sortCol] ?? -Infinity;
         return sortDir * (av < bv ? -1 : av > bv ? 1 : 0);
       });
@@ -472,9 +482,25 @@
           case 'sales': return td(`<span class="font-medium">${fmt(r.sales)}</span>`, { color: 'var(--text)' });
           case 'units': return td(r.units.toLocaleString(), { extra: 'title="PPC units per Sellerboard attribution"' });
           case 'rev': return td(`<span class="font-medium">${fmt(r.rev)}</span>`, { color: 'var(--text)' });
-          case 'tacos': return td(r.tacos != null ? r.tacos.toFixed(2) + '%' : '—', { color: acosColor(r.tacos) });
+          case 'adShare': return td(r.adShare != null ? r.adShare.toFixed(1) + '%' : '—');
+          case 'tacos': {
+            const target = metaOf(r.brandId).tacosTarget;
+            // With a target set, judge TACOS against IT; banding otherwise.
+            const color = r.tacos == null ? 'var(--text-3)'
+              : target != null ? (r.tacos <= target ? '#34d399' : '#f87171')
+              : acosColor(r.tacos);
+            return td(r.tacos != null ? r.tacos.toFixed(2) + '%' : '—', { color, extra: target != null ? `title="target ${target}%"` : '' });
+          }
+          case 'target': {
+            const target = metaOf(r.brandId).tacosTarget;
+            return `<td class="px-3 py-2.5 text-right" onclick="event.stopPropagation()"><input type="number" min="0" max="100" step="0.1" value="${target ?? ''}" placeholder="—" data-brand="${r.brandId}" onchange="saveTacosTarget(this)" class="rmc-input" style="width:68px;padding:2px 6px;font-size:12px;text-align:right;color-scheme:dark" title="TACOS target % for ${nameOf(r.brandId)}" /><span class="text-xs ml-1" style="color:var(--text-3)">%</span></td>`;
+          }
           case 'acos': return td(r.acos != null ? r.acos.toFixed(2) + '%' : '—', { color: acosColor(r.acos) });
           case 'roas': return td(r.roas != null ? r.roas.toFixed(2) : '—');
+          case 'notes': {
+            const note = metaOf(r.brandId).ppcNote || '';
+            return `<td class="px-3 py-2.5" onclick="event.stopPropagation()"><input type="text" value="${note.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')}" placeholder="add note…" maxlength="500" data-brand="${r.brandId}" onchange="savePpcNote(this)" class="rmc-input" style="min-width:160px;width:100%;padding:2px 8px;font-size:12px;color-scheme:dark" /></td>`;
+          }
           default: return '<td></td>';
         }
       };
@@ -505,6 +531,9 @@
           case 'sales': return gtd(fmt(t.sales));
           case 'units': return gtd(t.units.toLocaleString());
           case 'rev': return gtd(fmt(t.rev));
+          case 'adShare': return gtd(pct(t.sales, t.rev, 1));
+          case 'target': return '<td class="px-3 py-2.5 text-right" style="color:var(--text-3)">—</td>';
+          case 'notes': return '<td></td>';
           case 'tacos': return gtd(pct(t.spend, t.rev));
           case 'acos': return gtd(pct(t.spend, t.sales));
           case 'roas': return gtd(t.spend > 0 ? (t.sales / t.spend).toFixed(2) : '—');
@@ -562,10 +591,56 @@
       bindHeaderDnD();
     }
 
+    // ── No-PPC rows toggle + inline per-brand meta (target / note) ──────────
+    function updateShowAllBtn() {
+      const b = document.getElementById('showAllBtn');
+      if (!b) return;
+      b.textContent = showAllBrands ? 'No-PPC brands: shown' : 'No-PPC brands: folded';
+      b.style.color = showAllBrands ? '#8CBF5A' : '';
+      b.style.display = activeTab === 'brands' ? '' : 'none';
+    }
+    function toggleShowAll() {
+      showAllBrands = !showAllBrands;
+      localStorage.setItem('ppcShowAll', showAllBrands ? '1' : '0');
+      updateShowAllBtn();
+      renderTable();
+    }
+    async function savePpcMeta(brandId, patch, input) {
+      try {
+        const res = await fetch(`/api/brands/${encodeURIComponent(brandId)}/ppc-meta`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
+        });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`);
+        const b = brandsData.find(x => x.id === brandId);
+        if (b) {
+          if (d.tacosTarget == null) delete b.tacosTarget; else b.tacosTarget = d.tacosTarget;
+          b.ppcNote = d.ppcNote || '';
+        }
+        input.style.borderColor = '#34d399';
+        setTimeout(() => { input.style.borderColor = ''; }, 800);
+        return true;
+      } catch (e) {
+        input.style.borderColor = '#f87171';
+        input.title = `Save failed: ${e.message}`;
+        return false;
+      }
+    }
+    async function saveTacosTarget(input) {
+      const raw = input.value.trim();
+      const v = raw === '' ? null : Number(raw);
+      if (v != null && (isNaN(v) || v < 0 || v > 100)) { input.style.borderColor = '#f87171'; input.title = 'Percentage 0–100'; return; }
+      if (await savePpcMeta(input.dataset.brand, { tacosTarget: v }, input)) renderTable();   // recolor TACOS vs target
+    }
+    function savePpcNote(input) {
+      savePpcMeta(input.dataset.brand, { note: input.value }, input);
+    }
+
     function setTab(tab) {
       activeTab = tab;
       document.getElementById('tab-brands').classList.toggle('active', tab === 'brands');
       document.getElementById('tab-campaigns').classList.toggle('active', tab === 'campaigns');
+      updateShowAllBtn();
       if (tab === 'campaigns' && !campaignData) {
         fetch('/api/ppc/campaigns').then(r => r.json()).then(d => { campaignData = d; renderTable(); }).catch(() => { campaignData = { campaigns: [] }; renderTable(); });
       }
@@ -650,6 +725,7 @@
       if (activePreset === 'custom' && !(customFrom && customTo)) activePreset = 'last30d';
       document.getElementById('customDateRow').classList.toggle('hidden', activePreset !== 'custom');
       updateToggleUI();
+      updateShowAllBtn();
       setPreset(activePreset);
     }
     load();
