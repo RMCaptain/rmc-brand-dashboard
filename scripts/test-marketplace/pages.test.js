@@ -226,7 +226,15 @@ const near = (a, b, what) => assert.ok(Math.abs(a - b) <= 0.01, `${what}: ${a} v
     near(d2row.salesCad, 38, 'ppc daily: SP + SB sales summed');
     const camps = await fetch(`${BASE}/api/ppc/campaigns`).then(r => r.json());
     assert.ok(Array.isArray(camps.campaigns), 'ppc campaigns: shape holds without seed data');
-    console.log('/api/ppc: OK');
+    // Brand scope: daily series + rollup for one brand only
+    const scoped = await fetch(`${BASE}/api/ppc?from=${from}&to=${to}&brandId=acure`).then(r => r.json());
+    assert.strictEqual(scoped.brands.length, 1, 'ppc brand scope: one rollup');
+    assert.strictEqual(scoped.brands[0].brandId, 'acure');
+    near(scoped.brands[0].sp.spendCad, 12, 'ppc brand scope: acure SP spend');
+    const sd2 = scoped.daily.find(d => d.date === pstSubtractDays(to, 1));
+    near(sd2.spendCad, 9, 'ppc brand scope daily: acure SP+SB only');
+    near(scoped.daily.reduce((t, d) => t + d.spendUsd, 0), 0, 'ppc brand scope: no zellies US spend');
+    console.log('/api/ppc: OK (account + brand scope)');
   }
 
   // ── report-render.js ──

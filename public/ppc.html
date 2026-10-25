@@ -47,6 +47,9 @@
         <p class="text-xs mt-0.5" style="color:var(--text-3)">Sponsored Products + Brands + Display across the account. SP sales on the console's 7-day attribution.</p>
       </div>
       <div class="flex items-center gap-2 mobile-wrap">
+        <select id="brandFilter" onchange="setBrandFilter(this.value)" class="rmc-select" style="width:auto;min-width:130px;color-scheme:dark">
+          <option value="">All brands</option>
+        </select>
         <select id="presetSelect" onchange="onPresetChange(this.value)" class="rmc-select" style="width:auto;min-width:140px;color-scheme:dark">
           <option value="yesterday">Yesterday</option>
           <option value="last7d">Last 7 Days</option>
@@ -108,6 +111,7 @@
     let currency = localStorage.getItem('currency') || 'CAD';
     let fxRate = { usdToCad: 1.38, cadToUsd: 0.724, toCad: { CAD: 1, USD: 1.38 } };
     let activePreset = localStorage.getItem('ppcPreset') || 'last30d';
+    let brandFilter = localStorage.getItem('ppcBrand') || '';   // '' = all brands (account-wide default)
     let customFrom = localStorage.getItem('customFrom') || '';
     let customTo = localStorage.getItem('customTo') || '';
     let activeTab = 'brands';
@@ -345,6 +349,7 @@
       let rows = campaignData.campaigns || [];
       if (mpF() === 'CA' || mpF() === 'US') rows = rows.filter(c => c.profile === mpF());
       else if (adScoped()) rows = [];
+      if (brandFilter) rows = rows.filter(c => (c.brands || []).includes(brandFilter));
       const w = rows[0]?.window;
       document.getElementById('tableNote').textContent = w
         ? `Sponsored Products · fixed trailing window ${w.start} → ${w.end} (search-term report) — not the page's period`
@@ -413,10 +418,28 @@
       if (!r) return;
       const fmtLabel = d => new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
       document.getElementById('rangeLabel').textContent = r.from === r.to ? fmtLabel(r.from) : `${fmtLabel(r.from)} – ${fmtLabel(r.to)}`;
-      fetch(`/api/ppc?from=${r.from}&to=${r.to}`)
+      fetch(`/api/ppc?from=${r.from}&to=${r.to}${brandFilter ? `&brandId=${encodeURIComponent(brandFilter)}` : ''}`)
         .then(res => res.json())
         .then(d => { ppcData = d; renderAll(); })
         .catch(e => { console.error(e); ppcData = null; renderAll(); });
+    }
+
+    function setBrandFilter(id) {
+      brandFilter = id || '';
+      localStorage.setItem('ppcBrand', brandFilter);
+      setPreset(activePreset);   // refetch the range under the new scope
+    }
+    function populateBrandFilter() {
+      const sel = document.getElementById('brandFilter');
+      if (!sel) return;
+      const list = brandsData
+        .filter(b => b.id !== 'unknown-brand')
+        .sort((a, b) => a.name.localeCompare(b.name));
+      sel.innerHTML = '<option value="">All brands</option>'
+        + list.map(b => `<option value="${b.id}">${b.name}</option>`).join('')
+        + '<option value="unknown-brand">Unknown Brand</option>';
+      if (brandFilter && ![...sel.options].some(o => o.value === brandFilter)) brandFilter = '';
+      sel.value = brandFilter;
     }
 
     function updateToggleUI() {
@@ -445,6 +468,7 @@
       });
       if (mps) MpScope.state.registry = mps;
       brandsData = brandsRes.brands || [];
+      populateBrandFilter();
       if (customFrom) document.getElementById('customFrom').value = customFrom;
       if (customTo) document.getElementById('customTo').value = customTo;
       if (activePreset === 'custom' && !(customFrom && customTo)) activePreset = 'last30d';

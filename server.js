@@ -5810,9 +5810,12 @@ app.get('/api/ppc', async (req, res) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) {
       return res.status(400).json({ error: 'from/to must be YYYY-MM-DD with from <= to' });
     }
-    const key = `${from}|${to}`;
+    // Optional brand scope: daily series + rollup for one brand only.
+    const brandId = req.query.brandId || null;
+    const key = `${from}|${to}|${brandId || ''}`;
     const hit = ppcCache.get(key);
     if (hit && Date.now() - hit.at < PPC_CACHE_MS) return res.json(hit.data);
+    const scope = q => brandId ? q.eq('brand_id', brandId) : q;
 
     const r2 = v => Math.round(v * 100) / 100;
     const zero = () => ({ spendCad: 0, spendUsd: 0, salesCad: 0, salesUsd: 0, clicks: 0, impressions: 0, orders: 0 });
@@ -5823,10 +5826,10 @@ app.get('/api/ppc', async (req, res) => {
 
     // SP + total revenue (paginated — a 30d account window is >1 page)
     for (let off = 0; ; off += 1000) {
-      const { data, error } = await supabase.from('daily_metrics')
+      const { data, error } = await scope(supabase.from('daily_metrics')
         .select('date,brand_id,spend_cad,spend_usd,attributed_sales_cad,attributed_sales_usd,attributed_sales_7d_cad,attributed_sales_7d_usd,ad_clicks,ad_impressions,ad_orders,ad_orders_7d,revenue_cad,revenue_usd')
         .gte('date', from).lte('date', to)
-        .order('date').order('asin').range(off, off + 999);
+        .order('date').order('asin').range(off, off + 999));
       if (error) throw new Error(`daily_metrics read failed: ${error.message}`);
       for (const r of (data || [])) {
         const b = brandAt(r.brand_id || 'unknown-brand');
@@ -5848,10 +5851,10 @@ app.get('/api/ppc', async (req, res) => {
 
     // SB + SD
     for (let off = 0; ; off += 1000) {
-      const { data, error } = await supabase.from('daily_brand_ads')
+      const { data, error } = await scope(supabase.from('daily_brand_ads')
         .select('date,brand_id,ad_product,spend_cad,spend_usd,sales_cad,sales_usd,clicks,impressions,orders')
         .gte('date', from).lte('date', to)
-        .order('date').order('brand_id').range(off, off + 999);
+        .order('date').order('brand_id').range(off, off + 999));
       if (error) throw new Error(`daily_brand_ads read failed: ${error.message}`);
       for (const r of (data || [])) {
         const slot = r.ad_product === 'SB' ? 'sb' : r.ad_product === 'SD' ? 'sd' : null;
@@ -5870,10 +5873,10 @@ app.get('/api/ppc', async (req, res) => {
 
     // PPC units (Sellerboard attribution — labeled as such in the UI)
     for (let off = 0; ; off += 1000) {
-      const { data, error } = await supabase.from('sellerboard_daily')
+      const { data, error } = await scope(supabase.from('sellerboard_daily')
         .select('brand_id,units_ppc')
         .gte('date', from).lte('date', to).gt('units_ppc', 0)
-        .order('date').order('sku').range(off, off + 999);
+        .order('date').order('sku').range(off, off + 999));
       if (error) throw new Error(`sellerboard_daily read failed: ${error.message}`);
       for (const r of (data || [])) brandAt(r.brand_id || 'unknown-brand').ppcUnits += Number(r.units_ppc || 0);
       if (!data || data.length < 1000) break;
@@ -5886,7 +5889,7 @@ app.get('/api/ppc', async (req, res) => {
     const daily = Object.values(dailyMap).sort((a, b) => a.date < b.date ? -1 : 1)
       .map(d => ({ ...d, spendCad: r2(d.spendCad), spendUsd: r2(d.spendUsd), salesCad: r2(d.salesCad), salesUsd: r2(d.salesUsd) }));
 
-    const data = { from, to, daily, brands: Object.values(brandMap) };
+    const data = { from, to, brandId, daily, brands: Object.values(brandMap) };
     ppcCache.set(key, { data, at: Date.now() });
     if (ppcCache.size > 30) { const oldest = [...ppcCache.entries()].sort((a, b) => a[1].at - b[1].at)[0]; ppcCache.delete(oldest[0]); }
     res.json(data);
