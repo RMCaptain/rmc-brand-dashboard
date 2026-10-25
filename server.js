@@ -5820,7 +5820,7 @@ app.get('/api/ppc', async (req, res) => {
     const r2 = v => Math.round(v * 100) / 100;
     const zero = () => ({ spendCad: 0, spendUsd: 0, salesCad: 0, salesUsd: 0, clicks: 0, impressions: 0, orders: 0 });
     const dailyMap = {};
-    const dayAt = d => dailyMap[d] || (dailyMap[d] = { date: d, spendCad: 0, spendUsd: 0, salesCad: 0, salesUsd: 0, clicks: 0, orders: 0 });
+    const dayAt = d => dailyMap[d] || (dailyMap[d] = { date: d, spendCad: 0, spendUsd: 0, salesCad: 0, salesUsd: 0, revCad: 0, revUsd: 0, clicks: 0, orders: 0 });
     const brandMap = {};
     const brandAt = id => brandMap[id] || (brandMap[id] = { brandId: id, sp: zero(), sb: zero(), sd: zero(), revCad: 0, revUsd: 0, ppcUnits: 0 });
 
@@ -5844,6 +5844,7 @@ app.get('/api/ppc', async (req, res) => {
         b.revCad += Number(r.revenue_cad || 0); b.revUsd += Number(r.revenue_usd || 0);
         const d = dayAt(r.date);
         d.spendCad += sCad; d.spendUsd += sUsd; d.salesCad += aCad; d.salesUsd += aUsd;
+        d.revCad += Number(r.revenue_cad || 0); d.revUsd += Number(r.revenue_usd || 0);   // daily TACOS base
         d.clicks += Number(r.ad_clicks || 0); d.orders += Number(r.ad_orders_7d ?? r.ad_orders ?? 0);
       }
       if (!data || data.length < 1000) break;
@@ -5887,7 +5888,7 @@ app.get('/api/ppc', async (req, res) => {
       b.revCad = r2(b.revCad); b.revUsd = r2(b.revUsd);
     }
     const daily = Object.values(dailyMap).sort((a, b) => a.date < b.date ? -1 : 1)
-      .map(d => ({ ...d, spendCad: r2(d.spendCad), spendUsd: r2(d.spendUsd), salesCad: r2(d.salesCad), salesUsd: r2(d.salesUsd) }));
+      .map(d => ({ ...d, spendCad: r2(d.spendCad), spendUsd: r2(d.spendUsd), salesCad: r2(d.salesCad), salesUsd: r2(d.salesUsd), revCad: r2(d.revCad), revUsd: r2(d.revUsd) }));
 
     const data = { from, to, brandId, daily, brands: Object.values(brandMap) };
     ppcCache.set(key, { data, at: Date.now() });

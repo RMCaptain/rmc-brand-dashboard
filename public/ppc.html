@@ -79,11 +79,11 @@
 
     <!-- Charts: one axis each (money bars; ACOS strip below shares the days) -->
     <div class="rmc-card p-4 mb-3">
-      <p class="text-xs font-semibold mb-2" style="color:var(--text-3)">AD SPEND VS PPC SALES — DAILY</p>
+      <p class="text-xs font-semibold mb-2" style="color:var(--text-3)">AD SPEND VS PPC SALES — DAILY <span class="font-normal">· ACOS % line on the right axis</span></p>
       <div style="height:240px"><canvas id="spendChart"></canvas></div>
     </div>
     <div class="rmc-card p-4 mb-6">
-      <p class="text-xs font-semibold mb-2" style="color:var(--text-3)">ACOS % — DAILY</p>
+      <p class="text-xs font-semibold mb-2" style="color:var(--text-3)">TACOS % — DAILY <span class="font-normal">· ad spend ÷ total sales</span></p>
       <div style="height:110px"><canvas id="acosChart"></canvas></div>
     </div>
 
@@ -231,6 +231,7 @@
       const spend = days.map(d => val(d.spendCad, d.spendUsd));
       const sales = days.map(d => val(d.salesCad, d.salesUsd));
       const acos = days.map((d, i) => sales[i] > 0 ? spend[i] / sales[i] * 100 : null);
+      const tacos = days.map((d, i) => { const rev = val(d.revCad, d.revUsd); return rev > 0 ? spend[i] / rev * 100 : null; });
       const gridColor = 'rgba(255,255,255,0.05)';
       const tickColor = '#7B8FAF';
       if (spendChart) spendChart.destroy();
@@ -239,25 +240,32 @@
       spendChart = new Chart(document.getElementById('spendChart'), {
         type: 'bar',
         data: { labels, datasets: [
-          { label: 'Ad spend', data: spend, backgroundColor: C_SPEND, borderRadius: 4, maxBarThickness: 18 },
-          { label: 'PPC sales', data: sales, backgroundColor: C_SALES, borderRadius: 4, maxBarThickness: 18 },
+          { label: 'Ad spend', data: spend, backgroundColor: C_SPEND, borderRadius: 4, maxBarThickness: 18, order: 2 },
+          { label: 'PPC sales', data: sales, backgroundColor: C_SALES, borderRadius: 4, maxBarThickness: 18, order: 2 },
+          // ACOS overlay (Mike, 2026-10-25 — Sellerboard parity): % on its
+          // own right-hand axis, no grid from it so the money axis stays
+          // the chart's frame.
+          { label: 'ACOS', type: 'line', data: acos, yAxisID: 'y1', borderColor: C_ACOS, backgroundColor: C_ACOS, borderWidth: 2, pointRadius: 2, pointHoverRadius: 5, tension: 0.25, spanGaps: true, order: 1 },
         ] },
         options: {
           responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
           plugins: { legend: { labels: { color: tickColor, boxWidth: 10, boxHeight: 10 } },
-            tooltip: { callbacks: { label: c => `${c.dataset.label}: ${fmt(c.parsed.y)}` } } },
+            tooltip: { callbacks: { label: c => c.dataset.label === 'ACOS'
+              ? `ACOS: ${c.parsed.y == null ? '—' : c.parsed.y.toFixed(1) + '%'}`
+              : `${c.dataset.label}: ${fmt(c.parsed.y)}` } } },
           scales: {
             x: { grid: { display: false }, ticks: { color: tickColor, maxTicksLimit: 16 } },
             y: { grid: { color: gridColor }, ticks: { color: tickColor, callback: v => MpScope.curSym() + v.toLocaleString() } },
+            y1: { position: 'right', grid: { drawOnChartArea: false }, ticks: { color: C_ACOS, callback: v => v + '%' } },
           },
         },
       });
       acosChart = new Chart(document.getElementById('acosChart'), {
         type: 'line',
-        data: { labels, datasets: [{ label: 'ACOS', data: acos, borderColor: C_ACOS, borderWidth: 2, pointRadius: 2, pointHoverRadius: 5, tension: 0.25, spanGaps: true }] },
+        data: { labels, datasets: [{ label: 'TACOS', data: tacos, borderColor: C_ACOS, borderWidth: 2, pointRadius: 2, pointHoverRadius: 5, tension: 0.25, spanGaps: true }] },
         options: {
           responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
-          plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `ACOS: ${c.parsed.y == null ? '—' : c.parsed.y.toFixed(1) + '%'}` } } },
+          plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `TACOS: ${c.parsed.y == null ? '—' : c.parsed.y.toFixed(2) + '%'}` } } },
           scales: {
             x: { grid: { display: false }, ticks: { color: tickColor, maxTicksLimit: 16 } },
             y: { grid: { color: gridColor }, ticks: { color: tickColor, callback: v => v + '%' } },
