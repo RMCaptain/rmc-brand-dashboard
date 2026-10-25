@@ -101,7 +101,10 @@
           <button onclick="setTab('brands')" id="tab-brands" class="view-tab active">By Brand</button>
           <button onclick="setTab('campaigns')" id="tab-campaigns" class="view-tab">Campaigns</button>
         </div>
-        <span id="tableNote" class="text-xs" style="color:var(--text-3)"></span>
+        <div class="flex items-center gap-3 flex-wrap">
+          <span id="tableNote" class="text-xs" style="color:var(--text-3)"></span>
+          <button id="colBtn" onclick="toggleColMenu(event)" class="rmc-select" style="width:auto;font-size:12px;padding:5px 10px;cursor:pointer" title="Show/hide columns — drag headers to reorder">Columns ▾</button>
+        </div>
       </div>
       <div class="overflow-x-auto">
         <table class="w-full text-xs" id="ppcTable">
@@ -328,8 +331,106 @@
       });
     }
 
-    const th = (lbl, col, right = true) => `<th class="sortable-th ${right ? 'text-right' : 'text-left'} cursor-pointer select-none hover:text-white px-3 py-2" onclick="sortBy('${col}')" style="color:var(--text-3)">${lbl}${sortCol === col ? (sortDir < 0 ? ' ↓' : ' ↑') : ''}</th>`;
-    function sortBy(col) { if (activeTab === 'brands') { sortDir = sortCol === col ? -sortDir : -1; sortCol = col; } else { campSortDir = campSortCol === col ? -campSortDir : -1; campSortCol = col; } renderTable(); }
+    // ── Column model (Mike, 2026-10-25): both tables render from ordered,
+    // hideable column defs. Order + hidden sets persist per table; drag a
+    // header to reorder, the Columns button shows/hides. The name column is
+    // locked (always first, always visible).
+    const BRAND_COLS = [
+      { id: 'name', label: 'Brand', left: true, locked: true },
+      { id: 'spend', label: 'Ad Spend' }, { id: 'clicks', label: 'Clicks' },
+      { id: 'impressions', label: 'Impr.' }, { id: 'ctr', label: 'CTR' },
+      { id: 'orders', label: 'Orders' }, { id: 'cvr', label: 'CVR' },
+      { id: 'cpc', label: 'CPC' }, { id: 'cpo', label: 'Cost/Order' },
+      { id: 'sales', label: 'PPC Sales' }, { id: 'units', label: 'PPC Units' },
+      { id: 'rev', label: 'Total Sales' }, { id: 'tacos', label: 'TACOS' },
+      { id: 'acos', label: 'ACOS' }, { id: 'roas', label: 'ROAS' },
+    ];
+    const CAMPAIGN_COLS = [
+      { id: 'name', label: 'Campaign', left: true, locked: true },
+      { id: 'profile', label: 'Profile' }, { id: 'state', label: 'State', left: true },
+      { id: 'budget', label: 'Budget' }, { id: 'cost', label: 'Spend' },
+      { id: 'clicks', label: 'Clicks' }, { id: 'impressions', label: 'Impr.' },
+      { id: 'orders', label: 'Orders' }, { id: 'sales', label: 'Sales' },
+      { id: 'acosV', label: 'ACOS' }, { id: 'roasV', label: 'ROAS' },
+    ];
+    let colState = (() => { try { return JSON.parse(localStorage.getItem('ppcColState')) || {}; } catch { return {}; } })();
+    function saveColState() { localStorage.setItem('ppcColState', JSON.stringify(colState)); }
+    function defsFor(tab) { return tab === 'brands' ? BRAND_COLS : CAMPAIGN_COLS; }
+    function orderedDefs(tab) {
+      const defs = defsFor(tab);
+      const order = (colState[tab]?.order || []).filter(id => defs.some(d => d.id === id));
+      return [...order.map(id => defs.find(d => d.id === id)), ...defs.filter(d => !order.includes(d.id))];
+    }
+    function visibleDefs(tab) {
+      const hidden = new Set(colState[tab]?.hidden || []);
+      return orderedDefs(tab).filter(d => d.locked || !hidden.has(d.id));
+    }
+
+    const th = (lbl, col, right = true, locked = false) => `<th class="sortable-th ${right ? 'text-right' : 'text-left'} cursor-pointer select-none hover:text-white px-3 py-2" onclick="sortBy('${col}')" data-colid="${col}" ${locked ? '' : 'draggable="true"'} title="Click to sort${locked ? '' : ' · drag to reorder'}" style="color:var(--text-3)">${lbl}${(activeTab === 'brands' ? sortCol : campSortCol) === col ? ((activeTab === 'brands' ? sortDir : campSortDir) < 0 ? ' ↓' : ' ↑') : ''}</th>`;
+    function sortBy(col) {
+      if (col === 'name' && activeTab === 'campaigns') { campSortDir = campSortCol === col ? -campSortDir : -1; campSortCol = col; renderTable(); return; }
+      if (activeTab === 'brands') { sortDir = sortCol === col ? -sortDir : -1; sortCol = col; } else { campSortDir = campSortCol === col ? -campSortDir : -1; campSortCol = col; }
+      renderTable();
+    }
+
+    // Header drag & drop → reorder the active tab's columns.
+    let dragColId = null;
+    function bindHeaderDnD() {
+      const ths = document.querySelectorAll('#ppcThead th[data-colid]');
+      ths.forEach(el => {
+        el.addEventListener('dragstart', e => { dragColId = el.dataset.colid; e.dataTransfer.effectAllowed = 'move'; });
+        el.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; });
+        el.addEventListener('drop', e => {
+          e.preventDefault();
+          const target = el.dataset.colid;
+          if (!dragColId || dragColId === target) return;
+          const order = orderedDefs(activeTab).map(d => d.id);
+          const fromI = order.indexOf(dragColId), toI = order.indexOf(target);
+          if (fromI < 0 || toI < 0 || toI === 0) return;   // never displace the locked name column
+          order.splice(toI, 0, order.splice(fromI, 1)[0]);
+          (colState[activeTab] = colState[activeTab] || {}).order = order;
+          saveColState();
+          dragColId = null;
+          renderTable();
+        });
+      });
+    }
+
+    // Columns picker (portal dropdown, same pattern as the app's menus).
+    let colMenuEl = null;
+    function closeColMenu() { if (colMenuEl) { colMenuEl.remove(); colMenuEl = null; } }
+    function toggleColMenu(e) {
+      e?.stopPropagation?.();
+      if (colMenuEl) return closeColMenu();
+      const btn = document.getElementById('colBtn');
+      const r = btn.getBoundingClientRect();
+      const hidden = new Set(colState[activeTab]?.hidden || []);
+      const menu = document.createElement('div');
+      menu.className = 'p-2 rounded-lg';
+      const mw = 220;
+      menu.style.cssText = `position:fixed;top:${r.bottom + 6}px;left:${Math.max(8, Math.min(r.right - mw, window.innerWidth - mw - 8))}px;width:${mw}px;max-height:70vh;overflow-y:auto;z-index:1000;background:#0e1524;border:1px solid #1f2937;box-shadow:0 8px 30px rgba(0,0,0,0.6)`;
+      menu.innerHTML = orderedDefs(activeTab).map(d => `
+        <label class="flex items-center gap-2 px-2 py-1.5 text-sm rounded ${d.locked ? '' : 'cursor-pointer hover:bg-white/5'}" style="color:var(--text)">
+          <input type="checkbox" data-colid="${d.id}" ${d.locked ? 'checked disabled' : hidden.has(d.id) ? '' : 'checked'} style="accent-color:#537D30" />
+          ${d.label}
+        </label>`).join('') + `
+        <div class="mt-1 pt-1" style="border-top:1px solid #1f2937">
+          <button id="colReset" class="w-full text-left px-2 py-1.5 text-xs rounded hover:bg-white/5" style="color:#8CBF5A">Reset columns</button>
+        </div>`;
+      menu.addEventListener('click', ev => ev.stopPropagation());
+      menu.querySelectorAll('input[data-colid]').forEach(cb => cb.addEventListener('change', () => {
+        const st = (colState[activeTab] = colState[activeTab] || {});
+        const h = new Set(st.hidden || []);
+        cb.checked ? h.delete(cb.dataset.colid) : h.add(cb.dataset.colid);
+        st.hidden = [...h];
+        saveColState();
+        renderTable();
+      }));
+      menu.querySelector('#colReset').addEventListener('click', () => { delete colState[activeTab]; saveColState(); closeColMenu(); renderTable(); });
+      document.body.appendChild(menu);
+      colMenuEl = menu;
+      setTimeout(() => document.addEventListener('click', function onDoc() { closeColMenu(); document.removeEventListener('click', onDoc); }), 0);
+    }
 
     function renderTable() {
       if (activeTab === 'brands') renderBrandTable(); else renderCampaignTable();
@@ -353,56 +454,65 @@
         const av = a[sortCol] ?? -Infinity, bv = b[sortCol] ?? -Infinity;
         return sortDir * (av < bv ? -1 : av > bv ? 1 : 0);
       });
-      thead.innerHTML = `<tr style="border-bottom:1px solid var(--border,#1f2937)">
-        ${th('Brand', 'name', false)}${th('Ad Spend', 'spend')}${th('Clicks', 'clicks')}${th('Impr.', 'impressions')}${th('CTR', 'ctr')}${th('Orders', 'orders')}${th('CVR', 'cvr')}${th('CPC', 'cpc')}${th('Cost/Order', 'cpo')}${th('PPC Sales', 'sales')}${th('PPC Units', 'units')}${th('Total Sales', 'rev')}${th('TACOS', 'tacos')}${th('ACOS', 'acos')}${th('ROAS', 'roas')}
-      </tr>`;
+      const cols = visibleDefs('brands');
+      thead.innerHTML = `<tr style="border-bottom:1px solid var(--border,#1f2937)">${cols.map(d => th(d.label, d.id, !d.left, d.locked)).join('')}</tr>`;
       const acosColor = v => v == null ? 'var(--text-3)' : v <= 15 ? '#34d399' : v <= 30 ? '#fbbf24' : '#f87171';
-      tbody.innerHTML = rows.map(r => `<tr class="brand-row cursor-pointer" style="border-bottom:1px solid var(--border,#1f2937)" onclick="location.href='/brand.html?id=${r.brandId}'">
-        <td class="px-3 py-2.5"><span class="inline-block w-2 h-2 rounded-full mr-2" style="background:${colorOf(r.brandId)}"></span><span class="font-medium" style="color:var(--text)">${nameOf(r.brandId)}</span></td>
-        <td class="px-3 py-2.5 text-right" style="color:var(--text-2)" title="SP ${fmt(r.spSpend)} · SB ${fmt(r.sbSpend)} · SD ${fmt(r.sdSpend)}">${fmt(r.spend)}</td>
-        <td class="px-3 py-2.5 text-right" style="color:var(--text-2)">${r.clicks.toLocaleString()}</td>
-        <td class="px-3 py-2.5 text-right" style="color:var(--text-2)">${r.impressions.toLocaleString()}</td>
-        <td class="px-3 py-2.5 text-right" style="color:var(--text-2)">${r.ctr != null ? r.ctr.toFixed(2) + '%' : '—'}</td>
-        <td class="px-3 py-2.5 text-right" style="color:var(--text-2)">${r.orders.toLocaleString()}</td>
-        <td class="px-3 py-2.5 text-right" style="color:var(--text-2)">${r.cvr != null ? r.cvr.toFixed(1) + '%' : '—'}</td>
-        <td class="px-3 py-2.5 text-right" style="color:var(--text-2)">${r.cpc != null ? fmt(r.cpc) : '—'}</td>
-        <td class="px-3 py-2.5 text-right" style="color:var(--text-2)">${r.cpo != null ? fmt(r.cpo) : '—'}</td>
-        <td class="px-3 py-2.5 text-right font-medium" style="color:var(--text)">${fmt(r.sales)}</td>
-        <td class="px-3 py-2.5 text-right" style="color:var(--text-2)" title="PPC units per Sellerboard attribution">${r.units.toLocaleString()}</td>
-        <td class="px-3 py-2.5 text-right font-medium" style="color:var(--text)">${fmt(r.rev)}</td>
-        <td class="px-3 py-2.5 text-right" style="color:${acosColor(r.tacos)}">${r.tacos != null ? r.tacos.toFixed(2) + '%' : '—'}</td>
-        <td class="px-3 py-2.5 text-right" style="color:${acosColor(r.acos)}">${r.acos != null ? r.acos.toFixed(2) + '%' : '—'}</td>
-        <td class="px-3 py-2.5 text-right" style="color:var(--text-2)">${r.roas != null ? r.roas.toFixed(2) : '—'}</td>
-      </tr>`).join('');
+      const td = (html, { right = true, color = 'var(--text-2)', extra = '' } = {}) => `<td class="px-3 py-2.5 ${right ? 'text-right' : ''}" style="color:${color}" ${extra}>${html}</td>`;
+      const cell = (id, r) => {
+        switch (id) {
+          case 'name': return `<td class="px-3 py-2.5"><span class="inline-block w-2 h-2 rounded-full mr-2" style="background:${colorOf(r.brandId)}"></span><span class="font-medium" style="color:var(--text)">${nameOf(r.brandId)}</span></td>`;
+          case 'spend': return td(fmt(r.spend), { extra: `title="SP ${fmt(r.spSpend)} · SB ${fmt(r.sbSpend)} · SD ${fmt(r.sdSpend)}"` });
+          case 'clicks': return td(r.clicks.toLocaleString());
+          case 'impressions': return td(r.impressions.toLocaleString());
+          case 'ctr': return td(r.ctr != null ? r.ctr.toFixed(2) + '%' : '—');
+          case 'orders': return td(r.orders.toLocaleString());
+          case 'cvr': return td(r.cvr != null ? r.cvr.toFixed(1) + '%' : '—');
+          case 'cpc': return td(r.cpc != null ? fmt(r.cpc) : '—');
+          case 'cpo': return td(r.cpo != null ? fmt(r.cpo) : '—');
+          case 'sales': return td(`<span class="font-medium">${fmt(r.sales)}</span>`, { color: 'var(--text)' });
+          case 'units': return td(r.units.toLocaleString(), { extra: 'title="PPC units per Sellerboard attribution"' });
+          case 'rev': return td(`<span class="font-medium">${fmt(r.rev)}</span>`, { color: 'var(--text)' });
+          case 'tacos': return td(r.tacos != null ? r.tacos.toFixed(2) + '%' : '—', { color: acosColor(r.tacos) });
+          case 'acos': return td(r.acos != null ? r.acos.toFixed(2) + '%' : '—', { color: acosColor(r.acos) });
+          case 'roas': return td(r.roas != null ? r.roas.toFixed(2) : '—');
+          default: return '<td></td>';
+        }
+      };
+      tbody.innerHTML = rows.map(r => `<tr class="brand-row cursor-pointer" style="border-bottom:1px solid var(--border,#1f2937)" onclick="location.href='/brand.html?id=${r.brandId}'">${cols.map(d => cell(d.id, r)).join('')}</tr>`).join('');
       if (restRev > 0.005) {
-        tbody.innerHTML += `<tr style="border-bottom:1px solid var(--border,#1f2937)">
-          <td class="px-3 py-2.5" style="color:var(--text-3)" title="${rest.map(r => nameOf(r.brandId)).join(', ')}">No PPC activity (${rest.length} brand${rest.length === 1 ? '' : 's'})</td>
-          <td class="px-3 py-2.5 text-right" style="color:var(--text-3)">—</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td>
-          <td class="px-3 py-2.5 text-right" style="color:var(--text-3)">—</td><td></td>
-          <td class="px-3 py-2.5 text-right" style="color:var(--text-2)">${fmt(restRev)}</td>
-          <td></td><td></td><td></td>
-        </tr>`;
+        const restCell = id => id === 'name'
+          ? `<td class="px-3 py-2.5" style="color:var(--text-3)" title="${rest.map(r => nameOf(r.brandId)).join(', ')}">No PPC activity (${rest.length} brand${rest.length === 1 ? '' : 's'})</td>`
+          : id === 'rev' ? td(fmt(restRev))
+          : (id === 'spend' || id === 'sales') ? td('—', { color: 'var(--text-3)' })
+          : '<td></td>';
+        tbody.innerHTML += `<tr style="border-bottom:1px solid var(--border,#1f2937)">${cols.map(d => restCell(d.id)).join('')}</tr>`;
       }
       // Grand Total — includes the no-PPC brands' sales so TACOS here equals
       // the KPI tile's account TACOS.
       const t = rows.reduce((a, r) => ({ spend: a.spend + r.spend, sales: a.sales + r.sales, clicks: a.clicks + r.clicks, impressions: a.impressions + r.impressions, orders: a.orders + r.orders, rev: a.rev + r.rev, units: a.units + r.units }), { spend: 0, sales: 0, clicks: 0, impressions: 0, orders: 0, rev: restRev, units: 0 });
-      tbody.innerHTML += `<tr style="border-top:2px solid var(--border-hi,#2a3650)">
-        <td class="px-3 py-2.5 font-semibold" style="color:var(--text)">Grand Total</td>
-        <td class="px-3 py-2.5 text-right font-semibold" style="color:var(--text)">${fmt(t.spend)}</td>
-        <td class="px-3 py-2.5 text-right font-semibold" style="color:var(--text)">${t.clicks.toLocaleString()}</td>
-        <td class="px-3 py-2.5 text-right font-semibold" style="color:var(--text)">${t.impressions.toLocaleString()}</td>
-        <td class="px-3 py-2.5 text-right font-semibold" style="color:var(--text)">${pct(t.clicks, t.impressions)}</td>
-        <td class="px-3 py-2.5 text-right font-semibold" style="color:var(--text)">${t.orders.toLocaleString()}</td>
-        <td class="px-3 py-2.5 text-right font-semibold" style="color:var(--text)">${pct(t.orders, t.clicks, 1)}</td>
-        <td class="px-3 py-2.5 text-right font-semibold" style="color:var(--text)">${t.clicks > 0 ? fmt(t.spend / t.clicks) : '—'}</td>
-        <td class="px-3 py-2.5 text-right font-semibold" style="color:var(--text)">${t.orders > 0 ? fmt(t.spend / t.orders) : '—'}</td>
-        <td class="px-3 py-2.5 text-right font-semibold" style="color:var(--text)">${fmt(t.sales)}</td>
-        <td class="px-3 py-2.5 text-right font-semibold" style="color:var(--text)">${t.units.toLocaleString()}</td>
-        <td class="px-3 py-2.5 text-right font-semibold" style="color:var(--text)">${fmt(t.rev)}</td>
-        <td class="px-3 py-2.5 text-right font-semibold" style="color:var(--text)">${pct(t.spend, t.rev)}</td>
-        <td class="px-3 py-2.5 text-right font-semibold" style="color:var(--text)">${pct(t.spend, t.sales)}</td>
-        <td class="px-3 py-2.5 text-right font-semibold" style="color:var(--text)">${t.spend > 0 ? (t.sales / t.spend).toFixed(2) : '—'}</td>
-      </tr>`;
+      const gtd = html => `<td class="px-3 py-2.5 text-right font-semibold" style="color:var(--text)">${html}</td>`;
+      const totalCell = id => {
+        switch (id) {
+          case 'name': return `<td class="px-3 py-2.5 font-semibold" style="color:var(--text)">Grand Total</td>`;
+          case 'spend': return gtd(fmt(t.spend));
+          case 'clicks': return gtd(t.clicks.toLocaleString());
+          case 'impressions': return gtd(t.impressions.toLocaleString());
+          case 'ctr': return gtd(pct(t.clicks, t.impressions));
+          case 'orders': return gtd(t.orders.toLocaleString());
+          case 'cvr': return gtd(pct(t.orders, t.clicks, 1));
+          case 'cpc': return gtd(t.clicks > 0 ? fmt(t.spend / t.clicks) : '—');
+          case 'cpo': return gtd(t.orders > 0 ? fmt(t.spend / t.orders) : '—');
+          case 'sales': return gtd(fmt(t.sales));
+          case 'units': return gtd(t.units.toLocaleString());
+          case 'rev': return gtd(fmt(t.rev));
+          case 'tacos': return gtd(pct(t.spend, t.rev));
+          case 'acos': return gtd(pct(t.spend, t.sales));
+          case 'roas': return gtd(t.spend > 0 ? (t.sales / t.spend).toFixed(2) : '—');
+          default: return '<td></td>';
+        }
+      };
+      tbody.innerHTML += `<tr style="border-top:2px solid var(--border-hi,#2a3650)">${cols.map(d => totalCell(d.id)).join('')}</tr>`;
+      bindHeaderDnD();
     }
 
     function renderCampaignTable() {
@@ -416,15 +526,13 @@
       document.getElementById('tableNote').textContent = w
         ? `Sponsored Products · fixed trailing window ${w.start} → ${w.end} (search-term report) — not the page's period`
         : 'Sponsored Products · trailing-30d search-term report window';
-      const cth = (lbl, col, right = true) => `<th class="sortable-th ${right ? 'text-right' : 'text-left'} cursor-pointer select-none hover:text-white px-3 py-2" onclick="sortBy('${col}')" style="color:var(--text-3)">${lbl}${campSortCol === col ? (campSortDir < 0 ? ' ↓' : ' ↑') : ''}</th>`;
       rows = [...rows].sort((a, b) => {
         if (campSortCol === 'name') return campSortDir * String(a.name || '').localeCompare(String(b.name || ''));
         const av = a[campSortCol] ?? -Infinity, bv = b[campSortCol] ?? -Infinity;
         return campSortDir * (av < bv ? -1 : av > bv ? 1 : 0);
       });
-      thead.innerHTML = `<tr style="border-bottom:1px solid var(--border,#1f2937)">
-        ${cth('Campaign', 'name', false)}${cth('Profile', 'profile')}${cth('State', 'state', false)}${cth('Budget', 'budget')}${cth('Spend', 'cost')}${cth('Clicks', 'clicks')}${cth('Impr.', 'impressions')}${cth('Orders', 'orders')}${cth('Sales', 'sales')}${cth('ACOS', 'acosV')}${cth('ROAS', 'roasV')}
-      </tr>`;
+      const cols = visibleDefs('campaigns');
+      thead.innerHTML = `<tr style="border-bottom:1px solid var(--border,#1f2937)">${cols.map(d => th(d.label, d.id, !d.left, d.locked)).join('')}</tr>`;
       // Spend/sales arrive in the profile's native currency — convert like everything else.
       const conv = (v, profile) => MpScope.toDisplay(v || 0, profile === 'CA' ? 'CAD' : 'USD');
       const acosColor = v => v == null ? 'var(--text-3)' : v <= 15 ? '#34d399' : v <= 30 ? '#fbbf24' : '#f87171';
@@ -433,19 +541,25 @@
         c.acosV = c.salesDisp > 0 ? c.costDisp / c.salesDisp * 100 : null;
         c.roasV = c.costDisp > 0 ? c.salesDisp / c.costDisp : null;
       }
-      tbody.innerHTML = rows.map(c => `<tr style="border-bottom:1px solid var(--border,#1f2937)">
-        <td class="px-3 py-2.5" style="color:var(--text)"><span class="font-medium">${c.name || c.campaignId}</span>${(c.brands || []).length ? `<span class="ml-2 text-[10px]" style="color:var(--text-3)">${c.brands.join(', ')}</span>` : ''}</td>
-        <td class="px-3 py-2.5 text-right" style="color:var(--text-2)">${c.profile || '—'}</td>
-        <td class="px-3 py-2.5 ${c.state === 'enabled' ? 'text-emerald-400' : ''}" style="${c.state === 'enabled' ? '' : 'color:var(--text-3)'}">${c.state || '—'}</td>
-        <td class="px-3 py-2.5 text-right" style="color:var(--text-2)">${c.budget != null ? conv(Number(c.budget), c.profile).toFixed(0) : '—'}</td>
-        <td class="px-3 py-2.5 text-right" style="color:var(--text-2)">${fmt(c.costDisp)}</td>
-        <td class="px-3 py-2.5 text-right" style="color:var(--text-2)">${(c.clicks || 0).toLocaleString()}</td>
-        <td class="px-3 py-2.5 text-right" style="color:var(--text-2)">${(c.impressions || 0).toLocaleString()}</td>
-        <td class="px-3 py-2.5 text-right" style="color:var(--text-2)">${(c.orders || 0).toLocaleString()}</td>
-        <td class="px-3 py-2.5 text-right font-medium" style="color:var(--text)">${fmt(c.salesDisp)}</td>
-        <td class="px-3 py-2.5 text-right" style="color:${acosColor(c.acosV)}">${c.acosV != null ? c.acosV.toFixed(2) + '%' : '—'}</td>
-        <td class="px-3 py-2.5 text-right" style="color:var(--text-2)">${c.roasV != null ? c.roasV.toFixed(2) : '—'}</td>
-      </tr>`).join('') || '<tr><td class="px-4 py-6 text-center" style="color:var(--text-3)">No campaigns for this scope.</td></tr>';
+      const td = (html, { right = true, color = 'var(--text-2)' } = {}) => `<td class="px-3 py-2.5 ${right ? 'text-right' : ''}" style="color:${color}">${html}</td>`;
+      const cell = (id, c) => {
+        switch (id) {
+          case 'name': return `<td class="px-3 py-2.5" style="color:var(--text)"><span class="font-medium">${c.name || c.campaignId}</span>${(c.brands || []).length ? `<span class="ml-2 text-[10px]" style="color:var(--text-3)">${c.brands.join(', ')}</span>` : ''}</td>`;
+          case 'profile': return td(c.profile || '—');
+          case 'state': return `<td class="px-3 py-2.5 ${c.state === 'enabled' ? 'text-emerald-400' : ''}" style="${c.state === 'enabled' ? '' : 'color:var(--text-3)'}">${c.state || '—'}</td>`;
+          case 'budget': return td(c.budget != null ? conv(Number(c.budget), c.profile).toFixed(0) : '—');
+          case 'cost': return td(fmt(c.costDisp));
+          case 'clicks': return td((c.clicks || 0).toLocaleString());
+          case 'impressions': return td((c.impressions || 0).toLocaleString());
+          case 'orders': return td((c.orders || 0).toLocaleString());
+          case 'sales': return td(`<span class="font-medium">${fmt(c.salesDisp)}</span>`, { color: 'var(--text)' });
+          case 'acosV': return td(c.acosV != null ? c.acosV.toFixed(2) + '%' : '—', { color: acosColor(c.acosV) });
+          case 'roasV': return td(c.roasV != null ? c.roasV.toFixed(2) : '—');
+          default: return '<td></td>';
+        }
+      };
+      tbody.innerHTML = rows.map(c => `<tr style="border-bottom:1px solid var(--border,#1f2937)">${cols.map(d => cell(d.id, c)).join('')}</tr>`).join('') || '<tr><td class="px-4 py-6 text-center" style="color:var(--text-3)">No campaigns for this scope.</td></tr>';
+      bindHeaderDnD();
     }
 
     function setTab(tab) {
