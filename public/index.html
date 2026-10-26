@@ -338,8 +338,8 @@
               total += toDisplay(actual ? m.cogsSb : m.units * cogsFor(brand, sku.asin, m.code), m.currency);
             }
           } else {
-            const cogsCA = brand.cogsPerMarketplace?.[sku.asin]?.CA ?? (brand.marketplace !== 'US' ? brand.cogs?.[sku.asin] : null) ?? 0;
-            const cogsUS = brand.cogsPerMarketplace?.[sku.asin]?.US ?? (brand.marketplace === 'US' ? brand.cogs?.[sku.asin] : null) ?? 0;
+            const cogsCA = brand.cogsSb?.[sku.asin]?.CA?.unit ?? brand.cogsPerMarketplace?.[sku.asin]?.CA ?? (brand.marketplace !== 'US' ? brand.cogs?.[sku.asin] : null) ?? 0;
+            const cogsUS = brand.cogsSb?.[sku.asin]?.US?.unit ?? brand.cogsPerMarketplace?.[sku.asin]?.US ?? (brand.marketplace === 'US' ? brand.cogs?.[sku.asin] : null) ?? 0;
             const unitsCa = sku.unitsCad != null ? sku.unitsCad : (brand.marketplace !== 'US' ? sku.units : 0);
             const unitsUs = sku.unitsUsd != null ? sku.unitsUsd : (brand.marketplace === 'US' ? sku.units : 0);
             cad += unitsCa * cogsCA;
@@ -1435,8 +1435,8 @@
       const bm = presetData?.brands?.[brand.id];
       if (!bm?.skus) return { cad: 0, usd: 0 };
       for (const sku of bm.skus) {
-        const cogsCA = brand.cogsPerMarketplace?.[sku.asin]?.CA ?? (brand.marketplace !== 'US' ? brand.cogs?.[sku.asin] : null) ?? 0;
-        const cogsUS = brand.cogsPerMarketplace?.[sku.asin]?.US ?? (brand.marketplace === 'US' ? brand.cogs?.[sku.asin] : null) ?? 0;
+        const cogsCA = brand.cogsSb?.[sku.asin]?.CA?.unit ?? brand.cogsPerMarketplace?.[sku.asin]?.CA ?? (brand.marketplace !== 'US' ? brand.cogs?.[sku.asin] : null) ?? 0;
+        const cogsUS = brand.cogsSb?.[sku.asin]?.US?.unit ?? brand.cogsPerMarketplace?.[sku.asin]?.US ?? (brand.marketplace === 'US' ? brand.cogs?.[sku.asin] : null) ?? 0;
         const unitsCa = sku.unitsCad != null ? sku.unitsCad : (brand.marketplace !== 'US' ? sku.units : 0);
         const unitsUs = sku.unitsUsd != null ? sku.unitsUsd : (brand.marketplace === 'US' ? sku.units : 0);
         cad += unitsCa * cogsCA;

@@ -943,8 +943,8 @@
         (function() {
           const cmp = brand.cogsPerMarketplace?.[s.asin];
           const legacyCogs = brand.cogs?.[s.asin];
-          const cogsCA = cmp?.CA ?? (brand.marketplace !== 'US' ? legacyCogs : null);
-          const cogsUS = cmp?.US ?? (brand.marketplace === 'US' ? legacyCogs : null);
+          const cogsCA = brand.cogsSb?.[s.asin]?.CA?.unit ?? cmp?.CA ?? (brand.marketplace !== 'US' ? legacyCogs : null);
+          const cogsUS = brand.cogsSb?.[s.asin]?.US?.unit ?? cmp?.US ?? (brand.marketplace === 'US' ? legacyCogs : null);
           const parts = [];
           if (cogsCA != null) parts.push('<span style="color:#60a5fa;font-size:9px;font-weight:600">CA</span> $' + Number(cogsCA).toFixed(2));
           if (cogsUS != null) parts.push('<span style="color:#4ade80;font-size:9px;font-weight:600">US</span> $' + Number(cogsUS).toFixed(2));
