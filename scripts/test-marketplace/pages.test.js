@@ -224,6 +224,9 @@ const near = (a, b, what) => assert.ok(Math.abs(a - b) <= 0.01, `${what}: ${a} v
     const d2row = ppc.daily.find(d => d.date === pstSubtractDays(to, 1));
     near(d2row.spendCad, 9, 'ppc daily: SP + SB spend summed');
     near(d2row.salesCad, 38, 'ppc daily: SP + SB sales summed');
+    // Non-ads marketplace revenue rides revByMp (Sellerboard basis)
+    near(ppc.brands.find(b => b.brandId === 'zellies').revByMp.UK.sales, 40, 'ppc: zellies UK revenue via Sellerboard');
+    assert.ok(!ppc.brands.find(b => b.brandId === 'zellies').revByMp.CA, 'ppc: CA stays on the wide-table basis');
     const camps = await fetch(`${BASE}/api/ppc/campaigns`).then(r => r.json());
     assert.ok(Array.isArray(camps.campaigns), 'ppc campaigns: shape holds without seed data');
     // Brand scope: daily series + rollup for one brand only

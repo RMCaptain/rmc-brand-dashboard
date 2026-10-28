@@ -5902,23 +5902,45 @@ app.get('/api/ppc', async (req, res) => {
       if (!data || data.length < 1000) break;
     }
 
-    // PPC units (Sellerboard attribution — labeled as such in the UI)
+    // PPC units (Sellerboard attribution — labeled as such in the UI), plus
+    // per-marketplace revenue for marketplaces OUTSIDE the CA/US ads
+    // profiles (UK, Walmart…): they run no Amazon Ads, but their total
+    // sales still belong on the PPC page with true zeros for ad metrics
+    // (Mike, 2026-10-28). Sellerboard is their revenue source.
+    const MPcode = require('./sync/marketplaces').codeOf;
     for (let off = 0; ; off += 1000) {
       const { data, error } = await scope(supabase.from('sellerboard_daily')
-        .select('brand_id,units_ppc')
-        .gte('date', from).lte('date', to).gt('units_ppc', 0)
+        .select('date,brand_id,mp_id,currency,units_ppc,sales')
+        .gte('date', from).lte('date', to)
         .order('date').order('sku').range(off, off + 999));
       if (error) throw new Error(`sellerboard_daily read failed: ${error.message}`);
-      for (const r of (data || [])) brandAt(r.brand_id || 'unknown-brand').ppcUnits += Number(r.units_ppc || 0);
+      for (const r of (data || [])) {
+        const b = brandAt(r.brand_id || 'unknown-brand');
+        b.ppcUnits += Number(r.units_ppc || 0);
+        const code = MPcode(r.mp_id) || r.mp_id;
+        if (code === 'CA' || code === 'US') continue;   // CA/US revenue already rides the wide table
+        if (!(Number(r.sales) > 0)) continue;
+        const be = (b.revByMp = b.revByMp || {});
+        const bs = be[code] || (be[code] = { currency: r.currency, sales: 0 });
+        bs.sales += Number(r.sales) || 0;
+        const d = dayAt(r.date);
+        const de = (d.revByMp = d.revByMp || {});
+        const ds = de[code] || (de[code] = { currency: r.currency, sales: 0 });
+        ds.sales += Number(r.sales) || 0;
+      }
       if (!data || data.length < 1000) break;
     }
 
     for (const b of Object.values(brandMap)) {
       for (const slot of ['sp', 'sb', 'sd']) for (const k of ['spendCad', 'spendUsd', 'salesCad', 'salesUsd']) b[slot][k] = r2(b[slot][k]);
       b.revCad = r2(b.revCad); b.revUsd = r2(b.revUsd);
+      for (const e of Object.values(b.revByMp || {})) e.sales = r2(e.sales);
     }
     const daily = Object.values(dailyMap).sort((a, b) => a.date < b.date ? -1 : 1)
-      .map(d => ({ ...d, spendCad: r2(d.spendCad), spendUsd: r2(d.spendUsd), salesCad: r2(d.salesCad), salesUsd: r2(d.salesUsd), revCad: r2(d.revCad), revUsd: r2(d.revUsd) }));
+      .map(d => {
+        for (const e of Object.values(d.revByMp || {})) e.sales = r2(e.sales);
+        return { ...d, spendCad: r2(d.spendCad), spendUsd: r2(d.spendUsd), salesCad: r2(d.salesCad), salesUsd: r2(d.salesUsd), revCad: r2(d.revCad), revUsd: r2(d.revUsd) };
+      });
 
     const data = { from, to, brandId, daily, brands: Object.values(brandMap) };
     ppcCache.set(key, { data, at: Date.now() });

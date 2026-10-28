@@ -72,7 +72,7 @@
       </div>
     </div>
 
-    <p id="scopeNote" class="hidden text-xs mb-4" style="color:var(--warn,#f59e0b)">Amazon Ads run on the CA and US profiles only — this marketplace has no PPC data.</p>
+    <p id="scopeNote" class="hidden text-xs mb-4" style="color:var(--text-3)">Amazon Ads run on the CA and US profiles only — ad metrics on this marketplace are true zeros; sales are real (Sellerboard).</p>
 
     <!-- KPI tiles -->
     <div id="kpiRow" class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6"></div>
@@ -183,7 +183,29 @@
     const fmt = v => MpScope.fmt(v);
     const pct = (num, den, digits = 2) => den > 0 ? (num / den * 100).toFixed(digits) + '%' : '—';
 
+    // Total sales under the current scope. CA/US ride the wide columns
+    // (Amazon basis, unchanged); non-ads marketplaces (UK…) ride revByMp
+    // (Sellerboard basis); 'all' sums both so account TACOS covers every
+    // marketplace, matching the dashboard's all-marketplaces totals.
+    function revOf(o) {
+      if (!o) return 0;
+      const f = mpF();
+      if (f === 'CA') return MpScope.toDisplay(o.revCad || 0, 'CAD');
+      if (f === 'US') return MpScope.toDisplay(o.revUsd || 0, 'USD');
+      if (f === 'all') {
+        let v = MpScope.toDisplay(o.revCad || 0, 'CAD') + MpScope.toDisplay(o.revUsd || 0, 'USD');
+        for (const [code, e] of Object.entries(o.revByMp || {})) if (code !== 'CA' && code !== 'US') v += MpScope.toDisplay(e.sales, e.currency);
+        return v;
+      }
+      const e = o.revByMp?.[f];
+      return e ? MpScope.toDisplay(e.sales, e.currency) : 0;
+    }
+
     function slotVals(slot) {
+      // Non-ads marketplace scope: ads are true zeros, counts included
+      // (click/impression counts aren't marketplace-split, so they'd leak
+      // blended CA+US figures here otherwise).
+      if (adScoped()) return { spend: 0, sales: 0, clicks: 0, impressions: 0, orders: 0 };
       return { spend: val(slot.spendCad, slot.spendUsd), sales: val(slot.salesCad, slot.salesUsd), clicks: slot.clicks || 0, impressions: slot.impressions || 0, orders: slot.orders || 0 };
     }
     function brandRow(b) {
@@ -193,10 +215,10 @@
       const clicks = sp.clicks + sb.clicks + sd.clicks;
       const impressions = sp.impressions + sb.impressions + sd.impressions;
       const orders = sp.orders + sb.orders + sd.orders;
-      const rev = val(b.revCad, b.revUsd);
+      const rev = revOf(b);
       return {
         brandId: b.brandId, spend, sales, clicks, impressions, orders, rev,
-        units: b.ppcUnits || 0,
+        units: adScoped() ? 0 : (b.ppcUnits || 0),
         cpc: clicks > 0 ? spend / clicks : null,
         cpo: orders > 0 ? spend / orders : null,
         adShare: rev > 0 ? sales / rev * 100 : null,
@@ -219,7 +241,7 @@
 
     function renderKpis() {
       const el = document.getElementById('kpiRow');
-      if (!ppcData || adScoped()) { el.innerHTML = ''; return; }
+      if (!ppcData) { el.innerHTML = ''; return; }
       const rows = ppcData.brands.map(brandRow);
       const t = rows.reduce((a, r) => ({
         spend: a.spend + r.spend, sales: a.sales + r.sales, clicks: a.clicks + r.clicks,
@@ -246,14 +268,14 @@
       const spend = days.map(d => val(d.spendCad, d.spendUsd));
       const sales = days.map(d => val(d.salesCad, d.salesUsd));
       const acos = days.map((d, i) => sales[i] > 0 ? spend[i] / sales[i] * 100 : null);
-      const tacos = days.map((d, i) => { const rev = val(d.revCad, d.revUsd); return rev > 0 ? spend[i] / rev * 100 : null; });
+      const tacos = days.map((d, i) => { const rev = revOf(d); return rev > 0 ? spend[i] / rev * 100 : null; });
       const gridColor = 'rgba(255,255,255,0.05)';
       const tickColor = '#7B8FAF';
       if (spendChart) spendChart.destroy(); spendChart = null;
       if (acosChart) acosChart.destroy(); acosChart = null;
       if (splitChart) splitChart.destroy(); splitChart = null;
-      document.getElementById('splitCard').classList.toggle('hidden', !days.length || adScoped());
-      if (!window.Chart || !days.length || adScoped()) return;
+      document.getElementById('splitCard').classList.toggle('hidden', !days.length);
+      if (!window.Chart || !days.length) return;
 
       // Doughnut: SP / SB / SD share of ad spend for the period, scoped like
       // the KPIs. 2px surface-gap borders between slices; legend carries the
@@ -444,17 +466,17 @@
     function renderBrandTable() {
       document.getElementById('tableNote').textContent = '';
       const thead = document.getElementById('ppcThead'), tbody = document.getElementById('ppcTbody');
-      if (!ppcData || adScoped()) { thead.innerHTML = ''; tbody.innerHTML = '<tr><td class="px-4 py-6 text-center" style="color:var(--text-3)">No PPC data for this scope.</td></tr>'; return; }
+      if (!ppcData) { thead.innerHTML = ''; tbody.innerHTML = '<tr><td class="px-4 py-6 text-center" style="color:var(--text-3)">No PPC data for this scope.</td></tr>'; return; }
       const nameOf = id => (brandsData.find(b => b.id === id) || {}).name || id;
       const colorOf = id => (brandsData.find(b => b.id === id) || {}).color || '#64748b';
       const all = ppcData.brands.map(brandRow);
       // Show-all: no-PPC brands become full rows (their non-ad metrics show);
       // otherwise they fold into one muted row. Either way their sales stay
       // in the Grand Total so TACOS matches the KPI tile.
-      const rows = showAllBrands
+      const rows = (showAllBrands || adScoped())
         ? all.filter(r => r.spend > 0 || r.sales > 0 || r.rev > 0)
         : all.filter(r => r.spend > 0 || r.sales > 0);
-      const rest = showAllBrands ? [] : all.filter(r => !(r.spend > 0 || r.sales > 0) && r.rev > 0);
+      const rest = (showAllBrands || adScoped()) ? [] : all.filter(r => !(r.spend > 0 || r.sales > 0) && r.rev > 0);
       const restRev = rest.reduce((t, r) => t + r.rev, 0);
       const metaOf = id => brandsData.find(b => b.id === id) || {};
       rows.sort((a, b) => {
