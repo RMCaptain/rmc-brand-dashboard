@@ -93,6 +93,7 @@
               <th class="text-left min-w-64" style="padding-left:20px">Product</th>
               <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('units')">Units Sold <span class="sort-ind" data-col="units"></span></th>
               <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('revenue')">Sales <span class="sort-ind" data-col="revenue"></span></th>
+              <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('refundUnits')" title="Refunded units · refunds ÷ units sold">Returns <span class="sort-ind" data-col="refundUnits"></span></th>
               <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('cvr')">CVR <span class="sort-ind" data-col="cvr"></span></th>
               <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('buyBox')">Buy Box <span class="sort-ind" data-col="buyBox"></span></th>
               <th class="sortable-th text-right cursor-pointer select-none hover:text-white" onclick="sortBy('inventory')">Inventory <span class="sort-ind" data-col="inventory"></span></th>
@@ -105,7 +106,7 @@
             </tr>
           </thead>
           <tbody id="productTableBody">
-            <tr><td colspan="12" class="text-center py-8" style="color:var(--text-3)">Loading...</td></tr>
+            <tr><td colspan="13" class="text-center py-8" style="color:var(--text-3)">Loading...</td></tr>
           </tbody>
         </table>
         <div id="productPagination"></div>
@@ -119,6 +120,7 @@
               <th class="sortable-brand-th text-left cursor-pointer select-none hover:text-white" onclick="sortBrandBy('name')" style="padding-left:20px">Brand <span class="sort-brand-ind" data-col="name"></span></th>
               <th class="sortable-brand-th text-right cursor-pointer select-none hover:text-white" onclick="sortBrandBy('revenue')">Revenue <span class="sort-brand-ind" data-col="revenue"></span></th>
               <th class="sortable-brand-th text-right cursor-pointer select-none hover:text-white" onclick="sortBrandBy('units')">Units Sold <span class="sort-brand-ind" data-col="units"></span></th>
+              <th class="sortable-brand-th text-right cursor-pointer select-none hover:text-white" onclick="sortBrandBy('refundUnits')" title="Refunded units · refunds ÷ units sold">Returns <span class="sort-brand-ind" data-col="refundUnits"></span></th>
               <th class="sortable-brand-th text-right cursor-pointer select-none hover:text-white" onclick="sortBrandBy('cogs')">COGS <span class="sort-brand-ind" data-col="cogs"></span></th>
               <th class="sortable-brand-th text-right cursor-pointer select-none hover:text-white" onclick="sortBrandBy('fees')" title="Real Amazon fees posted in the period (referral + FBA + other item fees)">Fees <span class="sort-brand-ind" data-col="fees"></span></th>
               <th class="sortable-brand-th text-right cursor-pointer select-none hover:text-white" onclick="sortBrandBy('adSpend')" title="Sponsored Products spend">Ad Spend <span class="sort-brand-ind" data-col="adSpend"></span></th>
@@ -129,7 +131,7 @@
             </tr>
           </thead>
           <tbody id="brandTableBody">
-            <tr><td colspan="10" class="text-center py-8" style="color:var(--text-3)">Loading...</td></tr>
+            <tr><td colspan="11" class="text-center py-8" style="color:var(--text-3)">Loading...</td></tr>
           </tbody>
         </table>
         <div id="brandPagination"></div>
@@ -864,6 +866,7 @@
                 brand: brand.name, brandId: brand.id, brandColor: brand.color, marketplace: mp,
                 status: sku.status,
                 units: m.units || 0,
+                refundUnits: m.refunds || 0,
                 revenueCad: mp === 'CA' ? m.sales : 0, revenueUsd: mp === 'US' ? m.sales : 0, revenue: rev,
                 // Per-marketplace traffic off the slice (2026-10-23). A sku
                 // on a single marketplace keeps the blended figure as
@@ -920,6 +923,7 @@
               brand: brand.name, brandId: brand.id, brandColor: brand.color, marketplace: mp,
               status: sku.status,
               units: unitsMp,
+              refundUnits: mps.length === 1 ? (sku.refundedUnits ?? null) : null,
               revenueCad: revCad, revenueUsd: revUsd, revenue: rev,
               sessions: sku.sessions || 0,
               buyBox: sku.buyBox ?? null, cvr: sku.cvr ?? null,
@@ -1030,13 +1034,13 @@
         .filter(s => !mpScoped() || s.marketplace === mpFilter);
 
       if (legacyNoCoverage(getActiveTableData())) {
-        tbody.innerHTML = `<tr><td colspan="12" class="text-center text-slate-500 py-8">No live ${mpFilter} view — Today/Yesterday track Amazon CA/US only. Pick a date range or preset for ${mpFilter}.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="13" class="text-center text-slate-500 py-8">No live ${mpFilter} view — Today/Yesterday track Amazon CA/US only. Pick a date range or preset for ${mpFilter}.</td></tr>`;
         document.getElementById('productPagination').innerHTML = '';
         updateSortIndicators();
         return;
       }
       if (!skus.length) {
-        tbody.innerHTML = '<tr><td colspan="12" class="text-center text-slate-500 py-8">No data — run sync first</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="13" class="text-center text-slate-500 py-8">No data — run sync first</td></tr>';
         document.getElementById('productPagination').innerHTML = '';
         updateSortIndicators();
         return;
@@ -1113,6 +1117,7 @@
           </td>
           <td class="px-4 py-3 text-right text-slate-300">${s.units.toLocaleString()}</td>
           <td class="px-4 py-3 text-right text-slate-200 font-medium">${fmtN(s.revenue)}</td>
+          <td class="px-4 py-3 text-right text-slate-400">${s.refundUnits != null ? s.refundUnits.toLocaleString() + (s.units > 0 ? ` <span class="text-xs" style="color:var(--text-3)">· ${(s.refundUnits / s.units * 100).toFixed(1)}%</span>` : '') : '—'}</td>
           <td class="px-4 py-3 text-right text-slate-400">${s.cvr != null ? s.cvr.toFixed(2) + '%' : '—'}</td>
           <td class="px-4 py-3 text-right ${bbColor}">${s.buyBox != null ? s.buyBox.toFixed(1) + '%' : '—'}</td>
           <td class="px-4 py-3 text-right text-slate-400">${s.inventory.toLocaleString()}</td>
@@ -1128,13 +1133,14 @@
       // Grand Total across ALL product rows in scope (every page).
       const pt = sorted.reduce((t, s) => {
         t.units += s.units || 0; t.rev += s.revenue || 0; t.inv += s.inventory || 0;
+        t.refU += s.refundUnits || 0;
         t.cogs += (s.costPerUnit > 0 ? s.totalCogsDisp : 0) || 0;
         t.ads += s.adSpend || 0;
         if (s.fees != null) { t.fees = (t.fees ?? 0) + s.fees; if (s.feesEstimated) t.est = true; }
         if (s.netProfit != null) t.np = (t.np ?? 0) + s.netProfit;
         else if ((s.revenue || 0) > 0) t.npPartial = true;
         return t;
-      }, { units: 0, rev: 0, inv: 0, cogs: 0, fees: null, ads: 0, np: null, est: false, npPartial: false });
+      }, { units: 0, rev: 0, inv: 0, refU: 0, cogs: 0, fees: null, ads: 0, np: null, est: false, npPartial: false });
       const ptMargin = pt.np != null && pt.rev > 0 ? (pt.np / pt.rev) * 100 : null;
       const ptTilde = (pt.est || pt.npPartial) ? '~' : '';
       const ptNpColor = pt.np == null ? 'text-slate-600' : pt.np > 0 ? 'text-emerald-400' : pt.np < 0 ? 'text-red-400' : 'text-slate-400';
@@ -1142,6 +1148,7 @@
         <td class="px-4 py-3 font-semibold" style="color:var(--text)">Grand Total</td>
         <td class="px-4 py-3 text-right font-semibold" style="color:var(--text)">${pt.units.toLocaleString()}</td>
         <td class="px-4 py-3 text-right font-semibold" style="color:var(--text)">${fmtN(pt.rev)}</td>
+        <td class="px-4 py-3 text-right font-semibold text-slate-300">${pt.refU.toLocaleString()}${pt.units > 0 ? ` <span class="text-xs" style="color:var(--text-3)">· ${(pt.refU / pt.units * 100).toFixed(1)}%</span>` : ''}</td>
         <td class="px-4 py-3 text-right text-slate-600">—</td>
         <td class="px-4 py-3 text-right text-slate-600">—</td>
         <td class="px-4 py-3 text-right font-semibold text-slate-300">${pt.inv.toLocaleString()}</td>
@@ -1264,13 +1271,13 @@
       const tbody = document.getElementById('brandTableBody');
 
       if (!brandsData.length) {
-        tbody.innerHTML = '<tr><td colspan="10" class="text-center text-slate-500 py-8">No brands — <a href="/admin.html" class="text-indigo-400">add one</a></td></tr>';
+        tbody.innerHTML = '<tr><td colspan="11" class="text-center text-slate-500 py-8">No brands — <a href="/admin.html" class="text-indigo-400">add one</a></td></tr>';
         document.getElementById('brandPagination').innerHTML = '';
         updateBrandSortIndicators();
         return;
       }
       if (legacyNoCoverage(preset)) {
-        tbody.innerHTML = `<tr><td colspan="10" class="text-center text-slate-500 py-8">No live ${mpFilter} view — Today/Yesterday track Amazon CA/US only. Pick a date range or preset for ${mpFilter}.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="11" class="text-center text-slate-500 py-8">No live ${mpFilter} view — Today/Yesterday track Amazon CA/US only. Pick a date range or preset for ${mpFilter}.</td></tr>`;
         document.getElementById('brandPagination').innerHTML = '';
         updateBrandSortIndicators();
         return;
@@ -1280,7 +1287,7 @@
         const bm = preset?.brands?.[brand.id];
         const s = bm?.summary;
         let rev = 0, cogsNum = 0, fees = null, feesEstimated = false, adSpend = 0, refunds = 0, netProfit = null, margin = null,
-            units = 0, sessions = 0, buyBox = null, cogs = { cad: 0, usd: 0 };
+            units = 0, refundUnits = 0, sessions = 0, buyBox = null, cogs = { cad: 0, usd: 0 };
         let flags = [], source = null;
         if (s && s.byMp) {
           // Resolved per-marketplace payload: sum the product rows in scope so
@@ -1294,6 +1301,7 @@
           adSpend = rows.reduce((t, r) => t + r.adSpend, 0);
           refunds = rows.reduce((t, r) => t + r.refunds, 0);
           units = rows.reduce((t, r) => t + r.units, 0);
+          refundUnits = rows.reduce((t, r) => t + (r.refundUnits || 0), 0);
           // Sum the rows' own net profit when every row has one (Sellerboard
           // actuals ride through); the component formula stays the fallback.
           netProfit = rows.length && rows.every(r => r.netProfit != null)
@@ -1339,14 +1347,15 @@
             units = s.units || 0;
             sessions = s.sessions || 0;
           }
+          refundUnits = s.refundedUnits || 0;
           buyBox = s.buyBox ?? null;
         }
-        return { brand, s, rev, cogs, cogsNum, fees, feesEstimated, adSpend, refunds, netProfit, margin, units, sessions, buyBox, flags, source };
+        return { brand, s, rev, cogs, cogsNum, fees, feesEstimated, adSpend, refunds, netProfit, margin, units, refundUnits, sessions, buyBox, flags, source };
       });
 
       brandItems.sort((a, b) => {
-        let av = { name: a.brand.name, revenue: a.rev, units: a.units, cogs: a.cogsNum, fees: a.fees, adSpend: a.adSpend, netProfit: a.netProfit, margin: a.margin, sessions: a.sessions, buyBox: a.buyBox }[brandSortCol];
-        let bv = { name: b.brand.name, revenue: b.rev, units: b.units, cogs: b.cogsNum, fees: b.fees, adSpend: b.adSpend, netProfit: b.netProfit, margin: b.margin, sessions: b.sessions, buyBox: b.buyBox }[brandSortCol];
+        let av = { name: a.brand.name, revenue: a.rev, units: a.units, refundUnits: a.refundUnits, cogs: a.cogsNum, fees: a.fees, adSpend: a.adSpend, netProfit: a.netProfit, margin: a.margin, sessions: a.sessions, buyBox: a.buyBox }[brandSortCol];
+        let bv = { name: b.brand.name, revenue: b.rev, units: b.units, refundUnits: b.refundUnits, cogs: b.cogsNum, fees: b.fees, adSpend: b.adSpend, netProfit: b.netProfit, margin: b.margin, sessions: b.sessions, buyBox: b.buyBox }[brandSortCol];
         if (typeof av === 'string') return brandSortDir * av.localeCompare(bv || '');
         av = av ?? -Infinity; bv = bv ?? -Infinity;
         return brandSortDir * (av < bv ? -1 : av > bv ? 1 : 0);
@@ -1356,7 +1365,7 @@
       if (brandPage > brandTotalPages) brandPage = brandTotalPages;
       const paginatedBrands = brandItems.slice((brandPage - 1) * pageSize, brandPage * pageSize);
 
-      tbody.innerHTML = paginatedBrands.map(({ brand, s, rev, cogs, cogsNum, fees, feesEstimated, adSpend, refunds, netProfit, margin, units, sessions, buyBox, flags, source }) => {
+      tbody.innerHTML = paginatedBrands.map(({ brand, s, rev, cogs, cogsNum, fees, feesEstimated, adSpend, refunds, netProfit, margin, units, refundUnits, sessions, buyBox, flags, source }) => {
         if (!s) {
           return `<tr class="cursor-pointer" onclick="location.href='/brand.html?id=${brand.id}'">
             <td class="px-5 py-3">
@@ -1366,7 +1375,7 @@
                 
               </div>
             </td>
-            <td colspan="9" class="px-4 py-3 text-slate-600 text-center">No data</td>
+            <td colspan="10" class="px-4 py-3 text-slate-600 text-center">No data</td>
           </tr>`;
         }
 
@@ -1386,6 +1395,7 @@
           </td>
           <td class="px-4 py-3 text-right text-slate-200 font-medium">${fmtDisplay(rev)}</td>
           <td class="px-4 py-3 text-right text-slate-400">${(units || 0).toLocaleString()}</td>
+          <td class="px-4 py-3 text-right text-slate-400">${(refundUnits || 0).toLocaleString()}${units > 0 ? ` <span class="text-xs" style="color:var(--text-3)">· ${((refundUnits || 0) / units * 100).toFixed(1)}%</span>` : ''}</td>
           <td class="px-4 py-3 text-right ${cogsNum > 0 ? 'text-slate-400' : 'text-slate-600'}">${cogsNum > 0 ? fmtDisplay(cogsNum) : '—'}</td>
           <td class="px-4 py-3 text-right ${fees != null ? 'text-slate-400' : 'text-slate-600'}">${fees != null ? bTilde + fmtDisplay(fees) : '—'}</td>
           <td class="px-4 py-3 text-right ${adSpend > 0 ? 'text-slate-400' : 'text-slate-600'}">${adSpend > 0 ? fmtDisplay(adSpend) : '—'}</td>
@@ -1402,13 +1412,14 @@
       const gt = brandItems.reduce((t, it) => {
         if (!it.s) return t;
         t.rev += it.rev || 0; t.units += it.units || 0; t.cogs += it.cogsNum || 0;
+        t.refU += it.refundUnits || 0;
         t.ads += it.adSpend || 0;
         if (it.fees != null) { t.fees = (t.fees ?? 0) + it.fees; if (it.feesEstimated) t.est = true; }
         if (it.netProfit != null) t.np = (t.np ?? 0) + it.netProfit;
         else if ((it.rev || 0) > 0) t.npPartial = true;
         if (it.sessions != null) t.sessions = (t.sessions ?? 0) + it.sessions;
         return t;
-      }, { rev: 0, units: 0, cogs: 0, fees: null, ads: 0, np: null, sessions: null, est: false, npPartial: false });
+      }, { rev: 0, units: 0, cogs: 0, refU: 0, fees: null, ads: 0, np: null, sessions: null, est: false, npPartial: false });
       const gtMargin = gt.np != null && gt.rev > 0 ? (gt.np / gt.rev) * 100 : null;
       const gtTilde = (gt.est || gt.npPartial) ? '~' : '';
       const gtNpColor = gt.np == null ? 'text-slate-600' : gt.np > 0 ? 'text-emerald-400' : gt.np < 0 ? 'text-red-400' : 'text-slate-400';
@@ -1417,6 +1428,7 @@
         <td class="px-5 py-3 font-semibold" style="color:var(--text)">Grand Total</td>
         <td class="px-4 py-3 text-right font-semibold" style="color:var(--text)">${fmtDisplay(gt.rev)}</td>
         <td class="px-4 py-3 text-right font-semibold" style="color:var(--text)">${gt.units.toLocaleString()}</td>
+        <td class="px-4 py-3 text-right font-semibold text-slate-300">${gt.refU.toLocaleString()}${gt.units > 0 ? ` <span class="text-xs" style="color:var(--text-3)">· ${(gt.refU / gt.units * 100).toFixed(1)}%</span>` : ''}</td>
         <td class="px-4 py-3 text-right font-semibold ${gt.cogs > 0 ? 'text-slate-300' : 'text-slate-600'}">${gt.cogs > 0 ? fmtDisplay(gt.cogs) : '—'}</td>
         <td class="px-4 py-3 text-right font-semibold ${gt.fees != null ? 'text-slate-300' : 'text-slate-600'}">${gt.fees != null ? (gt.est ? '~' : '') + fmtDisplay(gt.fees) : '—'}</td>
         <td class="px-4 py-3 text-right font-semibold ${gt.ads > 0 ? 'text-slate-300' : 'text-slate-600'}">${gt.ads > 0 ? fmtDisplay(gt.ads) : '—'}</td>
