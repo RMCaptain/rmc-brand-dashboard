@@ -12,6 +12,7 @@
   <script src="/mp-scope.js"></script>
   <script src="/period-cards.js"></script>
   <script src="/fee-breakdown.js"></script>
+  <script src="/sku-detail.js"></script>
   <style>
     #salesPopup, #inventoryPopup { pointer-events: none; transition: opacity 0.1s ease; }
     .asin-remove-btn { opacity: 0; transition: opacity 0.15s ease; }
@@ -770,9 +771,10 @@
         const feeEl = document.getElementById('feeBreakdownCard') || (() => {
           const el = document.createElement('div');
           el.id = 'feeBreakdownCard';
-          el.className = 'mb-6';
-          const anchor = document.getElementById('adMetricsCard') || document.getElementById('summaryTiles');
-          anchor.insertAdjacentElement('afterend', el);
+          el.className = 'mt-6 mb-6';
+          // Very bottom of the page, below the product detail sections (Mike, 2026-11-03).
+          const container = document.querySelector('.max-w-screen-2xl.mx-auto') || document.body;
+          container.appendChild(el);
           return el;
         })();
         FeeBreakdown.render(feeEl, { ...selectedRange() || {}, brandId: brand.id });
@@ -865,6 +867,7 @@
         : '<td class="px-4 py-3 text-right"><input type="text" value="' + upcVal + '" placeholder="—" class="w-28 text-right text-xs bg-slate-700 border border-slate-600 text-white rounded px-1.5 py-0.5 focus:outline-none focus:border-indigo-500" onchange="saveUpc(\'' + brand.id + '\', \'' + s.asin + '\', this.value)" title="UPC / Barcode" /></td>';
 
       const titleEsc = (s.title || '').replace(/"/g, '&quot;');
+      skuDetailReg[s.asin] = { brand, s };   // per-product detail panel source
       const asinSku  = s.sellerSku || brand.asinSkus?.[s.asin] || '';
       const homeMp   = s.marketplace || brand.asinMarketplaces?.[s.asin] || (brand.marketplace || 'CA').split(',')[0].trim();
       const asinMp   = MpScope.scoped() ? MpScope.filter() : homeMp;
@@ -883,7 +886,7 @@
           '</div>' +
           (asinSku ? '<a href="' + MpScope.sellerCentralFor(asinMp) + '/skucentral?mSku=' + encodeURIComponent(asinSku) + '" target="_blank" rel="noopener" class="font-mono text-xs text-slate-500 mt-0.5 max-w-[160px] truncate hover:underline block" title="' + skuEsc + '">' + skuEsc + '</a>' : '') +
         '</td>' +
-        '<td class="px-4 py-3 text-slate-300 text-xs max-w-xs truncate" title="' + titleEsc + '">' + titleEsc + '</td>' +
+        '<td class="px-4 py-3 text-slate-300 text-xs max-w-xs truncate cursor-pointer hover:underline decoration-dotted" title="' + titleEsc + ' — click for the full Sellerboard-style breakdown" onclick="openSkuDetail(event, \'' + s.asin + '\')">' + titleEsc + '</td>' +
         '<td class="px-4 py-3">' + (s.status
           ? '<span class="text-xs px-2 py-0.5 rounded-full font-medium ' + statusColor + '">' + s.status + '</span>'
           : '<span class="text-xs text-slate-600">—</span>') + '</td>' +
@@ -955,6 +958,13 @@
         '<td class="px-4 py-3 text-center text-xs ' + typeColor + '"><a href="/products.html" title="Edit in Products" class="' + typeColor + ' hover:underline">' + typeLabel + '</a></td>' +
         '<td class="px-3 py-3 text-right"><button class="asin-remove-btn text-slate-500 hover:text-red-400 transition-colors text-sm leading-none" title="Remove ' + s.asin + ' from this brand" onclick="removeAsinFromBrand(\'' + brand.id + '\', \'' + s.asin + '\')">×</button></td>' +
         '</tr>';
+    }
+
+    // ── Per-product detail panel (Sellerboard-style line item) ───────────────
+    const skuDetailReg = {};
+    function openSkuDetail(ev, asin) {
+      const r = skuDetailReg[asin];
+      if (r && window.SkuDetail) SkuDetail.open(ev, r.brand, r.s);
     }
 
     // ── Inventory popup ────────────────────────────────────────────────────────
