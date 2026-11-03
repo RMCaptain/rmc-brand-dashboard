@@ -46,7 +46,8 @@
     return `${mo(f)} ${f.getDate()} – ${mo(t)} ${t.getDate()}, ${t.getFullYear()}`;
   }
 
-  const EMPTY = () => ({ sales: 0, units: 0, refundUnits: 0, refundAmount: 0, adSpend: 0, fees: null, cogs: 0, cogsOk: true, promo: 0, netProfit: null, estimated: false });
+  const EMPTY = () => ({ sales: 0, units: 0, refundUnits: 0, refundAmount: 0, adSpend: 0, fees: null, cogs: 0, cogsOk: true, promo: 0, netProfit: null, estimated: false,
+    sessions: null, sns: null, sellableReturns: 0, sellableBasis: 0 });
 
   // Aggregate one preset-shaped payload ({ brands: { id: { summary, skus } } })
   // across the brand scope into display-currency card metrics.
@@ -63,7 +64,17 @@
       if (!bm?.summary) continue;
       any = true;
       const brand = (brandsMeta || []).find(b => b.id === id) || {};
+      // Sellerboard-panel extras (Mike, 2026-11-03): scoped sessions, current
+      // S&S subscriptions, sellable-return grades — all null-aware so a dash
+      // stays a dash, never a fake zero.
+      const trf = M.trafficOf ? M.trafficOf(bm.summary) : { sessions: bm.summary.sessions ?? null };
+      if (trf.sessions != null) out.sessions = (out.sessions ?? 0) + trf.sessions;
+      const sns = M.snsFor ? M.snsFor(brand) : null;
+      if (sns != null) out.sns = (out.sns ?? 0) + sns;
       const by = bm.summary.byMp && Object.keys(bm.summary.byMp).length ? bm.summary.byMp : null;
+      if (by) for (const m of M.scopedMps(by)) {
+        if (m.sellableBasis > 0) { out.sellableReturns += m.sellableReturns || 0; out.sellableBasis += m.sellableBasis; }
+      }
       if (by) {
         out.sales   += M.sumMp(by, 'sales') || 0;
         out.units   += M.sumMp(by, 'units') || 0;
@@ -235,8 +246,14 @@
         ${feeRow('cogs', 'Cost of goods', money(met.cogs, { signCost: true }) + (met.cogsOk ? '' : '<span class="text-xs" style="color:var(--text-3)"> ?</span>'), met.cogs > 0 ? '#f87171' : undefined)}
         ${row('Promo', money(met.promo || 0, { signCost: true }), met.promo > 0 ? '#f87171' : undefined)}
         ${feeRow('refunds', 'Refund value', money(met.refundAmount, { signCost: true }), met.refundAmount > 0 ? '#f87171' : undefined)}
+        ${row('TACOS', met.sales > 0 && met.adSpend > 0 ? (met.adSpend / met.sales * 100).toFixed(2) + '%' : '—')}
+        ${row('% Refunds', met.units > 0 ? ((met.refundUnits || 0) / met.units * 100).toFixed(2) + '%' : '—')}
+        ${row('Sellable returns', met.sellableBasis > 0 ? (met.sellableReturns / met.sellableBasis * 100).toFixed(1) + '%' : '—')}
         ${row('Margin', margin)}
         ${row('ROI', roi)}
+        ${row('S&S subs', met.sns != null ? met.sns.toLocaleString() : '—')}
+        ${row('Sessions', met.sessions != null ? met.sessions.toLocaleString() : '—')}
+        ${row('Unit session %', met.sessions > 0 && met.units > 0 ? (met.units / met.sessions * 100).toFixed(2) + '%' : '—')}
       </div>` : '';
     return `<div ${shell}>
       ${header}
