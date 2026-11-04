@@ -1624,7 +1624,7 @@ async function ensureBrowserInstalled() {
 let _sharedBrowser = null;        // Promise<Browser> while launching/launched
 let _activePdfPages = 0;
 let _browserIdleTimer = null;
-const BROWSER_IDLE_MS = 15 * 60 * 1000;
+const BROWSER_IDLE_MS = 5 * 60 * 1000;
 
 async function getSharedBrowser() {
   const puppeteer = require('puppeteer');
@@ -1638,7 +1638,7 @@ async function getSharedBrowser() {
   const execPath = await ensureBrowserInstalled();
   _sharedBrowser = puppeteer.launch({
     headless: 'new',
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--disable-extensions', '--renderer-process-limit=2'],
     executablePath: execPath || (process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath()),
   });
   try { return await _sharedBrowser; }
@@ -1648,7 +1648,16 @@ async function getSharedBrowser() {
 // Run fn(page) on the shared browser. Always closes the PAGE (a leaked page
 // used to mean a leaked whole Chrome; now it would pin the shared browser's
 // memory), then arms the idle shutdown once nothing is rendering.
+let _pdfQueue = Promise.resolve();
 async function withPdfPage(fn) {
+  // Serialize renders: one headless page at a time. Concurrent renders on the
+  // 512MB instance OOM-kill the whole process (Render answers 502 for the
+  // request that was in flight). Queued requests just wait their turn.
+  const run = _pdfQueue.then(() => withPdfPageNow(fn));
+  _pdfQueue = run.catch(() => {});
+  return run;
+}
+async function withPdfPageNow(fn) {
   const browser = await getSharedBrowser();
   _activePdfPages++;
   if (_browserIdleTimer) { clearTimeout(_browserIdleTimer); _browserIdleTimer = null; }
@@ -5066,7 +5075,7 @@ async function generateBrandReportPdf({ brandId, period, from, to, compFrom, com
     page.on('console', m => { if (m.type() === 'error') pageLog.push(`console: ${m.text().slice(0, 300)}`); });
     page.on('requestfailed', r => pageLog.push(`requestfailed: ${r.url().slice(0, 140)} ${r.failure()?.errorText || ''}`));
 
-    await page.setViewport({ width: 1100, height: 1600, deviceScaleFactor: 2 });
+    await page.setViewport({ width: 1100, height: 1600, deviceScaleFactor: 1.5 });
     // domcontentloaded, NOT networkidle0: the page fires its dataset/summary
     // fetches on load, and a slow query keeps the network busy past the nav
     // timeout — networkidle0 then throws "Navigation timeout exceeded" before
@@ -5129,6 +5138,7 @@ app.get('/api/pdf-warm', (req, res) => {
 
 app.get('/api/brand-report-pdf/:brandId', async (req, res) => {
   try {
+    console.log(`[BrandReportPDF] start rss=${Math.round(process.memoryUsage().rss / 1048576)}MB`);
     const { pdfData, filename } = await generateBrandReportPdf({
       brandId: req.params.brandId,
       period: req.query.period,
@@ -5141,6 +5151,7 @@ app.get('/api/brand-report-pdf/:brandId', async (req, res) => {
     // is a list of kept records rather than a log of every render — you can
     // download a PDF to eyeball it without polluting the record.
 
+    console.log(`[BrandReportPDF] done rss=${Math.round(process.memoryUsage().rss / 1048576)}MB`);
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(pdfData);
