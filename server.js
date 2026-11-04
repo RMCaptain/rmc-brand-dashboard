@@ -5071,7 +5071,10 @@ async function generateBrandReportPdf({ brandId, period, from, to, compFrom, com
     // fetches on load, and a slow query keeps the network busy past the nav
     // timeout — networkidle0 then throws "Navigation timeout exceeded" before
     // reportReady ever gets a chance. Readiness is signaled explicitly below.
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    // 60s: the page's scripts are now self-hosted (/vendor), so navigation is
+    // loopback-only — but Render's half CPU can still be slow under load, and
+    // a nav timeout kills the export where a slow one just takes longer.
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
     // Wait until the report HTML JS signals it's done rendering charts +
     // the executive summary (window.reportReady, set after render()), or the
