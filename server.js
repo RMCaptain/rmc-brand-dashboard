@@ -5058,6 +5058,14 @@ async function generateBrandReportPdf({ brandId, period, from, to, compFrom, com
       r.continue(sameOrigin ? { headers: { ...r.headers(), 'x-internal-token': INTERNAL_API_TOKEN } } : undefined);
     });
 
+    // Diagnostics: keep the page's own errors so a failed render names its
+    // cause instead of a blind timeout (2026-11-04 — "Waiting failed: 120000ms
+    // exceeded" told us nothing).
+    const pageLog = [];
+    page.on('pageerror', e => pageLog.push(`pageerror: ${String(e?.message || e).slice(0, 300)}`));
+    page.on('console', m => { if (m.type() === 'error') pageLog.push(`console: ${m.text().slice(0, 300)}`); });
+    page.on('requestfailed', r => pageLog.push(`requestfailed: ${r.url().slice(0, 140)} ${r.failure()?.errorText || ''}`));
+
     await page.setViewport({ width: 1100, height: 1600, deviceScaleFactor: 2 });
     // domcontentloaded, NOT networkidle0: the page fires its dataset/summary
     // fetches on load, and a slow query keeps the network busy past the nav
@@ -5067,17 +5075,26 @@ async function generateBrandReportPdf({ brandId, period, from, to, compFrom, com
 
     // Wait until the report HTML JS signals it's done rendering charts +
     // the executive summary (window.reportReady, set after render()), or the
-    // page itself reports a render failure — surface that message instead of
-    // burning the full timeout on a report that already died.
-    await page.waitForFunction(
-      `window.reportReady === true || (document.getElementById('loading')?.textContent || '').includes('Render failed')`,
-      { timeout: 120000 }
-    );
+    // page itself reports a failure — both the render() catch ("Render
+    // failed") and the init catch ("Failed to load") — so a dead report
+    // surfaces its message instead of burning the full timeout.
+    try {
+      await page.waitForFunction(
+        `window.reportReady === true || /Render failed|Failed to load/.test(document.getElementById('loading')?.textContent || '')`,
+        { timeout: 120000 }
+      );
+    } catch (e) {
+      const state = await page.evaluate(() => ({
+        loading: (document.getElementById('loading')?.textContent || '').trim().slice(0, 200),
+        ready: window.reportReady,
+      })).catch(() => ({}));
+      throw new Error(`Report never became ready. loading="${state.loading}" ready=${state.ready}. Page log: ${pageLog.slice(-6).join(' | ') || '(empty)'}`);
+    }
     const renderErr = await page.evaluate(() => {
       if (window.reportReady === true) return null;
       return (document.getElementById('loading')?.textContent || '').trim();
     });
-    if (renderErr) throw new Error(`Report page failed to render: ${renderErr}`);
+    if (renderErr) throw new Error(`Report page failed to render: ${renderErr}${pageLog.length ? ` | Page log: ${pageLog.slice(-6).join(' | ')}` : ''}`);
 
     // Tiny extra beat for chart paint animations to settle.
     await new Promise(r => setTimeout(r, 400));
