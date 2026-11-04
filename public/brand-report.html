@@ -564,6 +564,13 @@
      this page composes from. -->
 <script src="/report-render.js"></script>
 <script>
+  // PDF renders: no chart animations anywhere (covers every chart, not just
+  // the ones that read __printMode), and pre-warm the server's headless
+  // Chrome so clicking Export doesn't pay the cold launch.
+  if (new URLSearchParams(location.search).get('print') === '1' && window.Chart) Chart.defaults.animation = false;
+  if (new URLSearchParams(location.search).get('print') !== '1') fetch('/api/pdf-warm', { credentials: 'include' }).catch(() => {});
+</script>
+<script>
 const $ = id => document.getElementById(id);
 
 // The nav and toolbar are both sticky, so anything else that sticks has to know

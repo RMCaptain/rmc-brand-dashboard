@@ -1624,7 +1624,7 @@ async function ensureBrowserInstalled() {
 let _sharedBrowser = null;        // Promise<Browser> while launching/launched
 let _activePdfPages = 0;
 let _browserIdleTimer = null;
-const BROWSER_IDLE_MS = 5 * 60 * 1000;
+const BROWSER_IDLE_MS = 15 * 60 * 1000;
 
 async function getSharedBrowser() {
   const puppeteer = require('puppeteer');
@@ -5099,8 +5099,9 @@ async function generateBrandReportPdf({ brandId, period, from, to, compFrom, com
     });
     if (renderErr) throw new Error(`Report page failed to render: ${renderErr}${pageLog.length ? ` | Page log: ${pageLog.slice(-6).join(' | ')}` : ''}`);
 
-    // Tiny extra beat for chart paint animations to settle.
-    await new Promise(r => setTimeout(r, 400));
+    // Tiny extra beat for layout to settle (chart animations are disabled
+    // globally in print mode).
+    await new Promise(r => setTimeout(r, 150));
 
     return page.pdf({
       format: 'Letter',
@@ -5117,6 +5118,14 @@ async function generateBrandReportPdf({ brandId, period, from, to, compFrom, com
 
   return { pdfData: Buffer.isBuffer(pdfData) ? pdfData : Buffer.from(pdfData), filename };
 }
+
+// Fire-and-forget Chrome pre-warm: the report page pings this on load so
+// the shared headless browser is already running by the time Export is
+// clicked — the cold launch costs 10-20s on Render's half CPU.
+app.get('/api/pdf-warm', (req, res) => {
+  getSharedBrowser().catch(e => console.warn('[PdfWarm] launch failed:', e.message));
+  res.json({ warming: true });
+});
 
 app.get('/api/brand-report-pdf/:brandId', async (req, res) => {
   try {
@@ -6124,9 +6133,19 @@ app.get('/api/brand-ads/:brandId', async (req, res) => {
   }
 });
 
+const reportDatasetCache = new Map();   // brand+query → { data, at }
+const REPORT_DATASET_CACHE_MS = 3 * 60 * 1000;
 app.get('/api/brand-report-dataset/:brandId', async (req, res) => {
   try {
+    // 3-min TTL: the PDF export re-opens this page in headless Chrome right
+    // after the user rendered it on screen — same brand, same range. Serving
+    // the cached dataset cuts several seconds off every export (2026-11-04).
+    const key = `${req.params.brandId}|${JSON.stringify(req.query || {})}`;
+    const hit = reportDatasetCache.get(key);
+    if (hit && Date.now() - hit.at < REPORT_DATASET_CACHE_MS) return res.json(hit.data);
     const dataset = await buildBrandReportDataset(req.params.brandId, req.query);
+    reportDatasetCache.set(key, { data: dataset, at: Date.now() });
+    if (reportDatasetCache.size > 40) { const o = [...reportDatasetCache.entries()].sort((a, b) => a[1].at - b[1].at)[0]; reportDatasetCache.delete(o[0]); }
     res.json(dataset);
   } catch (err) {
     console.error('[BrandReportDataset] error:', err.message);
