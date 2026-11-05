@@ -246,31 +246,39 @@ function mountMcp(app, { internalToken } = {}) {
   _internalToken = internalToken || null;
   if (!TOKEN) {
     console.warn('[MCP] MCP_TOKEN not set — endpoint NOT mounted (fail closed)');
-    return;
-  }
-  const path = `/mcp/${TOKEN}`;
+  } else {
+    const path = `/mcp/${TOKEN}`;
 
-  app.post(path, express.json({ limit: '2mb' }), async (req, res) => {
-    try {
-      const body = req.body;
-      const response = Array.isArray(body)
-        ? (await Promise.all(body.map(handleMessage))).filter(Boolean)
-        : await handleMessage(body);
-      if (response === null || (Array.isArray(response) && response.length === 0)) {
-        return res.status(202).end();
+    app.post(path, express.json({ limit: '2mb' }), async (req, res) => {
+      try {
+        const body = req.body;
+        const response = Array.isArray(body)
+          ? (await Promise.all(body.map(handleMessage))).filter(Boolean)
+          : await handleMessage(body);
+        if (response === null || (Array.isArray(response) && response.length === 0)) {
+          return res.status(202).end();
+        }
+        res.json(response);
+      } catch (err) {
+        console.error('[MCP] handler error:', err.message);
+        res.status(500).json(rpcError(null, -32603, 'Internal error'));
       }
-      res.json(response);
-    } catch (err) {
-      console.error('[MCP] handler error:', err.message);
-      res.status(500).json(rpcError(null, -32603, 'Internal error'));
-    }
-  });
+    });
 
-  // No server-initiated streams; sessions are stateless.
-  app.get(path, (req, res) => res.status(405).end());
-  app.delete(path, (req, res) => res.status(200).end());
+    // No server-initiated streams; sessions are stateless.
+    app.get(path, (req, res) => res.status(405).end());
+    app.delete(path, (req, res) => res.status(200).end());
 
-  console.log('[MCP] endpoint mounted at /mcp/<token>');
+    console.log('[MCP] endpoint mounted at /mcp/<token>');
+  }
+
+  // Any other /mcp path (stale/rotated token, bare /mcp, or token env unset)
+  // must 404 here instead of falling through to basicAuth's 401: claude.ai's
+  // connector setup reads a 401 from the MCP URL as "OAuth-protected" and
+  // attempts dynamic client registration, which dies with the opaque
+  // "Couldn't register with sign-in service" toast.
+  app.all('/mcp', (req, res) => res.status(404).json({ error: 'not found' }));
+  app.all('/mcp/*', (req, res) => res.status(404).json({ error: 'not found' }));
 }
 
 module.exports = { mountMcp };
