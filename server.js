@@ -170,6 +170,7 @@ const ADMIN_ONLY = [
   ['DELETE', /^\/api\/brands\/[^/]+\/asins\/[^/]+$/],
   ['PUT',    /^\/api\/brands\/[^/]+\/asins\/[^/]+\/move$/],
   ['POST',   /^\/api\/brands\/[^/]+\/asins\/bulk-move$/],
+  ['GET',    /^\/api\/admin\/mcp-url$/],
 ];
 app.use((req, res, next) => {
   if (!ADMIN_ONLY.some(([m, re]) => m === req.method && re.test(req.path))) return next();
@@ -181,6 +182,16 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Admin-only: the claude.ai custom-connector URL (the /mcp path secret).
+// Exists so reconnecting the connector never requires digging through
+// Render's env panel. Gated via ADMIN_ONLY above.
+app.get('/api/admin/mcp-url', (req, res) => {
+  const token = process.env.MCP_TOKEN || null;
+  res.json(token
+    ? { configured: true, url: `https://app.rockymountainco.ca/mcp/${token}` }
+    : { configured: false, url: null });
+});
 
 // Brand portal — ADMIN surface (create/list/revoke portal users, mint invite
 // links). Team-only: sits behind basicAuth like every other management route.
