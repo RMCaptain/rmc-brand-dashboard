@@ -462,11 +462,18 @@ function parseInventoryItems(items, inventory) {
   for (const item of (items || [])) {
     if (!item.asin) continue;
     const d = item.inventoryDetails || {};
+    const rq = d.reservedQuantity || {};
     const existing = inventory[item.asin] || { onHand: 0, inbound: 0, reserved: 0, researching: 0, unfulfillable: 0 };
     inventory[item.asin] = {
       onHand:        existing.onHand        + (d.fulfillableQuantity || 0),
       inbound:       existing.inbound       + (d.inboundWorkingQuantity || 0) + (d.inboundShippedQuantity || 0) + (d.inboundReceivingQuantity || 0),
-      reserved:      existing.reserved      + (d.reservedQuantity?.totalReservedQuantity || 0),
+      reserved:      existing.reserved      + (rq.totalReservedQuantity || 0),
+      // Reserved split — sold-awaiting-ship vs FC transfer vs FC processing.
+      reservedBreakdown: {
+        customerOrders: (existing.reservedBreakdown?.customerOrders || 0) + (rq.pendingCustomerOrderQuantity || 0),
+        fcTransfer:     (existing.reservedBreakdown?.fcTransfer     || 0) + (rq.pendingTransshipmentQuantity || 0),
+        fcProcessing:   (existing.reservedBreakdown?.fcProcessing   || 0) + (rq.fcProcessingQuantity || 0),
+      },
       researching:   existing.researching   + (d.researchingQuantity?.totalResearchingQuantity || 0),
       unfulfillable: existing.unfulfillable + (d.unfulfillableQuantity?.totalUnfulfillableQuantity || 0),
       fbaTracked:    true, // ASIN appeared in FBA inventory response (vs absent = FBM-only)
@@ -1018,6 +1025,12 @@ async function syncBrandMetrics(brands) {
               inventory[asin].reserved      += data.reserved;
               inventory[asin].researching   += data.researching;
               inventory[asin].unfulfillable += data.unfulfillable;
+              if (data.reservedBreakdown) {
+                const t = inventory[asin].reservedBreakdown ||= { customerOrders: 0, fcTransfer: 0, fcProcessing: 0 };
+                t.customerOrders += data.reservedBreakdown.customerOrders || 0;
+                t.fcTransfer     += data.reservedBreakdown.fcTransfer     || 0;
+                t.fcProcessing   += data.reservedBreakdown.fcProcessing   || 0;
+              }
             }
           }
 

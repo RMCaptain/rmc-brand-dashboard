@@ -400,6 +400,9 @@ async function writeDailyMetrics(yesterdayBrands, date) {
         inventory_inbound: sku.inventory?.inbound ?? null,
         inventory_reserved:      sku.inventory?.reserved      ?? null,
         inventory_unfulfillable: sku.inventory?.unfulfillable ?? null,
+        reserved_customer_orders: sku.inventory?.reservedBreakdown?.customerOrders ?? null,
+        reserved_fc_transfer:     sku.inventory?.reservedBreakdown?.fcTransfer     ?? null,
+        reserved_fc_processing:   sku.inventory?.reservedBreakdown?.fcProcessing   ?? null,
       });
     }
   }
@@ -2730,7 +2733,8 @@ app.get('/api/metrics/yesterday', async (req, res) => {
         imageUrl:           imagesByAsin[asin] || meta.imageUrl || null,
         inventory:          dm?.inventory_on_hand != null
                               ? { onHand: dm.inventory_on_hand, inbound: dm.inventory_inbound || 0,
-                                  reserved: dm.inventory_reserved ?? null, unfulfillable: dm.inventory_unfulfillable ?? null }
+                                  reserved: dm.inventory_reserved ?? null, unfulfillable: dm.inventory_unfulfillable ?? null,
+                                  reservedBreakdown: reservedBreakdownOf(dm) }
                               : (meta.inventory ?? null),
         marketplaces:       [...(ca > 0 ? ['CA'] : []), ...(us > 0 ? ['US'] : [])],
       };
@@ -2808,7 +2812,8 @@ app.get('/api/metrics/yesterday', async (req, res) => {
       title: '', imageUrl: imagesByAsin[r.asin] || null,
       inventory: r.inventory_on_hand != null
         ? { onHand: r.inventory_on_hand, inbound: r.inventory_inbound || 0,
-            reserved: r.inventory_reserved ?? null, unfulfillable: r.inventory_unfulfillable ?? null }
+            reserved: r.inventory_reserved ?? null, unfulfillable: r.inventory_unfulfillable ?? null,
+            reservedBreakdown: reservedBreakdownOf(r) }
         : null,
       marketplaces: [...((r.units_ca||0) > 0 ? ['CA'] : []), ...((r.units_us||0) > 0 ? ['US'] : [])],
     });
@@ -3974,7 +3979,16 @@ const DM_RANGE_COLS = [
   'refunded_units', 'refund_amount_cad', 'refund_amount_usd', 'refund_count',
   'sessions', 'page_views', 'buy_box_pct',
   'inventory_on_hand', 'inventory_inbound', 'inventory_reserved', 'inventory_unfulfillable',
+  'reserved_customer_orders', 'reserved_fc_transfer', 'reserved_fc_processing',
 ].join(',');
+
+// Reserved-inventory split from a daily_metrics row — null until the first
+// sync after the inventory-reserved-detail migration populates the columns.
+function reservedBreakdownOf(r) {
+  return (r.reserved_customer_orders != null || r.reserved_fc_transfer != null || r.reserved_fc_processing != null)
+    ? { customerOrders: r.reserved_customer_orders || 0, fcTransfer: r.reserved_fc_transfer || 0, fcProcessing: r.reserved_fc_processing || 0 }
+    : null;
+}
 
 // Range-payload cache: the dashboard re-requests the same ranges constantly
 // (every tile click, every reload rebuilds a ~10k-row scan plus Sellerboard
@@ -4125,6 +4139,7 @@ async function buildBrandMetricsForRangeUncached(from, to, presetKey = null) {
       if (row.inventory_inbound != null) a.inv_inbound = row.inventory_inbound;
       if (row.inventory_reserved      != null) a.inv_reserved      = row.inventory_reserved;
       if (row.inventory_unfulfillable != null) a.inv_unfulfillable = row.inventory_unfulfillable;
+      { const rb = reservedBreakdownOf(row); if (rb) a.inv_rb = rb; }
     }
 
     // Overlay resolved money metrics onto the per-ASIN accumulator. ASINs that
@@ -4215,7 +4230,8 @@ async function buildBrandMetricsForRangeUncached(from, to, presetKey = null) {
         adCvr: clicks > 0     ? Math.round(adOrders / clicks * 10000) / 100 : null,
         inventory: a.inv_onhand != null
           ? { onHand: a.inv_onhand, inbound: a.inv_inbound || 0,
-              reserved: a.inv_reserved ?? null, unfulfillable: a.inv_unfulfillable ?? null }
+              reserved: a.inv_reserved ?? null, unfulfillable: a.inv_unfulfillable ?? null,
+              reservedBreakdown: a.inv_rb ?? null }
           : null,
         marketplaces: Object.entries(a.mp || {})
           .filter(([, m]) => m.resolved.units > 0 || m.resolved.sales > 0)
@@ -6220,12 +6236,15 @@ app.get('/api/report-data/:brandId', async (req, res) => {
     }
 
     // Latest non-null inventory snapshot per ASIN (this brand only, paginated).
+    // Returns the full snapshot object (onHand + inbound + reserved with its
+    // breakdown) — exposed as products[].inventory in the report dataset and
+    // the get_brand_report MCP tool.
     async function fetchLatestInventory(toS) {
       if (!reportAsins.length) return {};
       const out = [];
       for (let off = 0; ; off += 1000) {
         const { data, error } = await supabase.from('daily_metrics')
-          .select('asin,inventory_on_hand,date')
+          .select('asin,inventory_on_hand,inventory_inbound,inventory_reserved,inventory_unfulfillable,reserved_customer_orders,reserved_fc_transfer,reserved_fc_processing,date')
           .in('asin', reportAsins).lte('date', toS)
           .not('inventory_on_hand', 'is', null)
           .order('date', { ascending: false }).range(off, off + 999);
@@ -6234,7 +6253,11 @@ app.get('/api/report-data/:brandId', async (req, res) => {
         if (data.length < 1000) break;
       }
       const inv = {};
-      for (const r of out) if (!(r.asin in inv)) inv[r.asin] = r.inventory_on_hand;
+      for (const r of out) if (!(r.asin in inv)) inv[r.asin] = {
+        onHand: r.inventory_on_hand, inbound: r.inventory_inbound || 0,
+        reserved: r.inventory_reserved ?? null, unfulfillable: r.inventory_unfulfillable ?? null,
+        reservedBreakdown: reservedBreakdownOf(r),
+      };
       return inv;
     }
 
@@ -7129,7 +7152,7 @@ app.post('/api/bulk-update', async (req, res) => {
 // standing scripts/run-migration.js flow still covers everything else. Only
 // migrations listed here run, and each MUST be safe to re-run on every boot
 // (CREATE TABLE / CREATE INDEX IF NOT EXISTS only — no data rewrites).
-const BOOT_MIGRATIONS = ['sql/daily-fees-asin.sql', 'sql/fx-rates.sql', 'sql/sellerboard-daily.sql', 'sql/metric-reconciliation.sql', 'sql/perf-indexes.sql', 'sql/enable-rls.sql', 'sql/sellerboard-fee-detail.sql'];
+const BOOT_MIGRATIONS = ['sql/daily-fees-asin.sql', 'sql/fx-rates.sql', 'sql/sellerboard-daily.sql', 'sql/metric-reconciliation.sql', 'sql/perf-indexes.sql', 'sql/enable-rls.sql', 'sql/sellerboard-fee-detail.sql', 'sql/inventory-reserved-detail.sql'];
 async function ensureBootMigrations() {
   if (!process.env.DATABASE_URL) {
     console.log('[BootMigrate] DATABASE_URL not set — skipped (use scripts/run-migration.js)');

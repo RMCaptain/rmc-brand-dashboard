@@ -380,8 +380,9 @@ function render(d) {
   $('productRows').innerHTML = d.products.map(p => {
     const prevRev = p.prev.revenueCad + p.prev.revenueUsd;
     const currRev = p.revenueCad + p.revenueUsd;
-    const invCls  = p.inventory == null ? 'neu' : p.inventory === 0 ? 'inv-zero' : p.inventory <= 5 ? 'inv-low' : 'inv-ok';
-    const invTxt  = p.inventory == null ? '—' : p.inventory === 0 ? 'OOS' : `${p.inventory}`;
+    const invQty  = p.inventory == null ? null : (typeof p.inventory === 'number' ? p.inventory : p.inventory.onHand);
+    const invCls  = invQty == null ? 'neu' : invQty === 0 ? 'inv-zero' : invQty <= 5 ? 'inv-low' : 'inv-ok';
+    const invTxt  = invQty == null ? '—' : invQty === 0 ? 'OOS' : `${invQty}`;
     const bbHtml  = p.buyBox != null
       ? `<div class="bb-bar"><div class="bb-track"><div class="bb-fill" style="width:${Math.min(p.buyBox,100)}%"></div></div><span>${p.buyBox}%</span></div>`
       : '—';
