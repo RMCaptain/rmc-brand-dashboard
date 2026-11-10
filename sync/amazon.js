@@ -13,6 +13,11 @@ const { pstDateStr, pstSubtractDays, pstMidnightAsUTC, pstEndOfDayAsUTC } = requ
 
 const LISTINGS_CACHE_PATH = path.join(__dirname, '../data/listings-cache.json');
 const LISTINGS_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+// Bump when the SHAPE of cached listingsData/inventory changes, so a cache
+// written by older code (e.g. one that survives a warm-instance redeploy) is
+// treated as stale and refetched instead of serving a missing field forever.
+// v2 (2026-11-10): inventory objects gained reservedBreakdown.
+const LISTINGS_CACHE_VERSION = 2;
 const IMAGE_CACHE_PATH = path.join(__dirname, '../data/image-cache.json');
 
 // Marketplace facts (currency, code, region, hosts) come from the registry —
@@ -964,6 +969,13 @@ async function syncBrandMetrics(brands) {
   let staleCache = null;
   try { staleCache = JSON.parse(fs.readFileSync(LISTINGS_CACHE_PATH, 'utf8')); } catch {}
 
+  // A cache from an older shape version is unusable even if fresh — it is
+  // missing fields the current code and consumers expect (reservedBreakdown).
+  if (staleCache && staleCache.version !== LISTINGS_CACHE_VERSION) {
+    console.log(`[Sync] Listings cache version ${staleCache.version || 'legacy'} != ${LISTINGS_CACHE_VERSION} — discarding, will refetch`);
+    staleCache = null;
+  }
+
   const cacheAgeMs = staleCache?.fetched ? Date.now() - new Date(staleCache.fetched) : Infinity;
   if (cacheAgeMs < LISTINGS_CACHE_TTL_MS) {
     console.log(`[Sync] Using cached listings data (${Math.round(cacheAgeMs / 3600000)}h old)`);
@@ -1061,7 +1073,7 @@ async function syncBrandMetrics(brands) {
           Object.assign(imageUrls, persistedImages);
           console.log(`[Sync] Total images after Catalog API overlay + persistent cache: ${Object.keys(imageUrls).length}`);
 
-          fs.writeFileSync(LISTINGS_CACHE_PATH, JSON.stringify({ fetched: new Date().toISOString(), listingsData, inventory, imageUrls }));
+          fs.writeFileSync(LISTINGS_CACHE_PATH, JSON.stringify({ version: LISTINGS_CACHE_VERSION, fetched: new Date().toISOString(), listingsData, inventory, imageUrls }));
         })(),
         hardTimeout,
       ]);
