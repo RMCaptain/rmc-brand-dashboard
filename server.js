@@ -2558,27 +2558,29 @@ async function fetchFeesByAsin(fromDate, toDate) {
   // needs day granularity to decide Sellerboard-vs-Amazon per marketplace-day.
   const byAsinMpDate = {};
   try {
-    // Ordered paging: unordered .range() shreds across pages under load.
-    for (let off = 0; ; off += 1000) {
-      const { data, error } = await supabase.from('daily_fees_asin')
+    // Ordered paging (unordered .range() shreds across pages under load),
+    // wave-parallel via pagedScan.
+    await pagedScan(
+      (lo, hi) => supabase.from('daily_fees_asin')
         .select('date,asin,mp_id,currency,fees,refund_amount,refund_fees')
         .gte('date', fromDate).lte('date', toDate)
         .order('date', { ascending: true }).order('asin', { ascending: true }).order('mp_id', { ascending: true })
-        .range(off, off + 999);
-      if (error) throw new Error(error.message);
-      for (const r of (data || [])) {
-        days.add(r.date);
-        const a = byAsin[r.asin] || (byAsin[r.asin] = { feesCad: 0, feesUsd: 0, refundCad: 0, refundUsd: 0 });
-        const refund = (Number(r.refund_amount) || 0) + (Number(r.refund_fees) || 0);
-        if (r.currency === 'CAD')      { a.feesCad += Number(r.fees) || 0; a.refundCad += refund; }
-        else if (r.currency === 'USD') { a.feesUsd += Number(r.fees) || 0; a.refundUsd += refund; }
-        if (r.mp_id) {
-          const k = `${r.asin}|${r.mp_id}|${r.date}`;
-          byAsinMpDate[k] = (byAsinMpDate[k] || 0) + (Number(r.fees) || 0);
+        .range(lo, hi),
+      data => {
+        for (const r of data) {
+          days.add(r.date);
+          const a = byAsin[r.asin] || (byAsin[r.asin] = { feesCad: 0, feesUsd: 0, refundCad: 0, refundUsd: 0 });
+          const refund = (Number(r.refund_amount) || 0) + (Number(r.refund_fees) || 0);
+          if (r.currency === 'CAD')      { a.feesCad += Number(r.fees) || 0; a.refundCad += refund; }
+          else if (r.currency === 'USD') { a.feesUsd += Number(r.fees) || 0; a.refundUsd += refund; }
+          if (r.mp_id) {
+            const k = `${r.asin}|${r.mp_id}|${r.date}`;
+            byAsinMpDate[k] = (byAsinMpDate[k] || 0) + (Number(r.fees) || 0);
+          }
         }
-      }
-      if (!data || data.length < 1000) break;
-    }
+      },
+      { maxRows: 600000, label: 'daily_fees_asin' }
+    );
   } catch (e) {
     console.warn('[FeesByAsin] unavailable:', e.message);
     return { byAsin: {}, days: 0, byAsinMpDate: {} };
@@ -2595,16 +2597,15 @@ async function fetchFeesByAsin(fromDate, toDate) {
 async function fetchSellerboardRows(fromDate, toDate) {
   const rows = [];
   try {
-    for (let off = 0; ; off += 1000) {
-      const { data, error } = await supabase.from('sellerboard_daily')
+    await pagedScan(
+      (lo, hi) => supabase.from('sellerboard_daily')
         .select('date,mp_id,asin,sku,units,sales,ad_spend,refunds,refund_amount,amazon_fees,net_profit,promo_value,product_costs,sessions,sellable_returns_pct')
         .gte('date', fromDate).lte('date', toDate)
         .order('date', { ascending: true }).order('mp_id', { ascending: true }).order('sku', { ascending: true })
-        .range(off, off + 999);
-      if (error) throw new Error(error.message);
-      rows.push(...(data || []));
-      if (!data || data.length < 1000) break;
-    }
+        .range(lo, hi),
+      data => { rows.push(...data); },
+      { maxRows: 300000, label: 'sellerboard_daily' }
+    );
   } catch (e) {
     console.warn('[Sellerboard] rows unavailable for resolver — Amazon-only numbers:', e.message);
     return [];
@@ -4001,45 +4002,82 @@ const rangeCache = new Map();   // `${from}|${to}|${presetKey}` → { data, at }
 const RANGE_TTL_MS = 2 * 60 * 1000;
 function clearRangeCache() { rangeCache.clear(); }
 
+// ── Wave-parallel pagination ────────────────────────────────────────────────
+// Supabase REST caps responses at 1000 rows, and the range scans used to walk
+// pages ONE round trip at a time — a 1-year custom range was hundreds of
+// serial Supabase calls and took minutes (Mike, 2026-11-15: "waited over
+// 5 mins and never loaded"). pagedScan fires SCAN_WAVE page requests at once
+// and hands completed pages to onPage IN OFFSET ORDER, so order-dependent
+// consumers (latest-inventory-snapshot logic) behave exactly like the old
+// serial loop. makeQuery MUST build a fully ordered query — an unstable sort
+// shreds rows across .range() pages.
+const SCAN_PAGE = 1000;
+const SCAN_WAVE = 6;
+async function pagedScan(makeQuery, onPage, { maxRows = 300000, label = 'scan' } = {}) {
+  for (let base = 0; ; base += SCAN_WAVE * SCAN_PAGE) {
+    if (base >= maxRows) { console.warn(`[Metrics] ${label} pagination cap hit at ${maxRows} rows`); return; }
+    const batch = await Promise.all(
+      Array.from({ length: SCAN_WAVE }, (_, i) => {
+        const off = base + i * SCAN_PAGE;
+        return makeQuery(off, off + SCAN_PAGE - 1);
+      })
+    );
+    for (const { data, error } of batch) {
+      if (error) throw new Error(error.message);
+      if (data && data.length) onPage(data);
+      if (!data || data.length < SCAN_PAGE) return;   // short page = end of result set
+    }
+  }
+}
+
+// In-flight dedupe: with no dedupe, every impatient reload of a slow range
+// started ANOTHER full build of the same range — on a half-CPU box the
+// duplicates piled up until the whole app crawled. Identical concurrent
+// requests now share one build.
+const rangeInflight = new Map();   // cacheKey → Promise<payload>
+
 async function buildBrandMetricsForRange(from, to, presetKey = null, { fresh = false } = {}) {
   const cacheKey = `${from}|${to}|${presetKey || ''}`;
   if (!fresh) {
     const hit = rangeCache.get(cacheKey);
     if (hit && Date.now() - hit.at < RANGE_TTL_MS) return structuredClone(hit.data);
+    const inflight = rangeInflight.get(cacheKey);
+    if (inflight) return structuredClone(await inflight);
   }
-  const built = await buildBrandMetricsForRangeUncached(from, to, presetKey);
-  rangeCache.set(cacheKey, { data: structuredClone(built), at: Date.now() });
-  if (rangeCache.size > 40) rangeCache.delete(rangeCache.keys().next().value);
-  return built;
+  const p = buildBrandMetricsForRangeUncached(from, to, presetKey);
+  if (!fresh) rangeInflight.set(cacheKey, p);
+  try {
+    const built = await p;
+    rangeCache.set(cacheKey, { data: structuredClone(built), at: Date.now() });
+    if (rangeCache.size > 40) rangeCache.delete(rangeCache.keys().next().value);
+    return built;
+  } finally {
+    if (rangeInflight.get(cacheKey) === p) rangeInflight.delete(cacheKey);
+  }
 }
 
 async function buildBrandMetricsForRangeUncached(from, to, presetKey = null) {
-  const { brands } = await loadBrands();
-  const pm = await loadPresetMetrics();
-  // Per-ASIN posted fees for the range — powers true net margin per product.
-  const feesData = await fetchFeesByAsin(from, to);
+  const [{ brands }, pm] = await Promise.all([loadBrands(), loadPresetMetrics()]);
 
-    // Paginate explicitly — Supabase caps responses at 1000 rows by default.
-    // A 30-day window with ~400 rows/day = 12k rows; without pagination we'd
-    // silently truncate and dramatically under-report totals.
-    const PAGE = 1000;
-    const rows = [];
-    let offset = 0;
-    while (true) {
-      const { data, error } = await supabase
+    // ── The four range scans run CONCURRENTLY, each wave-paginated via
+    // pagedScan. They used to run one after another, one 1000-row page per
+    // round trip — a 1-year range was hundreds of serial Supabase calls.
+    const rows = [];                // wide daily_metrics rows (resolver + per-ASIN aggregation)
+    const trafficByAsin = {};       // asin → mp_id → { sessions, anySess, pageViews, bbSum, bbCount }
+
+    const wideScan = pagedScan(
+      (lo, hi) => supabase
         .from('daily_metrics')
         .select(DM_RANGE_COLS)
         .gte('date', from)
         .lte('date', to)
-        .order('date', { ascending: true })
-        .range(offset, offset + PAGE - 1);
-      if (error) throw new Error(error.message);
-      if (!data || data.length === 0) break;
-      rows.push(...data);
-      if (data.length < PAGE) break;
-      offset += PAGE;
-      if (offset > 100000) { console.warn('[Metrics] Pagination safety cap hit'); break; }
-    }
+        // Secondary order on asin: date-only ordering is unstable within a
+        // day, and an unstable sort shreds rows across .range() pages.
+        .order('date', { ascending: true }).order('asin', { ascending: true })
+        .range(lo, hi),
+      data => { rows.push(...data); },
+      { maxRows: 300000, label: 'daily_metrics' }
+    );
 
     // ── Per-marketplace traffic (Mike, 2026-10-23: Buy Box / sessions / S&S
     // didn't react to the marketplace picker). daily_metrics_mp carries
@@ -4047,30 +4085,36 @@ async function buildBrandMetricsForRangeUncached(from, to, presetKey = null) {
     // it so byMp slices can carry scoped traffic. Amazon stays the only
     // traffic source; days before the mp writer shipped simply have no rows,
     // and the blended wide-row figures below remain the all-marketplaces view.
-    const trafficByAsin = {};   // asin → mp_id → { sessions, anySess, pageViews, bbSum, bbCount }
-    {
-      let off = 0;
-      while (true) {
-        const { data, error } = await supabase
-          .from('daily_metrics_mp')
-          .select('date,asin,mp_id,sessions,page_views,buy_box_pct')
-          .gte('date', from).lte('date', to)
-          .or('sessions.not.is.null,page_views.not.is.null,buy_box_pct.not.is.null')
-          .order('date', { ascending: true }).order('asin', { ascending: true }).order('mp_id', { ascending: true })
-          .range(off, off + PAGE - 1);
-        if (error) { console.warn('[Metrics] daily_metrics_mp traffic read failed (blended traffic only):', error.message); break; }
-        for (const r of (data || [])) {
+    // Aggregated per page, never buffered; a failure degrades to blended
+    // traffic (same behavior as the old inline loop).
+    const trafficScan = pagedScan(
+      (lo, hi) => supabase
+        .from('daily_metrics_mp')
+        .select('date,asin,mp_id,sessions,page_views,buy_box_pct')
+        .gte('date', from).lte('date', to)
+        .or('sessions.not.is.null,page_views.not.is.null,buy_box_pct.not.is.null')
+        .order('date', { ascending: true }).order('asin', { ascending: true }).order('mp_id', { ascending: true })
+        .range(lo, hi),
+      data => {
+        for (const r of data) {
           const t = trafficByAsin[r.asin] || (trafficByAsin[r.asin] = {});
           const e = t[r.mp_id] || (t[r.mp_id] = { sessions: 0, anySess: false, pageViews: 0, bbSum: 0, bbCount: 0 });
           if (r.sessions != null) { e.sessions += Number(r.sessions) || 0; e.anySess = true; }
           if (r.page_views != null) e.pageViews += Number(r.page_views) || 0;
           if (r.buy_box_pct != null) { e.bbSum += Number(r.buy_box_pct) || 0; e.bbCount++; }
         }
-        if (!data || data.length < PAGE) break;
-        off += PAGE;
-        if (off > 100000) { console.warn('[Metrics] traffic pagination safety cap hit'); break; }
-      }
-    }
+      },
+      { maxRows: 600000, label: 'daily_metrics_mp traffic' }
+    ).catch(e => console.warn('[Metrics] daily_metrics_mp traffic read failed (blended traffic only):', e.message));
+
+    // Per-ASIN posted fees + Sellerboard rows for the resolver, fetched
+    // alongside the two scans above.
+    const [feesData, sbRows] = await Promise.all([
+      fetchFeesByAsin(from, to),
+      fetchSellerboardRows(from, to),
+      wideScan,
+      trafficScan,
+    ]);
     const mpTrafficOf = (asin, mp) => {
       const tr = trafficByAsin[asin]?.[mp];
       if (!tr) return null;
@@ -4088,7 +4132,6 @@ async function buildBrandMetricsForRangeUncached(from, to, presetKey = null) {
     const { resolveByAsin, aggregateMp, resolveFinancials } = require('./sync/metricsResolver');
     const MPreg = require('./sync/marketplaces');
     const MP_CA = MPreg.idByCode('CA'), MP_US = MPreg.idByCode('US');
-    const sbRows = await fetchSellerboardRows(from, to);
     const resolved = resolveByAsin({ wideRows: rows, sbRows, feeByAsinMpDate: feesData.byAsinMpDate || {}, from, to });
     const slotFor = (asin, mp) => resolved.byAsin[asin]?.[mp] || null;
     const sourceOf = asin => {
@@ -4141,6 +4184,11 @@ async function buildBrandMetricsForRangeUncached(from, to, presetKey = null) {
       if (row.inventory_unfulfillable != null) a.inv_unfulfillable = row.inventory_unfulfillable;
       { const rb = reservedBreakdownOf(row); if (rb) a.inv_rb = rb; }
     }
+
+    // Wide rows are fully consumed (resolver input + the accumulator loop
+    // above). A 1-year range holds ~150k of them — tens of MB on a 512MB
+    // box — so release before the heavy merge work below.
+    rows.length = 0;
 
     // Overlay resolved money metrics onto the per-ASIN accumulator. ASINs that
     // exist only on the Sellerboard side (e.g. UK-only) get a fresh entry with
