@@ -4012,7 +4012,7 @@ function clearRangeCache() { rangeCache.clear(); }
 // serial loop. makeQuery MUST build a fully ordered query — an unstable sort
 // shreds rows across .range() pages.
 const SCAN_PAGE = 1000;
-const SCAN_WAVE = 6;
+const SCAN_WAVE = 10;
 async function pagedScan(makeQuery, onPage, { maxRows = 300000, label = 'scan' } = {}) {
   for (let base = 0; ; base += SCAN_WAVE * SCAN_PAGE) {
     if (base >= maxRows) { console.warn(`[Metrics] ${label} pagination cap hit at ${maxRows} rows`); return; }
@@ -4040,15 +4040,23 @@ async function buildBrandMetricsForRange(from, to, presetKey = null, { fresh = f
   const cacheKey = `${from}|${to}|${presetKey || ''}`;
   if (!fresh) {
     const hit = rangeCache.get(cacheKey);
-    if (hit && Date.now() - hit.at < RANGE_TTL_MS) return structuredClone(hit.data);
+    if (hit && Date.now() - hit.at < (hit.ttl || RANGE_TTL_MS)) return structuredClone(hit.data);
     const inflight = rangeInflight.get(cacheKey);
     if (inflight) return structuredClone(await inflight);
   }
+  const t0 = Date.now();
   const p = buildBrandMetricsForRangeUncached(from, to, presetKey);
   if (!fresh) rangeInflight.set(cacheKey, p);
   try {
     const built = await p;
-    rangeCache.set(cacheKey, { data: structuredClone(built), at: Date.now() });
+    // Cost-aware TTL: an expensive build (a 1-year range takes ~a minute)
+    // would be evicted after the default 2 minutes and paid again on the
+    // next click. Keep costly builds for 30 min — safe because every sync
+    // and Sellerboard ingest calls clearRangeCache(), so staleness is
+    // bounded by data arrival, not the clock.
+    const buildMs = Date.now() - t0;
+    const ttl = buildMs > 15000 ? 30 * 60 * 1000 : RANGE_TTL_MS;
+    rangeCache.set(cacheKey, { data: structuredClone(built), at: Date.now(), ttl });
     if (rangeCache.size > 40) rangeCache.delete(rangeCache.keys().next().value);
     return built;
   } finally {
@@ -6687,6 +6695,7 @@ app.post('/api/sellerboard/sync', async (req, res) => {
     const liveToCad = (await fetchFxRate().catch(() => null))?.toCad || null;
     const ingest = await syncSellerboardFeeds({ supabase, loadBrands, label: 'Sellerboard-manual', liveToCad });
     if (ingest.feeds.some(f => f.status === 'ok')) {
+      clearRangeCache();   // fresh Sellerboard days invalidate cached ranges (incl. long-TTL big ranges)
       await require('./sync/cogsSb').syncCogsFromSellerboard({ supabase, mutateBrands, label: 'Sellerboard-manual-Cogs' })
         .catch(e => console.warn('[sellerboard/sync] SB COGS refresh failed (non-fatal):', e.message));
     }
@@ -8098,6 +8107,7 @@ function scheduleDailySync() {
     const ingest = await syncSellerboardFeeds({ supabase, loadBrands, label: tag, liveToCad });
     const ok = ingest.feeds.some(f => f.status === 'ok');
     if (!ok) { console.warn(`[${tag}] no feed ingested (${ingest.feeds.map(f => `${f.key}=${f.status}`).join(' ')}) — reconciliation skipped`); return { ingest }; }
+    clearRangeCache();   // fresh Sellerboard days invalidate cached ranges (incl. long-TTL big ranges)
     // Sellerboard is the COGS source of truth (2026-09-10): refresh the
     // per-ASIN unit costs the dashboard reads. Non-fatal — margins fall
     // back to the previous values if this pass fails.
