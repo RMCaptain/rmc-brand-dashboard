@@ -2481,6 +2481,13 @@ app.get('/api/sync/status', (req, res) => {
     ...syncState,
     presetRebuild: presetRebuildState,
     ordersToday: { date: ot.date, updatedAt: ot.updatedAt, asinCount: ot.asinCount },
+    // Which SP-API credential sets exist (booleans only, never values). EU
+    // gates UK traffic (buy box / sessions) — see the EU S&T block in
+    // sync/amazon.js.
+    spApiRegions: {
+      na: !!(process.env.SP_API_REFRESH_TOKEN && process.env.SP_API_CLIENT_ID),
+      eu: !!(process.env.SP_API_REFRESH_TOKEN_EU && process.env.SP_API_CLIENT_ID_EU && process.env.SP_API_CLIENT_SECRET_EU),
+    },
   });
 });
 

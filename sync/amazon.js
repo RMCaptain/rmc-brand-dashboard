@@ -147,7 +147,7 @@ function sleep(ms) {
 
 // ─── Reports API ─────────────────────────────────────────────────────────────
 
-async function createReport(reportType, marketplaceIds, reportOptions, dataRange, token) {
+async function createReport(reportType, marketplaceIds, reportOptions, dataRange, token, { region = 'na' } = {}) {
   const body = { reportType, marketplaceIds };
   if (reportOptions) body.reportOptions = reportOptions;
   if (dataRange) {
@@ -156,8 +156,8 @@ async function createReport(reportType, marketplaceIds, reportOptions, dataRange
   }
 
   for (let attempt = 1; attempt <= 5; attempt++) {
-    const currentToken = await getAccessToken();
-    const res = await spRequest('POST', '/reports/2021-06-30/reports', currentToken, body);
+    const currentToken = await getAccessToken(region);
+    const res = await spRequest('POST', '/reports/2021-06-30/reports', currentToken, body, 45000, { region });
     if (res.status === 202) return res.body.reportId;
     const errCode = res.body?.errors?.[0]?.code;
     const isQuota = errCode === 'QuotaExceeded' || res.status === 429;
@@ -175,10 +175,10 @@ async function createReport(reportType, marketplaceIds, reportOptions, dataRange
   }
 }
 
-async function waitForReport(reportId, token, maxWaitMs = 900000) {
+async function waitForReport(reportId, token, maxWaitMs = 900000, { region = 'na' } = {}) {
   const start = Date.now();
   while (Date.now() - start < maxWaitMs) {
-    const res = await spRequest('GET', `/reports/2021-06-30/reports/${reportId}`, token);
+    const res = await spRequest('GET', `/reports/2021-06-30/reports/${reportId}`, token, null, 45000, { region });
     const { processingStatus, reportDocumentId } = res.body;
 
     if (processingStatus === 'DONE') return reportDocumentId;
@@ -192,8 +192,8 @@ async function waitForReport(reportId, token, maxWaitMs = 900000) {
   throw new Error(`Report ${reportId} timed out`);
 }
 
-async function downloadReport(documentId, token) {
-  const res = await spRequest('GET', `/reports/2021-06-30/documents/${documentId}`, token);
+async function downloadReport(documentId, token, { region = 'na' } = {}) {
+  const res = await spRequest('GET', `/reports/2021-06-30/documents/${documentId}`, token, null, 45000, { region });
   if (res.status !== 200) throw new Error(`Failed to get document ${documentId}: ${JSON.stringify(res.body)}`);
 
   const { url, compressionAlgorithm } = res.body;
@@ -1470,11 +1470,46 @@ async function syncBrandMetrics(brands) {
   }
 
   console.log('[Sync] Complete.');
+
+  // ── EU-region yesterday traffic (UK — Mike, 2026-11-20: "UK buy boxes not
+  // showing"). UK is a SEPARATE seller account on the EU endpoint; its money
+  // flows in via the Sellerboard INTL feed, but buy box / sessions exist only
+  // in Amazon's S&T report — which this sync never requested for UK. Fetch
+  // yesterday only (all the daily_metrics_mp traffic writer consumes) and
+  // keep these marketplaces OUT of `marketplaceIds`, so preset money math
+  // never ingests GBP rows. Fails soft: missing creds or a dead report just
+  // logs and CA/US behave exactly as before.
+  const EU_TRAFFIC_MPS = (process.env.SP_API_MARKETPLACE_IDS_EU || 'A1F83G8C2ARO7P')
+    .split(',').map(s => s.trim()).filter(Boolean);
+  const hasEuCreds = !!(process.env.SP_API_REFRESH_TOKEN_EU &&
+                        process.env.SP_API_CLIENT_ID_EU &&
+                        process.env.SP_API_CLIENT_SECRET_EU);
+  if (!hasEuCreds) {
+    console.log('[Sync] EU S&T traffic skipped — SP_API_CLIENT_ID_EU / SP_API_CLIENT_SECRET_EU / SP_API_REFRESH_TOKEN_EU not set');
+  } else if (presets.yesterday) {
+    for (const mpId of EU_TRAFFIC_MPS) {
+      try {
+        const euToken = await getAccessToken('eu');
+        const id = await createReport(
+          'GET_SALES_AND_TRAFFIC_REPORT', [mpId],
+          { dateGranularity: 'SUMMARY', asinGranularity: 'CHILD' },
+          presets.yesterday, euToken, { region: 'eu' }
+        );
+        const docId = await waitForReport(id, euToken, 900000, { region: 'eu' });
+        const parsed = parseSalesTrafficReport(await downloadReport(docId, euToken, { region: 'eu' }));
+        stParsedMap[`yesterday_${mpId}`] = parsed;
+        console.log(`[Sync] EU S&T yesterday: ${Object.keys(parsed).length} ASINs for ${MARKETPLACE_CODE[mpId] || mpId}`);
+      } catch (e) {
+        console.warn(`[Sync] EU S&T traffic for ${mpId} failed (non-fatal):`, e.message);
+      }
+    }
+  }
+
   // Per-marketplace S&T for yesterday, un-blended — the traffic mp writer's
   // input (server.js writes it to daily_metrics_mp next to the wide traffic
   // write). Sibling of presets so it never lands in preset_metrics.
   const stTrafficByMp = {};
-  for (const mpId of marketplaceIds) {
+  for (const mpId of [...marketplaceIds, ...EU_TRAFFIC_MPS]) {
     const d = stParsedMap[`yesterday_${mpId}`];
     if (d) stTrafficByMp[mpId] = d;
   }
