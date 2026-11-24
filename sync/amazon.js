@@ -2187,4 +2187,4 @@ async function fetchListingPrices(keys, mpId, token, { byType = 'Sku' } = {}) {
   return out;
 }
 
-module.exports = { syncBrandMetrics, getFinancialSummary, importBrandsFromAmazon, fetchUpcsForAsins, fetchFinancialEvents, enrichListingHealth, scrapeSellerNames, fetchStrandedInventory, getAccessToken, spRequest, getMarketplaceIds, MARKETPLACE_CODE, sleep, createReport, waitForReport, downloadReport, fetchListingPrices, getPresetRanges, getAllPresetRanges, fetchSnsSubscriptions, getInventoryBySkus };
+module.exports = { syncBrandMetrics, getFinancialSummary, importBrandsFromAmazon, fetchUpcsForAsins, fetchFinancialEvents, enrichListingHealth, scrapeSellerNames, fetchStrandedInventory, getAccessToken, spRequest, getMarketplaceIds, MARKETPLACE_CODE, sleep, createReport, waitForReport, downloadReport, parseSalesTrafficReport, fetchListingPrices, getPresetRanges, getAllPresetRanges, fetchSnsSubscriptions, getInventoryBySkus };

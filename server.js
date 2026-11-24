@@ -171,6 +171,7 @@ const ADMIN_ONLY = [
   ['PUT',    /^\/api\/brands\/[^/]+\/asins\/[^/]+\/move$/],
   ['POST',   /^\/api\/brands\/[^/]+\/asins\/bulk-move$/],
   ['GET',    /^\/api\/admin\/mcp-url$/],
+  ['POST',   /^\/api\/traffic\/refresh$/],
 ];
 app.use((req, res, next) => {
   if (!ADMIN_ONLY.some(([m, re]) => m === req.method && re.test(req.path))) return next();
@@ -182,6 +183,26 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Admin-only: re-pull one completed day's S&T traffic (sessions / page views /
+// buy box) and rewrite traffic columns only — see sync/trafficRefresh.js.
+// ?date=YYYY-MM-DD (PST day). Money columns are never touched.
+app.post('/api/traffic/refresh', async (req, res) => {
+  const date = String(req.query.date || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'date=YYYY-MM-DD required' });
+  if (!(process.env.SP_API_CLIENT_ID && process.env.SP_API_REFRESH_TOKEN)) return res.status(503).json({ error: 'SP-API credentials not configured' });
+  try {
+    const { refreshTrafficDay } = require('./sync/trafficRefresh');
+    const asinBrand = {};
+    for (const b of (await loadBrands()).brands) for (const a of (b.asins || [])) asinBrand[a] = b.id;
+    const result = await refreshTrafficDay(supabase, date, { tag: 'TrafficRefresh-manual', asinBrand, requireBuyBox: req.query.force !== '1' });
+    clearRangeCache();
+    res.json(result);
+  } catch (e) {
+    console.error('[traffic/refresh]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // Admin-only: the claude.ai custom-connector URL (the /mcp path secret).
 // Exists so reconnecting the connector never requires digging through
@@ -6705,6 +6726,8 @@ app.post('/api/sellerboard/sync', async (req, res) => {
       clearRangeCache();   // fresh Sellerboard days invalidate cached ranges (incl. long-TTL big ranges)
       await require('./sync/cogsSb').syncCogsFromSellerboard({ supabase, mutateBrands, label: 'Sellerboard-manual-Cogs' })
         .catch(e => console.warn('[sellerboard/sync] SB COGS refresh failed (non-fatal):', e.message));
+      await require('./sync/titlesSb').syncTitlesFromSellerboard({ supabase, mutateBrands, label: 'Sellerboard-manual-Titles' })
+        .catch(e => console.warn('[sellerboard/sync] SB title fill failed (non-fatal):', e.message));
     }
     const recon = ingest.feeds.some(f => f.status === 'ok') && req.query.reconcile !== '0'
       ? await reconcileSellerboard({ supabase, loadBrands, label: 'Reconcile-manual' })
@@ -7799,6 +7822,21 @@ async function runFullSync(tag = 'Sync') {
         // final wash a week out, after virtually all cancellations settle.
         const ok7 = await reconcileDayFromOrders(pstSubtractDays(pstDateStr(), 7), `${tag}-Reconcile`);
         if (ok1 || ok2 || ok7) await rebuildPresetSummariesFromDaily(`${tag}-PostReconcile`);
+        // Traffic self-heal: Amazon's buy box % lags the first yesterday pull
+        // by a day or two (Nov 20 2026 had none at all). Re-pull days 2–4
+        // and rewrite traffic columns only; a day whose report still has no
+        // buy box is left untouched. 6 extra S&T reports per sync.
+        try {
+          const { refreshTrafficDay } = require('./sync/trafficRefresh');
+          const asinBrand = {};
+          for (const b of (await loadBrands()).brands) for (const a of (b.asins || [])) asinBrand[a] = b.id;
+          for (const back of [2, 3, 4]) {
+            await refreshTrafficDay(supabase, pstSubtractDays(pstDateStr(), back), { tag: `${tag}-TrafficRefresh`, asinBrand });
+          }
+          clearRangeCache();
+        } catch (e) {
+          console.warn(`[${tag}] traffic refresh failed (non-fatal):`, e.message);
+        }
       } catch (e) {
         console.warn(`[${tag}] rolling reconcile failed:`, e.message);
       }
@@ -8122,6 +8160,11 @@ function scheduleDailySync() {
     try {
       cogs = await require('./sync/cogsSb').syncCogsFromSellerboard({ supabase, mutateBrands, label: `${tag}-Cogs` });
     } catch (e) { console.warn(`[${tag}] SB COGS refresh failed (non-fatal):`, e.message); }
+    // Titles the listings report / Catalog API never produced — the feed
+    // carries every product name (audit 2026-11-23). Add-only, non-fatal.
+    try {
+      await require('./sync/titlesSb').syncTitlesFromSellerboard({ supabase, mutateBrands, label: `${tag}-Titles` });
+    } catch (e) { console.warn(`[${tag}] SB title fill failed (non-fatal):`, e.message); }
     const recon = await reconcileSellerboard({ supabase, loadBrands, label: tag });
     return { ingest, cogs, recon };
   };
