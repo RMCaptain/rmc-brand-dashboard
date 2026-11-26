@@ -2655,8 +2655,13 @@ function attachSkuFees(sku, feesData, asin, fromDate, toDate) {
     : 0;
   const covered = expected > 0 && feesData.days >= expected;
   const fa = feesData.byAsin[asin];
-  sku.feesCad         = covered ? (fa?.feesCad   || 0) : null;
-  sku.feesUsd         = covered ? (fa?.feesUsd   || 0) : null;
+  // An ASIN that SOLD in a covered window but has no posted fee rows has
+  // fees that haven't posted yet (Amazon lags a day or two), not $0. Zero-
+  // filling understated the Yesterday card's fees by ~95% (2026-11-26);
+  // null flows downstream as "unpriced"/"~" instead of fake profit.
+  const feesKnown = covered && !(!fa && (sku.units || 0) > 0);
+  sku.feesCad         = feesKnown ? (fa?.feesCad   || 0) : null;
+  sku.feesUsd         = feesKnown ? (fa?.feesUsd   || 0) : null;
   sku.refundPostedCad = covered ? (fa?.refundCad || 0) : null;
   sku.refundPostedUsd = covered ? (fa?.refundUsd || 0) : null;
 }
@@ -2664,7 +2669,41 @@ function attachSkuFees(sku, feesData, asin, fromDate, toDate) {
 // Yesterday data — sourced from daily_metrics (Supabase). Persistent across restarts.
 // Sync writes daily_metrics 3x/day (6/9/12 UTC crons). For listing-health alerts and
 // title/image fallbacks, we still consult the S&T preset cache.
+// Yesterday rides the same Sellerboard-first range build as every other
+// period (Mike, 2026-11-26: the Yesterday card showed $152 of Amazon fees
+// against $3.2k of itemized Sellerboard fees — Amazon had posted fees for 44
+// of 93 sold ASINs and the rest were zero-filled, inflating payout and net
+// profit). Alerts, titles, images and listing status overlay from the
+// yesterday preset exactly as rebuildPresetSummariesFromDaily does. The
+// Amazon-only builder stays reachable at /api/metrics/yesterday-legacy.
 app.get('/api/metrics/yesterday', async (req, res) => {
+  const yest = pstSubtractDays(pstDateStr(), 1);
+  try {
+    const [built, pm] = await Promise.all([buildBrandMetricsForRange(yest, yest, 'yesterday'), loadPresetMetrics()]);
+    const old = pm.presets?.yesterday?.brands || {};
+    for (const [brandId, bm] of Object.entries(built.brands || {})) {
+      const ob = old[brandId];
+      if (!ob) continue;
+      bm.summary = bm.summary || {};
+      bm.summary.alerts = ob.summary?.alerts || bm.summary.alerts || {};
+      const oldSku = Object.fromEntries((ob.skus || []).map(x => [x.asin, x]));
+      for (const sku of (bm.skus || [])) {
+        const o = oldSku[sku.asin];
+        if (!o) continue;
+        sku.title     = sku.title     || o.title     || '';
+        sku.imageUrl  = sku.imageUrl  || o.imageUrl  || null;
+        sku.status    = o.status      || sku.status  || 'active';
+        sku.sellerSku = sku.sellerSku || o.sellerSku || '';
+      }
+    }
+    res.json({ date: yest, updatedAt: new Date().toISOString(), label: 'Yesterday', startDate: yest, endDate: yest, ...built });
+  } catch (err) {
+    console.error('[YesterdayAPI] range build failed:', err.message);
+    res.status(500).json({ error: 'Failed to load yesterday data' });
+  }
+});
+
+app.get('/api/metrics/yesterday-legacy', async (req, res) => {
   const yest = pstSubtractDays(pstDateStr(), 1);
   const { brands } = await loadBrands();
   const pm = await loadPresetMetrics();
