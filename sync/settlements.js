@@ -180,21 +180,41 @@ const previewCache = {};   // code → { at, reportId, generatedAt, header, rows
 const PREVIEW_TTL_MS = 24 * 60 * 60 * 1000;
 const DIM_COLS = ['longest-side', 'median-side', 'shortest-side', 'unit-of-dimension', 'item-package-weight', 'unit-of-weight', 'product-size-weight-band', 'product-size-tier', 'your-price', 'sales-price', 'currency'];
 
+// The document's own currency column is the ground truth for which
+// marketplace a Fee Preview belongs to (CAD = CA, USD = US).
+function previewCurrencyOf(rows) {
+  for (const r of rows) { const c = (r['currency'] || '').toUpperCase(); if (c) return c; }
+  return null;
+}
+
 async function loadFeePreview(code, mpId, token, { force = false } = {}) {
   const c = previewCache[code];
   if (!force && c && Date.now() - c.at < PREVIEW_TTL_MS) return c;
-  // Prefer a report Amazon already produced in the last 2 days; else request one.
-  let report = (await getReportsList(token, { reportTypes: FEE_PREVIEW_TYPE, mpId, pageSize: 5, createdSince: new Date(Date.now() - 2 * 864e5).toISOString() }))[0];
-  if (!report) {
-    const id = await createReport(FEE_PREVIEW_TYPE, [mpId], null, null, token);
-    const docId = await waitForReport(id, token, 20 * 60 * 1000);
-    const parsed = parseTsv(await downloadReport(docId, token));
-    const entry = { at: Date.now(), reportId: id, generatedAt: new Date().toISOString(), ...parsed };
-    previewCache[code] = entry;
-    return entry;
+  const currency = CURRENCY_OF[code];
+
+  // 1. Reuse a report Amazon produced in the last 2 days ONLY if the report
+  //    itself says it is for this marketplace — getReports' marketplaceIds
+  //    filter is not honoured for this type (bug 2026-11-27: US served the
+  //    CA document) — and its document carries the matching currency.
+  const recent = await getReportsList(token, { reportTypes: FEE_PREVIEW_TYPE, pageSize: 10, createdSince: new Date(Date.now() - 2 * 864e5).toISOString() });
+  for (const report of recent) {
+    if (!(report.marketplaceIds || []).includes(mpId)) continue;
+    try {
+      const parsed = await loadReportRows(report.reportId, token);
+      if (previewCurrencyOf(parsed.rows) !== currency) { console.warn(`[FeePreview] ${code}: report ${report.reportId} carries ${previewCurrencyOf(parsed.rows)}, expected ${currency} — ignoring`); continue; }
+      const entry = { at: Date.now(), reportId: report.reportId, generatedAt: report.processingEndTime || report.createdTime, header: parsed.header, rows: parsed.rows };
+      previewCache[code] = entry;
+      return entry;
+    } catch (e) { console.warn(`[FeePreview] ${code}: reusing ${report.reportId} failed: ${e.message}`); }
   }
-  const parsed = await loadReportRows(report.reportId, token);
-  const entry = { at: Date.now(), reportId: report.reportId, generatedAt: report.processingEndTime || report.createdTime, header: parsed.header, rows: parsed.rows };
+
+  // 2. Request a fresh one for exactly this marketplace and validate it too.
+  const id = await createReport(FEE_PREVIEW_TYPE, [mpId], null, null, token);
+  const docId = await waitForReport(id, token, 20 * 60 * 1000);
+  const parsed = parseTsv(await downloadReport(docId, token));
+  const got = previewCurrencyOf(parsed.rows);
+  if (got !== currency) throw new Error(`Fee Preview for ${code} came back in ${got || 'unknown currency'} (expected ${currency}) — document rejected, nothing cached`);
+  const entry = { at: Date.now(), reportId: id, generatedAt: new Date().toISOString(), header: parsed.header, rows: parsed.rows };
   previewCache[code] = entry;
   return entry;
 }
@@ -223,4 +243,4 @@ async function getFeePreview(marketplace, { skuPrefix, asinSet, brandId } = {}) 
   return { marketplace: code, currency, reportId: prev.reportId, reportGeneratedAt: prev.generatedAt, cachedAt: new Date(prev.at).toISOString(), skuPrefix: skuPrefix || null, brandId: brandId || null, count: shaped.rows.length, feeColumns: shaped.feeColumns, skus: shaped.rows };
 }
 
-module.exports = { listSettlements, getSettlementFees, getFeePreview, computeSettlementFees, shapePreviewRows, parseTsv };
+module.exports = { listSettlements, getSettlementFees, getFeePreview, computeSettlementFees, shapePreviewRows, parseTsv, previewCurrencyOf };

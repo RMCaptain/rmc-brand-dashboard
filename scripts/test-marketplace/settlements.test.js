@@ -54,3 +54,12 @@ const byAsin = shapePreviewRows(p.rows, p.header, { asinSet: new Set(['B0002']) 
 assert.strictEqual(byAsin.rows[0].sku, 'QQ-1');
 
 console.log('settlements: lines/credits math, prefix filter, blank-SKU mapping, truncation, fee-preview pass-through OK');
+
+// Fee-preview marketplace guard: the document's currency decides.
+{
+  const { previewCurrencyOf } = require('../../sync/settlements');
+  assert.strictEqual(previewCurrencyOf([{ currency: '' }, { currency: 'usd' }]), 'USD');
+  assert.strictEqual(previewCurrencyOf([{ currency: 'CAD' }]), 'CAD');
+  assert.strictEqual(previewCurrencyOf([]), null);
+  console.log('fee-preview currency guard OK');
+}
