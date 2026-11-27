@@ -176,57 +176,61 @@ async function getSettlementFees(marketplace, { reportId, skuPrefix, extraReport
 }
 
 // ── 3. get_fee_preview ──────────────────────────────────────────────────────
-const previewCache = {};   // code → { at, reportId, generatedAt, header, rows }
 const PREVIEW_TTL_MS = 24 * 60 * 60 * 1000;
 const DIM_COLS = ['longest-side', 'median-side', 'shortest-side', 'unit-of-dimension', 'item-package-weight', 'unit-of-weight', 'product-size-weight-band', 'product-size-tier', 'your-price', 'sales-price', 'currency'];
 
-// The document's own currency column is the ground truth for which
-// marketplace a Fee Preview belongs to (CAD = CA, USD = US).
+// Amazon's Fee Preview for a unified NA account is ONE account-wide file:
+// a row per SKU PER STORE (amazon-store column; CA rows in CAD/cm/g, US rows
+// in USD/in/lb). Verified 2026-11-27: the "CA" document carried USD rows for
+// SKUs listed in both stores. So: cache one document for the account and
+// filter ROWS per request — never pick a document per marketplace.
+const STORE_MATCH = {
+  CA: v => /^(ca|amazon\.ca|canada)$/i.test(v) || /\.ca$/i.test(v),
+  US: v => /^(us|amazon\.com|united states)$/i.test(v) || /\.com$/i.test(v),
+};
+function rowMarketplace(r) {
+  const store = r['amazon-store'] || r['marketplace'] || r['marketplace-name'] || '';
+  if (store) { for (const code of Object.keys(STORE_MATCH)) if (STORE_MATCH[code](store.trim())) return code; }
+  const cur = (r['currency'] || '').toUpperCase();
+  return cur === 'CAD' ? 'CA' : cur === 'USD' ? 'US' : null;
+}
 function previewCurrencyOf(rows) {
   for (const r of rows) { const c = (r['currency'] || '').toUpperCase(); if (c) return c; }
   return null;
 }
 
-async function loadFeePreview(code, mpId, token, { force = false } = {}) {
-  const c = previewCache[code];
-  if (!force && c && Date.now() - c.at < PREVIEW_TTL_MS) return c;
-  const currency = CURRENCY_OF[code];
-
-  // 1. Reuse a report Amazon produced in the last 2 days ONLY if the report
-  //    itself says it is for this marketplace — getReports' marketplaceIds
-  //    filter is not honoured for this type (bug 2026-11-27: US served the
-  //    CA document) — and its document carries the matching currency.
-  const recent = await getReportsList(token, { reportTypes: FEE_PREVIEW_TYPE, pageSize: 10, createdSince: new Date(Date.now() - 2 * 864e5).toISOString() });
+let accountPreview = null;   // { at, reportId, generatedAt, header, rows } — one per NA account
+async function loadFeePreview(token, { force = false } = {}) {
+  if (!force && accountPreview && Date.now() - accountPreview.at < PREVIEW_TTL_MS) return accountPreview;
+  const recent = await getReportsList(token, { reportTypes: FEE_PREVIEW_TYPE, pageSize: 5, createdSince: new Date(Date.now() - 2 * 864e5).toISOString() });
+  let entry = null;
   for (const report of recent) {
-    if (!(report.marketplaceIds || []).includes(mpId)) continue;
     try {
       const parsed = await loadReportRows(report.reportId, token);
-      if (previewCurrencyOf(parsed.rows) !== currency) { console.warn(`[FeePreview] ${code}: report ${report.reportId} carries ${previewCurrencyOf(parsed.rows)}, expected ${currency} — ignoring`); continue; }
-      const entry = { at: Date.now(), reportId: report.reportId, generatedAt: report.processingEndTime || report.createdTime, header: parsed.header, rows: parsed.rows };
-      previewCache[code] = entry;
-      return entry;
-    } catch (e) { console.warn(`[FeePreview] ${code}: reusing ${report.reportId} failed: ${e.message}`); }
+      if (!parsed.rows.length) continue;
+      entry = { at: Date.now(), reportId: report.reportId, generatedAt: report.processingEndTime || report.createdTime, header: parsed.header, rows: parsed.rows };
+      break;
+    } catch (e) { console.warn(`[FeePreview] reusing ${report.reportId} failed: ${e.message}`); }
   }
-
-  // 2. Request a fresh one for exactly this marketplace and validate it too.
-  const id = await createReport(FEE_PREVIEW_TYPE, [mpId], null, null, token);
-  const docId = await waitForReport(id, token, 20 * 60 * 1000);
-  const parsed = parseTsv(await downloadReport(docId, token));
-  const got = previewCurrencyOf(parsed.rows);
-  if (got !== currency) throw new Error(`Fee Preview for ${code} came back in ${got || 'unknown currency'} (expected ${currency}) — document rejected, nothing cached`);
-  const entry = { at: Date.now(), reportId: id, generatedAt: new Date().toISOString(), header: parsed.header, rows: parsed.rows };
-  previewCache[code] = entry;
+  if (!entry) {
+    const id = await createReport(FEE_PREVIEW_TYPE, [MP.idByCode('CA'), MP.idByCode('US')], null, null, token);
+    const docId = await waitForReport(id, token, 20 * 60 * 1000);
+    const parsed = parseTsv(await downloadReport(docId, token));
+    entry = { at: Date.now(), reportId: id, generatedAt: new Date().toISOString(), header: parsed.header, rows: parsed.rows };
+  }
+  accountPreview = entry;
   return entry;
 }
 
-function shapePreviewRows(rows, header, { skuPrefix, asinSet } = {}) {
+function shapePreviewRows(rows, header, { skuPrefix, asinSet, marketplace } = {}) {
   const feeCols = header.filter(h => /fee/.test(h) && !DIM_COLS.includes(h));
   const out = [];
   for (const r of rows) {
+    if (marketplace && rowMarketplace(r) !== marketplace) continue;
     const sku = r['sku'] || '', asin = r['asin'] || '';
     if (skuPrefix && !sku.startsWith(skuPrefix)) continue;
     if (asinSet && !asinSet.has(asin)) continue;
-    const o = { sku, asin, fnsku: r['fnsku'] || null, productName: r['product-name'] || null, fulfilledBy: r['fulfilled-by'] || null };
+    const o = { sku, asin, fnsku: r['fnsku'] || null, productName: r['product-name'] || null, fulfilledBy: r['fulfilled-by'] || null, store: r['amazon-store'] || null };
     for (const col of DIM_COLS) if (col in r) o[col] = r[col] === '' ? null : (isNaN(Number(r[col])) ? r[col] : Number(r[col]));
     for (const col of feeCols) o[col] = r[col] === '' ? null : (isNaN(Number(r[col])) ? r[col] : Number(r[col]));
     out.push(o);
@@ -235,12 +239,17 @@ function shapePreviewRows(rows, header, { skuPrefix, asinSet } = {}) {
 }
 
 async function getFeePreview(marketplace, { skuPrefix, asinSet, brandId } = {}) {
-  const { code, mpId, currency } = mpIdFor(marketplace);
+  const { code, currency } = mpIdFor(marketplace);
   if (!skuPrefix && !asinSet) throw new Error('skuPrefix or brandId required');
   const token = await getAccessToken();
-  const prev = await loadFeePreview(code, mpId, token);
-  const shaped = shapePreviewRows(prev.rows, prev.header, { skuPrefix, asinSet });
-  return { marketplace: code, currency, reportId: prev.reportId, reportGeneratedAt: prev.generatedAt, cachedAt: new Date(prev.at).toISOString(), skuPrefix: skuPrefix || null, brandId: brandId || null, count: shaped.rows.length, feeColumns: shaped.feeColumns, skus: shaped.rows };
+  const prev = await loadFeePreview(token);
+  const marketRows = prev.rows.filter(r => rowMarketplace(r) === code);
+  if (!marketRows.length) throw new Error(`Fee Preview document ${prev.reportId} has no ${code} (${currency}) rows — nothing returned`);
+  // Hard guard: every returned row must carry the marketplace's currency.
+  const offCurrency = marketRows.filter(r => (r['currency'] || '').toUpperCase() !== currency);
+  if (offCurrency.length) throw new Error(`Fee Preview ${code}: ${offCurrency.length} rows carry a currency other than ${currency} — refusing to mix marketplaces`);
+  const shaped = shapePreviewRows(marketRows, prev.header, { skuPrefix, asinSet });
+  return { marketplace: code, currency, reportId: prev.reportId, reportGeneratedAt: prev.generatedAt, cachedAt: new Date(prev.at).toISOString(), skuPrefix: skuPrefix || null, brandId: brandId || null, count: shaped.rows.length, marketplaceRowsInDocument: marketRows.length, feeColumns: shaped.feeColumns, skus: shaped.rows };
 }
 
-module.exports = { listSettlements, getSettlementFees, getFeePreview, computeSettlementFees, shapePreviewRows, parseTsv, previewCurrencyOf };
+module.exports = { listSettlements, getSettlementFees, getFeePreview, computeSettlementFees, shapePreviewRows, parseTsv, previewCurrencyOf, rowMarketplace };

@@ -63,3 +63,21 @@ console.log('settlements: lines/credits math, prefix filter, blank-SKU mapping, 
   assert.strictEqual(previewCurrencyOf([]), null);
   console.log('fee-preview currency guard OK');
 }
+
+// Account-wide document: rows are routed to a marketplace by store, then currency.
+{
+  const { rowMarketplace, shapePreviewRows, parseTsv } = require('../../sync/settlements');
+  assert.strictEqual(rowMarketplace({ 'amazon-store': 'CA', currency: 'CAD' }), 'CA');
+  assert.strictEqual(rowMarketplace({ 'amazon-store': 'amazon.com', currency: 'USD' }), 'US');
+  assert.strictEqual(rowMarketplace({ currency: 'USD' }), 'US');
+  assert.strictEqual(rowMarketplace({ currency: 'MXN' }), null);
+  const tsv = 'sku\tasin\tamazon-store\tcurrency\tyour-price\tunit-of-dimension\tunit-of-weight\tlongest-side\tmedian-side\tshortest-side\titem-package-weight\texpected-fulfillment-fee-per-unit\n'
+    + 'SP-1\tB01\tCA\tCAD\t13.05\tcentimeters\tgrams\t18\t7\t3\t82\t5.89\n'
+    + 'SP-1\tB01\tUS\tUSD\t9.49\tinches\tpounds\t7.2\t2.9\t1.4\t0.18\t3.47\n';
+  const p = parseTsv(tsv);
+  const ca = shapePreviewRows(p.rows, p.header, { skuPrefix: 'SP-', marketplace: 'CA' });
+  const us = shapePreviewRows(p.rows, p.header, { skuPrefix: 'SP-', marketplace: 'US' });
+  assert.strictEqual(ca.rows.length, 1); assert.strictEqual(ca.rows[0].currency, 'CAD'); assert.strictEqual(ca.rows[0]['unit-of-dimension'], 'centimeters');
+  assert.strictEqual(us.rows.length, 1); assert.strictEqual(us.rows[0].currency, 'USD'); assert.strictEqual(us.rows[0]['unit-of-weight'], 'pounds'); assert.strictEqual(us.rows[0]['expected-fulfillment-fee-per-unit'], 3.47);
+  console.log('account-wide fee-preview row routing OK');
+}
