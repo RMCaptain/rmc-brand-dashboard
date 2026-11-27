@@ -6817,6 +6817,41 @@ app.get('/api/reconciliation', async (req, res) => {
 // client converts to display currency and lays out the recon.
 const feeCache = new Map();   // `${from}|${to}|${brandId}` → { data, at }
 const FEE_CACHE_MS = 2 * 60 * 1000;
+// ── Settlement + fee-preview readers (FBA fee audit skill, Mike 2026-11-27) ──
+// Read-only, NA credentials, marketplace CA|US, filtered server-side so the
+// MCP responses stay small. See sync/settlements.js.
+const settlementsApi = require('./sync/settlements');
+const spApiConfigured = () => !!(process.env.SP_API_CLIENT_ID && process.env.SP_API_CLIENT_SECRET && process.env.SP_API_REFRESH_TOKEN);
+
+app.get('/api/settlements', async (req, res) => {
+  if (!spApiConfigured()) return res.status(503).json({ error: 'SP-API credentials not configured' });
+  try {
+    res.json(await settlementsApi.listSettlements(req.query.marketplace, { limit: req.query.limit }));
+  } catch (e) { console.error('[settlements]', e.message); res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/settlements/fees', async (req, res) => {
+  if (!spApiConfigured()) return res.status(503).json({ error: 'SP-API credentials not configured' });
+  try {
+    res.json(await settlementsApi.getSettlementFees(req.query.marketplace, {
+      reportId: req.query.reportId, skuPrefix: req.query.skuPrefix, extraReportIds: req.query.extra || [],
+    }));
+  } catch (e) { console.error('[settlements/fees]', e.message); res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/fee-preview', async (req, res) => {
+  if (!spApiConfigured()) return res.status(503).json({ error: 'SP-API credentials not configured' });
+  try {
+    let asinSet = null;
+    if (req.query.brandId) {
+      const b = (await loadBrands()).brands.find(x => x.id === req.query.brandId);
+      if (!b) return res.status(404).json({ error: `unknown brandId ${req.query.brandId}` });
+      asinSet = new Set(b.asins || []);
+    }
+    res.json(await settlementsApi.getFeePreview(req.query.marketplace, { skuPrefix: req.query.skuPrefix || null, asinSet, brandId: req.query.brandId || null }));
+  } catch (e) { console.error('[fee-preview]', e.message); res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/fees', async (req, res) => {
   try {
     const { aggSellerboard, aggAmazonAsin, aggAmazonMp } = require('./sync/feeBreakdown');

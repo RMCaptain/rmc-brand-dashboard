@@ -42,6 +42,7 @@ function run(label, file, args = []) {
     ['period-card forecast',    'forecast.test.js'],
     ['weekly digest',           'weekly-digest.test.js'],
     ['margin guard + cogs gaps', 'margin-guard.test.js'],
+    ['settlement / fee-preview readers', 'settlements.test.js'],
   ]) if (!run(label, path.join(DIR, file))) failures++;
 
   // Stub server for the API + page checks
