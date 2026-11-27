@@ -231,6 +231,12 @@
     }
 
     // ── Render ───────────────────────────────────────────────────────────────
+    function ppcMarketplaceCodes() {
+      const codes = new Set(['CA', 'US']);
+      for (const b of (ppcData?.brands || [])) for (const c of Object.keys(b.revByMp || {})) codes.add(c);
+      for (const d of (ppcData?.daily || [])) for (const c of Object.keys(d.revByMp || {})) codes.add(c);
+      return [...codes];
+    }
     function renderAll() {
       document.getElementById('scopeNote').classList.toggle('hidden', !adScoped());
       renderKpis();
@@ -692,7 +698,7 @@
       document.getElementById('rangeLabel').textContent = r.from === r.to ? fmtLabel(r.from) : `${fmtLabel(r.from)} – ${fmtLabel(r.to)}`;
       fetch(`/api/ppc?from=${r.from}&to=${r.to}${brandFilter ? `&brandId=${encodeURIComponent(brandFilter)}` : ''}`)
         .then(res => res.json())
-        .then(d => { ppcData = d; renderAll(); })
+        .then(d => { ppcData = d; MpScope.syncOptions(); renderAll(); })
         .catch(e => { console.error(e); ppcData = null; renderAll(); });
     }
 
@@ -736,7 +742,12 @@
       MpScope.init({
         onChange: renderAll,
         fx: () => fxRate, currency: () => currency,
-        datasets: () => [],
+        // Marketplaces present in the loaded PPC data (CA/US + any revByMp
+        // code such as UK). The dashboard pages feed their range payloads
+        // here; an empty list limited this picker to registry-active
+        // marketplaces, so UK — active:false until EU creds land — never
+        // appeared on PPC even though UK revenue is in the payload.
+        datasets: () => [{ marketplaces: ppcMarketplaceCodes().map(code => ({ code })) }],
       });
       if (mps) MpScope.state.registry = mps;
       brandsData = brandsRes.brands || [];
